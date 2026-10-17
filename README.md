@@ -39,6 +39,36 @@ To make yourself an admin, register through `/docs` (POST /auth/register), then:
 docker compose run --rm api python -m scripts.make_admin you@example.com
 ```
 
+## Keeping up with the Google Sheet
+
+The events still start life in the Culture Crew Google Sheet (shared as "Anyone with the
+link can view"). `scripts/sync_sheet.py` reads it and brings the database in line; it is
+meant to run **nightly** (scheduled on AWS in the deployment step).
+
+```
+docker compose run --rm api python -m scripts.sync_sheet --dry-run   # what would change
+docker compose run --rm api python -m scripts.sync_sheet             # apply it
+```
+
+What a run does:
+
+- **New rows** become approved events; **changed rows** update their event.
+- Events **added through the site** are never touched; only events that came from the
+  sheet (they carry the sheet's id in `source_id`) follow it.
+- An admin's **rejection stands**: the details still update, the event stays hidden.
+- **Nothing is deleted.** A row removed from the sheet makes its event `withdrawn`
+  (hidden, but people's "I've been" marks are kept); if the row comes back, so does the event.
+- If the sheet **can't be read**, has no header row, or suddenly has **fewer than half** the
+  events currently live from it, the run changes nothing and is recorded as failed. That
+  is far more likely a Google hiccup or a half-cleared tab than a real mass removal.
+- The sheet has no id column, so an event is identified by **title + venue + start date**.
+  Editing one of those in the sheet makes it a new event (the old one is withdrawn).
+- Every run is logged in `sheet_syncs`; admins can read it at `GET /admin/syncs`. The
+  script exits with status 1 on failure, so the scheduler can alert on it.
+
+`scripts/seed.py` uses the same code to load `seed/events.json` into an empty database;
+it never withdraws anything.
+
 ## Tests
 
 ```
@@ -105,6 +135,9 @@ app/security.py      bcrypt, JWTs, refresh tokens
 app/deps.py          database session, current user, admin check
 app/routers/         auth, events, venues, me, admin
 alembic/             migrations
+app/sheet.py         reads and parses the Google Sheet
+app/sync.py          applies the sheet (or the seed file) to the database
+scripts/sync_sheet.py  the nightly sync
 scripts/seed.py      import seed/events.json
 seed/events.json     the events from the old Google Sheet site
 scripts/make_admin.py

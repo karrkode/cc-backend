@@ -26,6 +26,7 @@ class EventStatus(str, enum.Enum):
     pending = "pending"
     approved = "approved"
     rejected = "rejected"
+    withdrawn = "withdrawn"  # was on the Google Sheet, then removed from it; hidden but kept
 
 
 def _enum(cls, name):
@@ -103,3 +104,21 @@ class Attended(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     event: Mapped[Event] = relationship(lazy="joined")
+
+
+class SheetSync(Base):
+    """One run of the nightly Google Sheet sync, for checking what changed and when."""
+    __tablename__ = "sheet_syncs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    result: Mapped[str] = mapped_column(String(20))  # ok | failed | dry_run
+    rows_read: Mapped[int] = mapped_column(Integer, default=0)
+    added: Mapped[int] = mapped_column(Integer, default=0)
+    updated: Mapped[int] = mapped_column(Integer, default=0)
+    unchanged: Mapped[int] = mapped_column(Integer, default=0)
+    withdrawn: Mapped[int] = mapped_column(Integer, default=0)
+    restored: Mapped[int] = mapped_column(Integer, default=0)
+    skipped: Mapped[int] = mapped_column(Integer, default=0)
+    message: Mapped[str] = mapped_column(Text, default="")

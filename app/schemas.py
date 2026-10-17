@@ -138,6 +138,23 @@ class EventPatch(BaseModel):
     status: EventStatus | None = None
 
 
+# ---- sheet sync log --------------------------------------------------------
+
+class SheetSyncOut(ORM):
+    id: int
+    started_at: datetime
+    finished_at: datetime | None
+    result: str
+    rows_read: int
+    added: int
+    updated: int
+    unchanged: int
+    withdrawn: int
+    restored: int
+    skipped: int
+    message: str
+
+
 # ---- attended --------------------------------------------------------------
 
 class AttendedOut(ORM):

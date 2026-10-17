@@ -2,6 +2,7 @@
 #   docker compose up --build                       API on http://localhost:8000 (docs at /docs)
 #   docker compose --profile web up --build         also serve the cc-site page on http://localhost:4173
 #   docker compose run --rm api python -m scripts.seed
+#   docker compose run --rm api python -m scripts.sync_sheet [--dry-run]
 #   docker compose run --rm api python -m scripts.make_admin you@example.com
 
 services:

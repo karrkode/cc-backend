@@ -42,10 +42,13 @@ def test_seed_is_repeatable(Session, db, monkeypatch, tmp_path):
     path.write_text(json.dumps({"events": rows}))
     monkeypatch.setattr(seed_module, "SessionLocal", Session)
 
-    assert seed_module.seed(path) == {"added": 3, "updated": 0, "skipped": 1, "venues_added": 3}
+    first = seed_module.seed(path)
+    assert (first["added"], first["updated"], first["skipped"], first["venues_added"]) == (3, 0, 1, 3)
     rows[0]["title"] = "Hamlet (extended)"
     path.write_text(json.dumps({"events": rows}))
-    assert seed_module.seed(path) == {"added": 0, "updated": 3, "skipped": 1, "venues_added": 0}
+    again = seed_module.seed(path)
+    assert (again["added"], again["updated"], again["unchanged"], again["venues_added"]) == (0, 1, 2, 0)
+    assert again["withdrawn"] == 0  # a seed file never withdraws anything
 
     assert db.scalar(select(func.count(Event.id))) == 3
     assert db.scalar(select(func.count(Venue.id))) == 3  # Second City in two neighborhoods = two venues
@@ -58,6 +61,7 @@ def test_migrations_match_models(engine):
     with engine.begin() as conn:  # start from an empty database
         Base.metadata.drop_all(conn)
         conn.execute(text("DROP TABLE IF EXISTS alembic_version"))
+        conn.execute(text("DROP TABLE IF EXISTS sheet_syncs"))
         for t in ("event_status", "venue_area", "user_role"):
             conn.execute(text(f"DROP TYPE IF EXISTS {t}"))
 

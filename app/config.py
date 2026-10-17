@@ -28,6 +28,13 @@ class Settings(BaseSettings):
 
     login_attempts_per_minute: int = 10
 
+    # The Google Sheet the nightly sync reads (shared as "Anyone with the link can view").
+    sheet_id: str = "1jn-XC4Hun11m4t3xmpzRtBwmgMP940k_umGEaJE-UjE"
+    sheet_gid: str = "0"
+    sheet_timeout_seconds: int = 20
+    # Refuse to withdraw events if the sheet suddenly has fewer than this share of them.
+    sync_min_ratio: float = 0.5
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def _split_origins(cls, v):

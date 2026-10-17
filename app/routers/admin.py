@@ -4,8 +4,8 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, select
 
 from ..deps import DB, AdminUser
-from ..models import Event, EventStatus
-from ..schemas import EventOut, EventPage
+from ..models import Event, EventStatus, SheetSync
+from ..schemas import EventOut, EventPage, SheetSyncOut
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -41,3 +41,9 @@ def approve(event_id: int, db: DB, _: AdminUser):
 @router.post("/events/{event_id}/reject", response_model=EventOut)
 def reject(event_id: int, db: DB, _: AdminUser):
     return _set_status(db, event_id, EventStatus.rejected)
+
+
+@router.get("/syncs", response_model=list[SheetSyncOut])
+def sync_runs(db: DB, _: AdminUser, limit: Annotated[int, Query(ge=1, le=100)] = 20):
+    """The latest Google Sheet sync runs, newest first: what changed, or why a run failed."""
+    return db.scalars(select(SheetSync).order_by(SheetSync.started_at.desc(), SheetSync.id.desc()).limit(limit)).all()
