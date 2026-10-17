@@ -1,0 +1,73 @@
+#!/bin/bash
+# First boot of the API server (Amazon Linux 2023, arm64). Rendered by Terraform.
+# Log: /var/log/cloud-init-output.log
+set -euxo pipefail
+
+dnf install -y docker
+systemctl enable --now docker
+
+mkdir -p /etc/culture-crew
+chmod 700 /etc/culture-crew
+
+cat > /etc/culture-crew/config <<'CONFIG'
+export REGION="${region}"
+export IMAGE_REPO="${image_repo}"
+export IMAGE_TAG="${image_tag}"
+export DB_SECRET_ARN="${db_secret_arn}"
+export DB_HOST="${db_host}"
+export DB_NAME="${db_name}"
+export JWT_PARAM="${jwt_param}"
+export CORS_ORIGINS="${cors_origins}"
+export LOG_GROUP="${log_group}"
+CONFIG
+
+cat > /etc/culture-crew/Caddyfile <<'CADDY'
+{
+	email ${acme_email}
+}
+
+${api_domain} {
+	encode zstd gzip
+	reverse_proxy api:8000
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+}
+CADDY
+
+cat > /usr/local/bin/culture-crew-deploy <<'SCRIPT'
+${deploy_sh}
+SCRIPT
+
+cat > /usr/local/bin/culture-crew-env <<'SCRIPT'
+${write_env_sh}
+SCRIPT
+
+cat > /usr/local/bin/culture-crew-sync <<'SCRIPT'
+${sync_sh}
+SCRIPT
+
+chmod 755 /usr/local/bin/culture-crew-deploy /usr/local/bin/culture-crew-env /usr/local/bin/culture-crew-sync
+
+cat > /etc/systemd/system/culture-crew.service <<'UNIT'
+[Unit]
+Description=Culture Crew API and Caddy containers
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/culture-crew-deploy
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable culture-crew.service
+# Fails harmlessly on the very first boot if no image has been pushed to ECR yet.
+systemctl start culture-crew.service || echo "First deploy didn't start; push an image, then run culture-crew-deploy."
