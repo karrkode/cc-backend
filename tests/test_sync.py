@@ -232,3 +232,34 @@ def test_sheet_ids_script_prints_a_column_that_lines_up(monkeypatch, capsys):
     assert "Rows missing an ID: 5" in out and "starting at row 3" in out
     column = out.split("ID):\n\n", 1)[1].splitlines()
     assert column == ["ev-1", "", event_id("Bug", "Steppenwolf", SOON.strftime("%m/%d/%Y"))]
+
+
+def test_an_id_mangled_by_sheets_keeps_its_event(db):
+    rows = [row("Hamlet"), row("Bug", venue="Steppenwolf")]
+    sync_from_sheet(db, fetch=fake(rows))
+    hamlet = sheet_event(db, "Hamlet")
+    mangled = [{**rows[0], "id": "5.41E+32"}, {**rows[1], "id": event_id("Bug", "Steppenwolf", rows[1]["begin"])}]
+    run = sync_from_sheet(db, fetch=fake(mangled, ids=True))
+    assert (run.added, run.withdrawn, run.unchanged) == (0, 0, 2)
+    assert "1 rows have an ID that matches no event" in run.message
+    assert sheet_event(db, "Hamlet").id == hamlet.id
+
+
+def test_a_new_id_is_a_new_event_when_another_row_holds_the_old_one(db):
+    sync_from_sheet(db, fetch=fake([row("Hamlet")]))  # no ID column yet: computed id
+    computed = event_id("Hamlet", "Goodman Theatre", SOON.strftime("%m/%d/%Y"))
+    # Row 1 claims the event by its computed id, so row 2's fresh ID is a separate event, not a mangled one
+    run = sync_from_sheet(db, fetch=fake([row("Hamlet", id=computed), row("Hamlet", id="ev-2")], ids=True))
+    assert (run.added, run.unchanged, run.withdrawn) == (1, 1, 0) and run.message == ""
+    assert db.scalar(select(Event).where(Event.source_id == "ev-2")) is not None
+
+
+def test_sheet_ids_flags_ids_sheets_turned_into_numbers(monkeypatch, capsys):
+    from scripts import sheet_ids
+    digits_only = next(f"x{i}" for i in range(10000) if event_id(f"x{i}", "V", "1/1/2030").isdigit())
+    rows = [{"title": "A", "venue": "V", "begin": "1/1/2030", "id": "5.41E+32"},
+            {"title": digits_only, "venue": "V", "begin": "1/1/2030", "id": event_id(digits_only, "V", "1/1/2030")}]
+    monkeypatch.setattr(sheet_ids, "fetch_sheet_html", lambda: sheet_html(rows, ids=True))
+    sheet_ids.main()
+    out = capsys.readouterr().out
+    assert "row 3 '5.41E+32'" in out and "row 4" not in out  # an all-digit id that is right isn't flagged

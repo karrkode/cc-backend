@@ -11,7 +11,12 @@ Pasting those exact values matters: they're the ids events already have, which t
 share links and people's "I've been" marks are tied to. Re-run it whenever rows are added
 without an ID, and fill in just the blank ones.
 """
-from app.sheet import fetch_sheet_html, parse_sheet, row_id
+import re
+
+from app.sheet import event_id, fetch_sheet_html, parse_sheet, row_id
+
+# What Sheets makes of an id like 038656 or 541e30: 38656, 5.41E+32
+NUMBER = re.compile(r"\d+(\.\d+)?([eE][+-]?\d+)?")
 
 
 def main():
@@ -25,6 +30,11 @@ def main():
           f"{len(events)} events, {len(missing)} without an ID.")
     if has_column and missing:
         print("Rows missing an ID: " + ", ".join(str(r["row"]) for r in missing if r["row"]))
+    numeric = [r for r in events if NUMBER.fullmatch(r["id"].strip())
+               and r["id"].strip() != event_id(r["event"], r["venue"], r["begin"])]
+    if numeric:
+        print("These IDs look like numbers Google Sheets reformatted (set the column to Format > Number > "
+              "Plain text, then retype them): " + ", ".join(f'row {r["row"]} {r["id"]!r}' for r in numeric))
     if not missing:
         print("Nothing to fill in.")
         return

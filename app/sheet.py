@@ -180,6 +180,7 @@ def normalize(rows: list[dict]) -> list[dict]:
             "hood": r["hood"], "area": AREA_LABELS[area_of(r["hood"])],
             "cost": r["cost"] or "TBD", "min": min_price(r["cost"]),
             "type": page_type(r["event"], category), "url": r["url"], "idFromSheet": from_sheet,
+            "computedId": event_id(r["event"], r["venue"], r["begin"]),
         })
     return events
 

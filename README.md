@@ -105,8 +105,14 @@ It says whether the sheet has a column headed **ID** yet and which rows are miss
 then prints a column to paste in, one line per sheet row from the row under the header.
 The values are each row's **current** id, the one its event already has, so share links
 and "I've been" marks carry over. Keep existing IDs as they are; any unique text up to
-40 characters works for new rows, but pasting the printed value is simplest. If two rows
-share an ID, the first one wins.
+40 characters works for new rows (type one in when you add the row, e.g. `ev-0325`). If two
+rows share an ID, the first one wins.
+
+Set the column to **Format → Number → Plain text**, or Sheets turns ids like `038656` or
+`541e30` into numbers (`38656`, `5.41E+32`). `scripts.sheet_ids` lists any that look
+reformatted. The sync copes meanwhile: a row whose ID matches no event, but whose title,
+venue and start date match an event no other row claims, keeps that event, and the run's
+message says how many rows that happened to.
 
 If you hide the column in Google Sheets, run `scripts.sheet_ids` afterwards and check it
 still says "ID column: found"; if hiding removes it from the sheet's public view, the sync
