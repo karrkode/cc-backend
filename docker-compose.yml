@@ -1,0 +1,48 @@
+# Local development: Postgres + the API.
+#   docker compose up --build                       page on http://localhost:4173, API on :8000 (docs at /docs)
+#   docker compose run --rm api python -m scripts.seed
+#   docker compose run --rm api python -m scripts.make_admin you@example.com
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: culture
+      POSTGRES_PASSWORD: culture
+      POSTGRES_DB: culture
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U culture -d culture"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  api:
+    build: .
+    environment:
+      ENV: local
+      DATABASE_URL: postgresql+psycopg://culture:culture@db:5432/culture
+      JWT_SECRET: local-dev-secret-not-for-production
+      CORS_ORIGINS: http://localhost:4173,http://127.0.0.1:4173
+      COOKIE_SECURE: "false"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../data:/data:ro  # data/events.json, for the seed script
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    # The static page, served the way S3 + CloudFront will serve it: http://localhost:4173
+    image: nginx:1.27-alpine
+    ports:
+      - "4173:80"
+    volumes:
+      - ../public:/usr/share/nginx/html:ro
+
+volumes:
+  pgdata:
