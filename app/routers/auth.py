@@ -1,7 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
-from sqlalchemy import select, update
+from sqlalchemy import delete, or_, select
 from sqlalchemy.exc import IntegrityError
 
 from ..config import get_settings
@@ -16,6 +16,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 COOKIE = "cc_refresh"
 COOKIE_PATH = "/auth"  # the browser only sends it to the auth endpoints
+REUSE_GRACE_SECONDS = 30
 
 
 def _utc(dt: datetime) -> datetime:
@@ -65,7 +66,12 @@ def login(body: LoginIn, db: DB, response: Response):
 
 @router.post("/refresh", response_model=TokenOut)
 def refresh(db: DB, response: Response, cc_refresh: str | None = Cookie(default=None)):
-    """Swap the refresh cookie for a new access token and a new refresh cookie (rotation)."""
+    """Swap the refresh cookie for a new access token and a new refresh cookie (rotation).
+
+    A token stays usable for REUSE_GRACE_SECONDS after it is swapped, so two tabs that
+    refresh at the same moment both succeed. Used again after that, it was probably
+    copied, so every session for the account is ended.
+    """
     if not cc_refresh:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not signed in")
     token = db.scalar(select(RefreshToken).where(RefreshToken.token_hash == hash_refresh_token(cc_refresh))
@@ -74,26 +80,28 @@ def refresh(db: DB, response: Response, cc_refresh: str | None = Cookie(default=
     if token is None or _utc(token.expires_at) <= now:
         _clear_cookie(response)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Session expired. Sign in again.")
-    if token.revoked_at is not None:
-        # A token that was already swapped is being used again, so it may have been stolen.
-        # End every session for this user.
-        db.execute(update(RefreshToken).where(RefreshToken.user_id == token.user_id,
-                                              RefreshToken.revoked_at.is_(None)).values(revoked_at=now))
+    if token.revoked_at is not None and (now - _utc(token.revoked_at)).total_seconds() > REUSE_GRACE_SECONDS:
+        db.execute(delete(RefreshToken).where(RefreshToken.user_id == token.user_id))
         db.commit()
         _clear_cookie(response)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Session expired. Sign in again.")
-    token.revoked_at = now
+    if token.revoked_at is None:
+        token.revoked_at = now
     user = db.get(User, token.user_id)
     return _issue(db, user, response)
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 def logout(db: DB, response: Response, cc_refresh: str | None = Cookie(default=None)):
+    """Delete this session's refresh token, and the user's already-swapped ones so none
+    of them can be replayed during the grace period."""
     if cc_refresh:
-        db.execute(update(RefreshToken).where(RefreshToken.token_hash == hash_refresh_token(cc_refresh),
-                                              RefreshToken.revoked_at.is_(None))
-                   .values(revoked_at=datetime.now(UTC)))
-        db.commit()
+        token = db.scalar(select(RefreshToken).where(RefreshToken.token_hash == hash_refresh_token(cc_refresh)))
+        if token is not None:
+            db.execute(delete(RefreshToken).where(
+                RefreshToken.user_id == token.user_id,
+                or_(RefreshToken.id == token.id, RefreshToken.revoked_at.is_not(None))))
+            db.commit()
     _clear_cookie(response)
 
 

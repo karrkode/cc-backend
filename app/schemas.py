@@ -69,6 +69,7 @@ class VenueIn(BaseModel):
 
 class EventOut(ORM):
     id: int
+    source_id: str | None  # id from the old Google Sheet site, so its share links keep working
     title: str
     venue: VenueOut
     begin_date: date | None

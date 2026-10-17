@@ -1,5 +1,5 @@
 # Local development: Postgres + the API.
-#   docker compose up --build                       API on http://localhost:8000 (docs at /docs)
+#   docker compose up --build                       page on http://localhost:4173, API on :8000 (docs at /docs)
 #   docker compose run --rm api python -m scripts.seed
 #   docker compose run --rm api python -m scripts.make_admin you@example.com
 
@@ -35,6 +35,14 @@ services:
     depends_on:
       db:
         condition: service_healthy
+
+  web:
+    # The static page, served the way S3 + CloudFront will serve it: http://localhost:4173
+    image: nginx:1.27-alpine
+    ports:
+      - "4173:80"
+    volumes:
+      - ../public:/usr/share/nginx/html:ro
 
 volumes:
   pgdata:

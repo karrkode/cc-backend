@@ -13,8 +13,13 @@ docker compose up --build -d                                  # Postgres + API, 
 docker compose run --rm api python -m scripts.seed            # load data/events.json (safe to re-run)
 ```
 
+- The site: http://localhost:4173 (`public/index.html`, served by nginx the way S3 will serve it)
 - API: http://localhost:8000
 - Interactive docs (try every endpoint): http://localhost:8000/docs
+
+The page finds the API by itself: `localhost:8000` when it is opened from localhost, and
+`api.<its own domain>` anywhere else. To point it somewhere else, set the `cc-api` meta tag
+at the top of `public/index.html`.
 
 To make yourself an admin, register through `/docs` (POST /auth/register), then:
 
@@ -66,8 +71,12 @@ applies new migrations when it starts.
 - It also sets a 30-day **refresh token** in an `HttpOnly`, `SameSite=Lax` cookie
   scoped to `/auth`, so page scripts can't read it. Only its SHA-256 hash is stored.
 - `POST /auth/refresh` swaps the cookie for a new access token **and a new refresh
-  token** (rotation). If an already-used refresh token shows up again, it was probably
+  token** (rotation). A swapped token still works for 30 seconds, so two tabs refreshing
+  at the same moment both succeed. If it shows up again after that, it was probably
   copied, so every session for that account is ended.
+- Signing out deletes the session's refresh token (and its already-swapped ones).
+- The page keeps the access token in a JavaScript variable only, never in localStorage,
+  and sends refreshes one at a time.
 - A user's role is read from the database on each request, so removing an admin takes
   effect immediately rather than when their token expires.
 - Login and register are limited to 10 tries a minute per IP. The counter is in memory,

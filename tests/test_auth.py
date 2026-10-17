@@ -1,9 +1,11 @@
 from datetime import UTC, datetime, timedelta
 
 import jwt
+from sqlalchemy import select
 
 from app.config import get_settings
-from app.routers.auth import COOKIE
+from app.models import RefreshToken
+from app.routers.auth import COOKIE, REUSE_GRACE_SECONDS
 
 from .conftest import auth, register
 
@@ -72,12 +74,27 @@ def test_refresh_rotates_the_cookie(client, user_token):
     assert client.get("/auth/me", headers=auth(r.json()["access_token"])).status_code == 200
 
 
-def test_reusing_an_old_refresh_token_ends_every_session(client, user_token):
+def _age_swapped_tokens(db, seconds):
+    for t in db.scalars(select(RefreshToken).where(RefreshToken.revoked_at.is_not(None))):
+        t.revoked_at = t.revoked_at - timedelta(seconds=seconds)
+    db.commit()
+
+
+def test_two_tabs_refreshing_at_once_both_succeed(client, user_token):
+    shared = client.cookies[COOKIE]
+    assert client.post("/auth/refresh").status_code == 200  # tab 1
+    client.cookies.set(COOKIE, shared, path="/auth")
+    assert client.post("/auth/refresh").status_code == 200  # tab 2, same old cookie, moments later
+    assert client.post("/auth/refresh").status_code == 200  # and the session carries on
+
+
+def test_reusing_an_old_refresh_token_ends_every_session(client, user_token, db):
     stolen = client.cookies[COOKIE]
     assert client.post("/auth/refresh").status_code == 200  # the real user refreshes
     current = client.cookies[COOKIE]
+    _age_swapped_tokens(db, REUSE_GRACE_SECONDS + 1)
 
-    client.cookies.set(COOKIE, stolen, path="/auth")  # an attacker replays the old one
+    client.cookies.set(COOKIE, stolen, path="/auth")  # an attacker replays the old one later
     assert client.post("/auth/refresh").status_code == 401
 
     client.cookies.set(COOKIE, current, path="/auth")  # so the real user's session is ended too
@@ -85,10 +102,13 @@ def test_reusing_an_old_refresh_token_ends_every_session(client, user_token):
 
 
 def test_logout_revokes_the_refresh_token(client, user_token):
-    token = client.cookies[COOKIE]
+    old = client.cookies[COOKIE]
+    assert client.post("/auth/refresh").status_code == 200
+    current = client.cookies[COOKIE]
     assert client.post("/auth/logout").status_code == 204
-    client.cookies.set(COOKIE, token, path="/auth")
-    assert client.post("/auth/refresh").status_code == 401
+    for token in (current, old):  # neither works, even inside the grace period
+        client.cookies.set(COOKIE, token, path="/auth")
+        assert client.post("/auth/refresh").status_code == 401
 
 
 def test_refresh_without_cookie(client):
