@@ -82,6 +82,9 @@ class EventOut(ORM):
     url: str
     status: EventStatus
     publish_at: datetime | None  # set while an approved event is scheduled for later
+    # "Suggested by …": the submitter's display name if they opted in for this event, else null.
+    # Never the email or id; those are only in EventAdminOut.
+    submitted_by_name: str | None
 
 
 class EventPage(BaseModel):
@@ -101,6 +104,7 @@ class EventAdminOut(EventOut):
     """EventOut plus who sent it in. Only the /admin routes return this."""
     # null for sheet and seed events, and when the submitter's account was deleted
     submitted_by: SubmitterOut | None = Field(validation_alias="submitter")
+    credit_me: bool  # whether they asked to be credited publicly
 
 
 class EventAdminPage(BaseModel):
@@ -145,6 +149,9 @@ class EventIn(_EventFields):
     venue: VenueIn | None = None
     publish: Publish = "review"
     publish_at: datetime | None = None
+    # Opt in to a public "Suggested by <display name>" on this event. Who submitted it
+    # always comes from the sign-in, never from the request.
+    credit_me: bool = False
 
     @model_validator(mode="after")
     def _one_venue(self):
