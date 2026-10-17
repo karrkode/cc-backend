@@ -93,11 +93,11 @@ variable "github_backend_repo" {
 
 variable "github_frontend_repo" {
   type    = string
-  default = "karrkode/cultures-crew-app"
+  default = "karrkode/cc-site"
 }
 
-variable "github_deploy_refs" {
-  description = "Branches allowed to deploy."
-  type        = list(string)
-  default     = ["refs/heads/main"]
+variable "github_deploy_environment" {
+  description = "GitHub environment deploy jobs run in; restrict it to main in each repo's settings."
+  type        = string
+  default     = "production"
 }

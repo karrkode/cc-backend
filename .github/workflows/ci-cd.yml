@@ -1,0 +1,137 @@
+# Tests every pull request; on main, also builds the image, pushes it to ECR and deploys it.
+# AWS access is through OIDC (no stored keys): the deploy job runs in the "production"
+# environment, which only main may use, and assumes the role in vars.AWS_DEPLOY_ROLE_ARN.
+name: CI/CD
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: culture
+          POSTGRES_PASSWORD: culture
+          POSTGRES_DB: culture_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U culture -d culture_test"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12" # same as the Docker image
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - name: Tests on SQLite
+        run: pytest -q
+      - name: Tests on Postgres (includes "migrations match the models")
+        env:
+          TEST_DATABASE_URL: postgresql+psycopg://culture:culture@localhost:5432/culture_test
+        run: pytest -q
+
+  infra:
+    name: Terraform and scripts
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.16"
+      - name: Formatting
+        run: terraform fmt -check -recursive infra
+      - name: Validate
+        run: |
+          for dir in infra/bootstrap infra/aws; do
+            terraform -chdir="$dir" init -backend=false -input=false >/dev/null
+            terraform -chdir="$dir" validate
+          done
+      - name: Server scripts parse
+        run: |
+          for f in infra/aws/server/*.sh; do bash -n "$f" && echo "ok: $f"; done
+      # Plans and applies stay on the maintainer's machine: a CI identity that could read
+      # the whole account (as `terraform plan` needs) isn't worth the risk for this project.
+
+  deploy:
+    name: Deploy to production
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [test, infra]
+    runs-on: ubuntu-24.04-arm # native arm64, matching the Graviton server
+    environment:
+      name: production
+      url: https://api.chiculturecrew.com/docs
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false # never stop a deploy halfway; queue the next one
+    permissions:
+      contents: read
+      id-token: write # lets the job ask GitHub for an OIDC token to trade for AWS credentials
+    env:
+      AWS_REGION: us-east-2
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push the image
+        id: image
+        env:
+          REPO: ${{ steps.ecr.outputs.registry }}/culture-crew/api
+        run: |
+          TAG="${GITHUB_SHA::7}"
+          docker build -t "$REPO:$TAG" -t "$REPO:latest" .
+          docker push "$REPO:$TAG"
+          docker push "$REPO:latest"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy on the server (SSM Run Command)
+        env:
+          TAG: ${{ steps.image.outputs.tag }}
+        run: |
+          CID=$(aws ssm send-command \
+            --document-name AWS-RunShellScript \
+            --targets Key=tag:Name,Values=culture-crew-api \
+            --comment "Deploy $TAG from GitHub Actions run $GITHUB_RUN_ID" \
+            --timeout-seconds 600 \
+            --parameters "commands=[\"/usr/local/bin/culture-crew-deploy $TAG\"],executionTimeout=[\"600\"]" \
+            --query Command.CommandId --output text)
+          echo "SSM command $CID"
+          for _ in $(seq 1 120); do
+            STATUS=$(aws ssm list-command-invocations --command-id "$CID" --query 'CommandInvocations[0].Status' --output text)
+            case "$STATUS" in Success|Failed|TimedOut|Cancelled) break ;; esac
+            sleep 5
+          done
+          aws ssm list-command-invocations --command-id "$CID" --details \
+            --query 'CommandInvocations[0].CommandPlugins[0].Output' --output text | grep -vE 'Pulling fs|Waiting|Verifying|Download complete|Pull complete|Already exists'
+          echo "Deploy finished with status: $STATUS"
+          [ "$STATUS" = Success ]
+
+      - name: Check the live API
+        run: |
+          for _ in $(seq 1 20); do
+            if curl -fsS https://api.chiculturecrew.com/health; then echo; exit 0; fi
+            sleep 3
+          done
+          echo "The API isn't answering /health" >&2
+          exit 1
