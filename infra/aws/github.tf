@@ -2,9 +2,11 @@
 # credentials through OIDC.
 #
 # Deploy jobs run in a GitHub *environment* ("production"), which is what shows deploys in
-# Jira. A job in an environment gets the subject "repo:<owner>/<repo>:environment:<name>"
-# (not ":ref:refs/heads/main"), so the roles trust exactly that. The environment itself is
-# limited to the main branch in each repo's GitHub settings, so other branches can't use it.
+# Jira. Such a job's token subject is
+#   repo:<owner>@<owner id>/<repo>@<repo id>:environment:<name>
+# GitHub includes the numeric ids so a renamed or re-created repo with the same name can't
+# inherit access (ids are never reused). The roles trust exactly that subject, and the
+# environment is limited to main in each repo's GitHub settings.
 
 resource "aws_iam_openid_connect_provider" "github" {
   url            = "https://token.actions.githubusercontent.com"
@@ -12,8 +14,16 @@ resource "aws_iam_openid_connect_provider" "github" {
 }
 
 locals {
+  github_repo_ids = {
+    (var.github_backend_repo)  = var.github_backend_repo_id
+    (var.github_frontend_repo) = var.github_frontend_repo_id
+  }
+  github_subject = {
+    for repo, id in local.github_repo_ids : repo => format("repo:%s@%d/%s@%d:environment:%s",
+    split("/", repo)[0], var.github_owner_id, split("/", repo)[1], id, var.github_deploy_environment)
+  }
   github_trust = {
-    for repo in [var.github_backend_repo, var.github_frontend_repo] : repo => jsonencode({
+    for repo in keys(local.github_repo_ids) : repo => jsonencode({
       Version = "2012-10-17"
       Statement = [{
         Effect    = "Allow"
@@ -22,7 +32,7 @@ locals {
         Condition = {
           StringEquals = {
             "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
-            "token.actions.githubusercontent.com:sub" = "repo:${repo}:environment:${var.github_deploy_environment}"
+            "token.actions.githubusercontent.com:sub" = local.github_subject[repo]
           }
         }
       }]

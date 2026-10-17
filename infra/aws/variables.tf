@@ -96,6 +96,23 @@ variable "github_frontend_repo" {
   default = "karrkode/cc-site"
 }
 
+# GitHub's permanent numeric ids (from https://api.github.com/repos/<owner>/<repo>);
+# they appear in the OIDC token subject alongside the names.
+variable "github_owner_id" {
+  type    = number
+  default = 2112037
+}
+
+variable "github_backend_repo_id" {
+  type    = number
+  default = 1422857264
+}
+
+variable "github_frontend_repo_id" {
+  type    = number
+  default = 1412312949
+}
+
 variable "github_deploy_environment" {
   description = "GitHub environment deploy jobs run in; restrict it to main in each repo's settings."
   type        = string
