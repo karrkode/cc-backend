@@ -1,9 +1,12 @@
 # Culture Crew on AWS
 
-Terraform for the whole stack, in **us-east-2 (Ohio)**:
+Terraform for the whole stack, in **us-east-2 (Ohio)**, serving
+**https://chiculturecrew.com** (www. redirects there) and **https://api.chiculturecrew.com**.
+Route 53 hosts the whole `chiculturecrew.com` zone, including the Microsoft 365 email records;
+the domain itself is still registered at GoDaddy.
 
 ```
-Browser ─► Route 53 ─┬─► CloudFront (HTTPS, ACM cert from us-east-1) ─► S3 bucket (private; the page)
+Browser ─► Route 53 ─┬─► CloudFront (HTTPS, ACM cert from us-east-1, www. → bare domain) ─► S3 (private)
                      └─► Elastic IP ─► EC2 t4g.micro, public subnet
                                         Caddy (HTTPS, Let's Encrypt) ─► API container (from ECR)
                                                                           │
@@ -23,8 +26,9 @@ GitHub Actions ─► OIDC roles (no stored keys) ─► push image / upload pag
 | `aws/database.tf` | RDS Postgres; RDS generates and stores the password |
 | `aws/secrets.tf` | JWT signing key, written write-only so it never enters Terraform state |
 | `aws/server.tf`, `aws/server/` | the EC2 instance, its IAM role, and its boot and deploy scripts |
-| `aws/frontend.tf` | S3 bucket, CloudFront, ACM certificate |
-| `aws/dns.tf` | the Route 53 zone and records |
+| `aws/frontend.tf`, `aws/www-redirect.js.tftpl` | S3 bucket, CloudFront, ACM certificate, 404 page, www. redirect |
+| `aws/dns.tf` | the Route 53 zone, site and API records |
+| `aws/dns_mail.tf` | email and Microsoft 365 records, copied from GoDaddy; change only when the mail provider asks |
 | `aws/scheduler.tf` | the nightly Google Sheet sync |
 | `aws/monitoring.tf` | log groups, alarms, failed-command alerts, monthly budget |
 | `aws/github.tf` | OIDC deploy roles for both repos |
@@ -46,7 +50,7 @@ cd infra/bootstrap
 terraform init && terraform apply
 ```
 
-### 2. The zone first, so GoDaddy can delegate to it
+### 2. The zone first
 
 ```
 cd ../aws
@@ -56,9 +60,10 @@ terraform apply -target=aws_route53_zone.main
 terraform output name_servers
 ```
 
-At **GoDaddy → DNS → Add record**, add four **NS** records, host **`aws`**, one per name
-server above. This touches nothing else in the zone: the live site and email are unaffected.
-Check it with `dig +short NS aws.chiculturecrew.com` (can take a few minutes).
+A rebuilt zone gets **new name servers**. Set them at **GoDaddy → chiculturecrew.com →
+Nameservers** before the next step; the certificate can't validate until the domain points
+at this zone. (The first time round this was done with no downtime; see *How the domain
+moved* below.)
 
 ### 3. Everything else
 
@@ -85,7 +90,7 @@ aws ssm send-command --document-name AWS-RunShellScript \
 ```
 
 The deploy runs the database migrations; the sync loads every event from the sheet.
-`https://api.aws.chiculturecrew.com/health` should answer `{"status":"ok"}`.
+`https://api.chiculturecrew.com/health` should answer `{"status":"ok"}`.
 
 ### 5. The page
 
@@ -93,10 +98,11 @@ From the cc-site repo:
 
 ```
 aws s3 cp public/index.html s3://<site_bucket>/index.html --cache-control no-cache
+aws s3 cp public/404.html s3://<site_bucket>/404.html --cache-control max-age=300
 aws cloudfront create-invalidation --distribution-id <cloudfront_distribution_id> --paths '/*'
 ```
 
-Then open https://aws.chiculturecrew.com.
+Then open https://chiculturecrew.com.
 
 ## Day to day
 
@@ -109,8 +115,27 @@ Then open https://aws.chiculturecrew.com.
 | Look at the database | run the `db_tunnel_command` output, then connect a GUI to `localhost:5433` (user `culture_admin`, password from Secrets Manager) |
 | Make an admin | on the server: `docker exec api python -m scripts.make_admin you@example.com` |
 
+## How the domain moved (October 2026)
+
+The site was first staged on `aws.chiculturecrew.com`, delegated from GoDaddy with four NS
+records, while Netlify kept serving the live site. The cutover then avoided any downtime
+for the site or email:
+
+1. **Copy the zone.** The GoDaddy zone export became `dns_mail.tf`. Every record was
+   compared against GoDaddy's own answers, and later against Route 53's.
+2. **Get certificates while GoDaddy was still authoritative.** ACM gives a domain the same
+   validation CNAME every time within an account, so a throwaway certificate request
+   revealed the records; they were added at GoDaddy along with `api` → the Elastic IP.
+   The real certificate then validated straight away, and Caddy got its certificate too.
+3. **Apply, then test the real names against CloudFront** (`curl --resolve`) before any
+   visitor could reach them.
+4. **Switch the nameservers at GoDaddy.** For up to 48 hours (the `.com` NS TTL) resolvers
+   could get either side; both served working answers and identical email records.
+
 ## Tearing it down
 
-Set `db_deletion_protection = false` in `terraform.tfvars`, `terraform apply`, then
+**This takes the site and the domain's email offline** unless the nameservers go back to
+GoDaddy first (`ns51`/`ns52.domaincontrol.com`), with the email records re-created there.
+Then: set `db_deletion_protection = false` in `terraform.tfvars`, `terraform apply`, and
 `terraform destroy`. RDS keeps a final snapshot (`culture-crew-db-final`), which you can
-delete in the console. Remove the `aws` NS records at GoDaddy afterwards.
+delete in the console.

@@ -10,30 +10,30 @@ variable "region" {
 }
 
 # ---- domains ------------------------------------------------------------------
-# Staging: GoDaddy hands just aws.chiculturecrew.com to Route 53 (one NS record), so the
-# live site and email are untouched. At cutover these become the bare domain.
+# Production: Route 53 hosts the whole chiculturecrew.com zone, email records included
+# (dns_mail.tf). The site was first staged on aws.chiculturecrew.com, delegated from GoDaddy.
 
 variable "zone_name" {
   description = "The Route 53 hosted zone Terraform creates and manages."
   type        = string
-  default     = "aws.chiculturecrew.com"
+  default     = "chiculturecrew.com"
 }
 
 variable "site_domain" {
-  description = "Where the page is served."
+  description = "Where the page is served; the canonical address everything else redirects to."
   type        = string
-  default     = "aws.chiculturecrew.com"
+  default     = "chiculturecrew.com"
 }
 
 variable "site_aliases" {
-  description = "Other names for the page, e.g. www.chiculturecrew.com after cutover."
+  description = "Other names for the page; they redirect to site_domain."
   type        = list(string)
-  default     = []
+  default     = ["www.chiculturecrew.com"]
 }
 
 variable "api_domain" {
   type    = string
-  default = "api.aws.chiculturecrew.com"
+  default = "api.chiculturecrew.com"
 }
 
 # ---- sizes (free-tier eligible defaults) ----------------------------------------

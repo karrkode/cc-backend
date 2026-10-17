@@ -79,6 +79,16 @@ resource "aws_acm_certificate_validation" "site" {
 
 # ---- CloudFront ---------------------------------------------------------------------
 
+# Redirects www. (and any other alias) to the canonical site_domain. Runs at the edge on
+# every request, in well under a millisecond; requests for the canonical host pass through.
+resource "aws_cloudfront_function" "canonical_host" {
+  name    = "${var.name}-canonical-host"
+  runtime = "cloudfront-js-2.0"
+  comment = "Redirect aliases such as www. to ${var.site_domain}"
+  publish = true
+  code    = templatefile("${path.module}/www-redirect.js.tftpl", { canonical_host = var.site_domain })
+}
+
 locals {
   # AWS managed policies
   cache_policy_caching_optimized   = "658327ea-f89d-4fab-a63d-7e88639e58f6"
@@ -107,6 +117,11 @@ resource "aws_cloudfront_distribution" "site" {
     compress                   = true
     cache_policy_id            = local.cache_policy_caching_optimized
     response_headers_policy_id = local.response_policy_security_headers
+
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.canonical_host.arn
+    }
   }
 
   # Any path that isn't on the site gets the friendly 404 page. The private bucket answers

@@ -1,0 +1,25 @@
+// CloudFront Function (viewer request): send any other hostname, e.g. www., to the
+// canonical one with a permanent redirect, keeping the path and query string.
+function handler(event) {
+  var request = event.request;
+  var host = request.headers.host ? request.headers.host.value : "";
+  if (host === "${canonical_host}") {
+    return request;
+  }
+  var query = [];
+  for (var key in request.querystring) {
+    var param = request.querystring[key];
+    var values = param.multiValue ? param.multiValue : [param];
+    for (var i = 0; i < values.length; i++) {
+      query.push(values[i].value === "" ? key : key + "=" + values[i].value);
+    }
+  }
+  return {
+    statusCode: 301,
+    statusDescription: "Moved Permanently",
+    headers: {
+      location: { value: "https://${canonical_host}" + request.uri + (query.length ? "?" + query.join("&") : "") },
+      "cache-control": { value: "max-age=3600" }
+    }
+  };
+}
