@@ -14,18 +14,28 @@ SOON = date.today() + timedelta(days=10)
 LATER = date.today() + timedelta(days=60)
 
 
-def sheet_html(rows, header=("Event", "Venue", "Begin Date", "End", "Neighborhood", "Entry Cost", "Category")):
-    """HTML shaped like Google's htmlview: a title row, the header row, then the data rows."""
+HEADER = ("Event", "Venue", "Begin Date", "End", "Neighborhood", "Entry Cost", "Category")
+
+
+def sheet_html(rows, header=HEADER, ids=False):
+    """HTML shaped like Google's htmlview: numbered rows (a title row, the header row, then the
+    data rows). ids=True adds an ID column, filled from each row's "id"."""
+    header = header + ("ID",) if ids else header
+    trs = []
+
     def tr(cells):
-        return "<tr>" + "".join(f'<td class="s1">{c}</td>' for c in cells) + "</tr>"
-    body = [tr(["Culture Crew list", "", ""]), tr(header)]
+        n = len(trs) + 1
+        trs.append(f'<tr><th id="0R{n - 1}"><div>{n}</div></th>' +
+                   "".join(f'<td class="s1">{c}</td>' for c in cells) + "</tr>")
+    tr(["Culture Crew list", "", ""])
+    tr(header)
     for r in rows:
         title = r["title"]
         if r.get("url"):
             title = f'<a target="_blank" href="https://www.google.com/url?q={r["url"]}&amp;sa=D">{title}</a>'
-        body.append(tr([title, r["venue"], r.get("begin", ""), r.get("end", ""), r.get("hood", ""),
-                        r.get("cost", ""), r.get("category", "Theater")]))
-    return "<table><tbody>" + "".join(body) + "</tbody></table>"
+        tr([title, r["venue"], r.get("begin", ""), r.get("end", ""), r.get("hood", ""),
+            r.get("cost", ""), r.get("category", "Theater")] + ([r.get("id", "")] if ids else []))
+    return "<table><tbody>" + "".join(trs) + "</tbody></table>"
 
 
 def row(title, venue="Goodman Theatre", begin=None, end=None, **kw):
@@ -33,8 +43,8 @@ def row(title, venue="Goodman Theatre", begin=None, end=None, **kw):
             "end": (end or LATER).strftime("%m/%d/%Y"), "hood": kw.pop("hood", "Loop"), **kw}
 
 
-def fake(rows):
-    return lambda: sheet_html(rows)
+def fake(rows, ids=False):
+    return lambda: sheet_html(rows, ids=ids)
 
 
 def sheet_event(db, title, venue="Goodman Theatre", begin=None):
@@ -48,7 +58,7 @@ def test_parse_finds_the_header_and_unwraps_google_links():
     parsed = parse_sheet(page)
     assert parsed == [{"event": "Hamlet", "venue": "Goodman Theatre", "begin": SOON.strftime("%m/%d/%Y"),
                        "end": LATER.strftime("%m/%d/%Y"), "hood": "Loop", "cost": "$35&up",
-                       "category": "Theater", "url": "https://goodman.example/hamlet"}]
+                       "category": "Theater", "id": "", "url": "https://goodman.example/hamlet", "row": 3}]
 
 
 def test_columns_can_be_reordered():
@@ -164,3 +174,61 @@ def test_sync_log_is_admin_only(client, db, user_token, admin_token):
     assert [r["result"] for r in runs] == ["failed", "ok"]  # newest first
     assert db.scalar(select(func.count(SheetSync.id))) == 2
     assert db.scalar(select(func.count(User.id))) == 2
+
+
+# ---- the sheet's ID column (CC-32) -------------------------------------------
+
+def test_editing_title_venue_or_date_keeps_the_event(client, db, user_token):
+    sync_from_sheet(db, fetch=fake([row("Hamlet", id="ev-1"), row("Bug", venue="Steppenwolf", id="ev-2")], ids=True))
+    hamlet = db.scalar(select(Event).where(Event.source_id == "ev-1"))
+    assert client.put(f"/me/attended/{hamlet.id}", headers=auth(user_token)).status_code == 201
+
+    edited = [row("Hamlet, Prince of Denmark", venue="Court Theatre", hood="Hyde Park",
+                  begin=SOON + timedelta(days=1), id="ev-1"),
+              row("Bug", venue="Steppenwolf", id="ev-2")]
+    run = sync_from_sheet(db, fetch=fake(edited, ids=True))
+    assert (run.added, run.updated, run.unchanged, run.withdrawn) == (0, 1, 1, 0)
+    db.refresh(hamlet)
+    assert hamlet.title == "Hamlet, Prince of Denmark" and hamlet.venue.name == "Court Theatre"
+    assert hamlet.begin_date == SOON + timedelta(days=1) and hamlet.status == EventStatus.approved
+    assert db.scalar(select(func.count(Attended.event_id))) == 1  # the "I've been" mark is still there
+    assert [a["event"]["id"] for a in client.get("/me/attended", headers=auth(user_token)).json()] == [hamlet.id]
+
+
+def test_adding_the_id_column_with_current_ids_changes_nothing(db):
+    rows = [row("Hamlet"), row("Bug", venue="Steppenwolf")]
+    sync_from_sheet(db, fetch=fake(rows))
+    before = {e.source_id: e.id for e in db.scalars(select(Event))}
+    with_ids = [{**r, "id": event_id(r["title"], r["venue"], r["begin"])} for r in rows]
+    run = sync_from_sheet(db, fetch=fake(with_ids, ids=True))
+    assert (run.added, run.updated, run.unchanged, run.withdrawn) == (0, 0, 2, 0)
+    assert {e.source_id: e.id for e in db.scalars(select(Event))} == before
+    assert run.message == ""  # every row has an ID now
+
+
+def test_rows_without_an_id_fall_back_to_the_computed_one(db):
+    run = sync_from_sheet(db, fetch=fake([row("Hamlet", id="ev-1"), row("Bug", venue="Steppenwolf")], ids=True))
+    assert run.added == 2 and "1 rows have no ID" in run.message
+    assert sheet_event(db, "Bug", venue="Steppenwolf") is not None  # computed id, as before
+    assert db.scalar(select(Event).where(Event.source_id == "ev-1")).title == "Hamlet"
+
+
+def test_bad_or_repeated_ids(db):
+    too_long = "x" * 41
+    run = sync_from_sheet(db, fetch=fake([row("Hamlet", id=too_long), row("Bug", id="same"),
+                                          row("Copy of Bug", id="same")], ids=True))
+    assert run.added == 2  # the second "same" row is a repeat: the first wins
+    assert sheet_event(db, "Hamlet") is not None  # too long to store: computed id instead
+    assert db.scalar(select(Event).where(Event.source_id == "same")).title == "Bug"
+
+
+def test_sheet_ids_script_prints_a_column_that_lines_up(monkeypatch, capsys):
+    from scripts import sheet_ids
+    rows = [row("Hamlet", id="ev-1"), {**row("Blank"), "title": ""}, row("Bug", venue="Steppenwolf")]
+    monkeypatch.setattr(sheet_ids, "fetch_sheet_html", lambda: sheet_html(rows, ids=True))
+    sheet_ids.main()
+    out = capsys.readouterr().out
+    assert "ID column: found. 2 events, 1 without an ID." in out
+    assert "Rows missing an ID: 5" in out and "starting at row 3" in out
+    column = out.split("ID):\n\n", 1)[1].splitlines()
+    assert column == ["ev-1", "", event_id("Bug", "Steppenwolf", SOON.strftime("%m/%d/%Y"))]

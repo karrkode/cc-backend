@@ -84,13 +84,33 @@ What a run does:
 - If the sheet **can't be read**, has no header row, or suddenly has **fewer than half** the
   events currently live from it, the run changes nothing and is recorded as failed. That
   is far more likely a Google hiccup or a half-cleared tab than a real mass removal.
-- The sheet has no id column, so an event is identified by **title + venue + start date**.
-  Editing one of those in the sheet makes it a new event (the old one is withdrawn).
+- An event is identified by the sheet's **ID column**. A row with a blank ID falls back to an
+  id worked out from **title + venue + start date**, so editing one of those makes it a new
+  event (the old one is withdrawn). Each run notes how many rows have no ID.
 - Every run is logged in `sheet_syncs`; admins can read it at `GET /admin/syncs`. The
   script exits with status 1 on failure, so the scheduler can alert on it.
 
 `scripts/seed.py` uses the same code to load `seed/events.json` into an empty database;
 it never withdraws anything.
+
+### The ID column
+
+Fill it in once, and again whenever rows are added without one:
+
+```
+.venv/bin/python -m scripts.sheet_ids    # reads the sheet only; needs no database
+```
+
+It says whether the sheet has a column headed **ID** yet and which rows are missing one,
+then prints a column to paste in, one line per sheet row from the row under the header.
+The values are each row's **current** id, the one its event already has, so share links
+and "I've been" marks carry over. Keep existing IDs as they are; any unique text up to
+40 characters works for new rows, but pasting the printed value is simplest. If two rows
+share an ID, the first one wins.
+
+If you hide the column in Google Sheets, run `scripts.sheet_ids` afterwards and check it
+still says "ID column: found"; if hiding removes it from the sheet's public view, the sync
+can't see it.
 
 ## Tests
 
@@ -161,6 +181,7 @@ alembic/             migrations
 app/sheet.py         reads and parses the Google Sheet
 app/sync.py          applies the sheet (or the seed file) to the database
 scripts/sync_sheet.py  the nightly sync
+scripts/sheet_ids.py   the ID column to paste into the sheet
 scripts/seed.py      import seed/events.json
 seed/events.json     the events from the old Google Sheet site
 scripts/make_admin.py

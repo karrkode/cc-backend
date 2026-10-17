@@ -107,7 +107,11 @@ def sync_from_sheet(db: Session, *, dry_run: bool = False, fetch=None) -> SheetS
         for k, v in asdict(counts).items():
             if hasattr(run, k):
                 setattr(run, k, v)
-        run.message = f"{counts.venues_added} new venues" if counts.venues_added else ""
+        notes = [f"{counts.venues_added} new venues"] if counts.venues_added else []
+        no_id = sum(1 for r in rows if not r.get("idFromSheet"))
+        if no_id:  # these rows become new events if their title, venue or start date is edited
+            notes.append(f"{no_id} rows have no ID in the sheet (run scripts.sheet_ids)")
+        run.message = "; ".join(notes)
         if dry_run:
             db.rollback()
             run.result = "dry_run"
