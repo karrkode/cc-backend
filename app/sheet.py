@@ -66,11 +66,16 @@ def _link(fragment: str) -> str:
 
 
 WANTED = {"event": "Event", "venue": "Venue", "begin": "Begin Date", "end": "End",
-          "hood": "Neighborhood", "cost": "Entry Cost", "category": "Category"}
+          "hood": "Neighborhood", "cost": "Entry Cost", "category": "Category",
+          "id": "ID"}  # optional: keeps an event the same event when its title, venue or date is edited
 
 
-def parse_sheet(page: str) -> list[dict]:
-    """Rows of the sheet as dicts keyed event/venue/begin/end/hood/cost/category/url."""
+def parse_sheet(page: str, keep_blank: bool = False) -> list[dict]:
+    """Rows of the sheet as dicts keyed event/venue/begin/end/hood/cost/category/id/url/row.
+
+    row is the sheet's own row number (from the htmlview's row headers), None if not shown.
+    keep_blank keeps rows with no Event too, so every row below the header is accounted for.
+    """
     cols, rows = None, []
     for chunk in re.split(r"<tr[\s>]", page)[1:]:
         cells = re.findall(r"<td[^>]*>(.*?)</td>", chunk, flags=re.S)
@@ -85,10 +90,12 @@ def parse_sheet(page: str) -> list[dict]:
         def get(key):
             return texts[cols[key]] if key in cols and cols[key] < len(texts) else ""
 
-        if not get("event"):
+        if not get("event") and not keep_blank:
             continue
         row = {key: get(key) for key in WANTED}
-        row["url"] = _link(cells[cols["event"]])
+        row["url"] = _link(cells[cols["event"]]) if cols["event"] < len(cells) else ""
+        number = re.search(r"<th[^>]*>(.*?)</th>", chunk, flags=re.S)
+        row["row"] = int(_text(number.group(1))) if number and _text(number.group(1)).isdigit() else None
         rows.append(row)
     if cols is None:
         raise SheetUnavailable("The sheet opened, but no header row with Event and Venue was found.")
@@ -135,9 +142,21 @@ def page_type(title: str, category: str) -> str:
 
 
 def event_id(title: str, venue: str, begin: str) -> str:
-    """The sheet has no id column, so an event is identified by its title, venue and start date.
-    Editing any of those three in the sheet makes it a new event (the old one is withdrawn)."""
+    """The id worked out from a row's title, venue and start date, for rows with no ID in the sheet.
+    Editing any of those three makes it a new event (the old one is withdrawn), which is why
+    the sheet's ID column exists: fill it in and edits keep the same event."""
     return hashlib.sha1(f"{title}|{venue}|{begin}".encode()).hexdigest()[:6]
+
+
+MAX_ID_LENGTH = 40  # events.source_id
+
+
+def row_id(r: dict) -> tuple[str, bool]:
+    """(id, came from the sheet's ID column). An ID too long to store falls back to the computed one."""
+    given = r.get("id", "").strip()
+    if given and len(given) <= MAX_ID_LENGTH:
+        return given, True
+    return event_id(r["event"], r["venue"], r["begin"]), False
 
 
 def normalize(rows: list[dict]) -> list[dict]:
@@ -150,8 +169,8 @@ def normalize(rows: list[dict]) -> list[dict]:
         category = r["category"]
         if not category:  # blank Category: use what the venue's other rows say
             category = by_venue[r["venue"]].most_common(1)[0][0] if r["venue"] in by_venue else "Theater"
-        eid = event_id(r["event"], r["venue"], r["begin"])
-        if eid in seen:  # the same event entered twice
+        eid, from_sheet = row_id(r)
+        if eid in seen:  # the same event entered twice (or two rows given the same ID: the first wins)
             continue
         seen.add(eid)
         events.append({
@@ -160,7 +179,8 @@ def normalize(rows: list[dict]) -> list[dict]:
             "openRun": r["end"].strip().lower() == "open run", "beginTbd": r["begin"].strip().upper() == "TBD",
             "hood": r["hood"], "area": AREA_LABELS[area_of(r["hood"])],
             "cost": r["cost"] or "TBD", "min": min_price(r["cost"]),
-            "type": page_type(r["event"], category), "url": r["url"],
+            "type": page_type(r["event"], category), "url": r["url"], "idFromSheet": from_sheet,
+            "computedId": event_id(r["event"], r["venue"], r["begin"]),
         })
     return events
 
