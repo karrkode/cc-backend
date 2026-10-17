@@ -96,6 +96,7 @@ class Event(Base):
                                                  onupdate=func.now())
 
     venue: Mapped[Venue] = relationship(lazy="joined")
+    submitter: Mapped[User | None] = relationship()  # loaded only where admins need it
 
 
 class Attended(Base):

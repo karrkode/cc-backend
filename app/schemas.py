@@ -91,6 +91,25 @@ class EventPage(BaseModel):
     offset: int
 
 
+class SubmitterOut(ORM):
+    id: uuid.UUID
+    display_name: str
+    email: str
+
+
+class EventAdminOut(EventOut):
+    """EventOut plus who sent it in. Only the /admin routes return this."""
+    # null for sheet and seed events, and when the submitter's account was deleted
+    submitted_by: SubmitterOut | None = Field(validation_alias="submitter")
+
+
+class EventAdminPage(BaseModel):
+    items: list[EventAdminOut]
+    total: int
+    limit: int
+    offset: int
+
+
 class _EventFields(BaseModel):
     title: str = Field(min_length=1, max_length=300)
     begin_date: date | None = None

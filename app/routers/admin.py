@@ -2,16 +2,17 @@ from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, select
+from sqlalchemy.orm import selectinload
 
 from ..deps import DB, AdminUser
 from ..models import Event, EventStatus, SheetSync
-from ..schemas import EventOut, EventPage, SheetSyncOut
+from ..schemas import EventAdminOut, EventAdminPage, SheetSyncOut
 from ..visibility import utcnow
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 
-@router.get("/events", response_model=EventPage)
+@router.get("/events", response_model=EventAdminPage)
 def review_queue(db: DB, _: AdminUser,
                  status_: Annotated[EventStatus, Query(alias="status")] = EventStatus.pending,
                  limit: Annotated[int, Query(ge=1, le=500)] = 100,
@@ -19,16 +20,16 @@ def review_queue(db: DB, _: AdminUser,
     """Submissions to review, oldest first."""
     cond = Event.status == status_
     total = db.scalar(select(func.count(Event.id)).where(cond))
-    rows = db.scalars(select(Event).where(cond).order_by(Event.created_at, Event.id)
-                      .limit(limit).offset(offset)).all()
-    return EventPage(items=rows, total=total, limit=limit, offset=offset)
+    rows = db.scalars(select(Event).where(cond).options(selectinload(Event.submitter))
+                      .order_by(Event.created_at, Event.id).limit(limit).offset(offset)).all()
+    return EventAdminPage(items=rows, total=total, limit=limit, offset=offset)
 
 
-@router.get("/events/scheduled", response_model=list[EventOut])
+@router.get("/events/scheduled", response_model=list[EventAdminOut])
 def scheduled(db: DB, _: AdminUser):
     """Approved events waiting for their publish time, soonest first."""
     return db.scalars(select(Event).where(Event.status == EventStatus.approved, Event.publish_at > utcnow())
-                      .order_by(Event.publish_at, Event.id)).all()
+                      .options(selectinload(Event.submitter)).order_by(Event.publish_at, Event.id)).all()
 
 
 def _set_status(db: DB, event_id: int, new: EventStatus) -> Event:
@@ -42,13 +43,13 @@ def _set_status(db: DB, event_id: int, new: EventStatus) -> Event:
     return event
 
 
-@router.post("/events/{event_id}/approve", response_model=EventOut)
+@router.post("/events/{event_id}/approve", response_model=EventAdminOut)
 def approve(event_id: int, db: DB, _: AdminUser):
     """Publish now: approves a pending event, or brings a scheduled one forward."""
     return _set_status(db, event_id, EventStatus.approved)
 
 
-@router.post("/events/{event_id}/reject", response_model=EventOut)
+@router.post("/events/{event_id}/reject", response_model=EventAdminOut)
 def reject(event_id: int, db: DB, _: AdminUser):
     return _set_status(db, event_id, EventStatus.rejected)
 

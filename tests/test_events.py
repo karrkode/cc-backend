@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from sqlalchemy import select
 
-from app.models import Area, Event, EventStatus, Venue
+from app.models import Area, Event, EventStatus, User, Venue
 
 from .conftest import auth
 
@@ -212,6 +212,55 @@ def test_review_queue(client, user_token, admin_token, make_event):
     assert client.get("/admin/events", headers=auth(admin_token)).json()["total"] == 0
     assert client.get("/admin/events?status=rejected", headers=auth(admin_token)).json()["total"] == 1
     assert client.post("/admin/events/99999/approve", headers=auth(admin_token)).status_code == 404
+
+
+def test_admins_see_who_submitted(client, user_token, admin_token, make_event):
+    sent = client.post("/events", headers=auth(user_token), json={
+        "title": "Fresh pick", "category": "Comedy", "venue": {"name": "Annoyance", "neighborhood": "Lakeview"}}).json()
+    make_event("From the sheet", status=EventStatus.pending)  # no submitter
+
+    items = {e["title"]: e for e in client.get("/admin/events", headers=auth(admin_token)).json()["items"]}
+    who = items["Fresh pick"]["submitted_by"]
+    assert who["display_name"] == "Ana" and who["email"] == "ana@example.com" and who["id"]
+    assert items["From the sheet"]["submitted_by"] is None
+
+    approved = client.post(f"/admin/events/{sent['id']}/approve", headers=auth(admin_token)).json()
+    assert approved["submitted_by"]["email"] == "ana@example.com"
+
+
+def test_scheduled_list_shows_the_submitter(client, admin_token, make_event):
+    later = (datetime.now(UTC) + timedelta(days=1)).isoformat()
+    client.post("/events", headers=auth(admin_token), json={
+        "title": "Soon", "category": "Theater", "venue": {"name": "Goodman Theatre", "neighborhood": "Loop"},
+        "publish": "later", "publish_at": later})
+    [ev] = client.get("/admin/events/scheduled", headers=auth(admin_token)).json()
+    assert ev["submitted_by"]["display_name"] == "Admin"
+
+
+def test_submitter_is_null_once_their_account_is_gone(client, user_token, admin_token, db):
+    client.post("/events", headers=auth(user_token), json={
+        "title": "Orphan", "category": "Comedy", "venue": {"name": "Annoyance", "neighborhood": "Lakeview"}})
+    db.delete(db.scalar(select(User).where(User.email == "ana@example.com")))
+    db.commit()
+    [ev] = client.get("/admin/events", headers=auth(admin_token)).json()["items"]
+    assert ev["title"] == "Orphan" and ev["submitted_by"] is None
+
+
+def test_submitter_details_never_leave_the_admin_routes(client, user_token, admin_token, make_event):
+    sent = client.post("/events", headers=auth(user_token), json={
+        "title": "Mine", "category": "Comedy", "venue": {"name": "Annoyance", "neighborhood": "Lakeview"}})
+    assert "submitted_by" not in sent.json()
+    ev_id = sent.json()["id"]
+    assert client.get("/admin/events", headers=auth(user_token)).status_code == 403
+    assert client.get("/admin/events/scheduled", headers=auth(user_token)).status_code == 403
+    client.post(f"/admin/events/{ev_id}/approve", headers=auth(admin_token))
+
+    for token in (None, user_token, admin_token):  # public routes stay public-shaped, even for admins
+        h = auth(token) if token else {}
+        assert "submitted_by" not in client.get(f"/events/{ev_id}", headers=h).json()
+        assert all("submitted_by" not in e for e in client.get("/events", headers=h).json()["items"])
+    patched = client.patch(f"/events/{ev_id}", json={"title": "Mine!"}, headers=auth(admin_token)).json()
+    assert "submitted_by" not in patched
 
 
 def test_venues(client, admin_token, user_token):
