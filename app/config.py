@@ -28,6 +28,10 @@ class Settings(BaseSettings):
 
     login_attempts_per_minute: int = 10
 
+    # Local only: the admin that scripts.dev_admin creates (see docker-compose.yml). Never set in prod.
+    dev_admin_email: str = ""
+    dev_admin_password: str = ""
+
     # The Google Sheet the nightly sync reads (shared as "Anyone with the link can view").
     sheet_id: str = "1jn-XC4Hun11m4t3xmpzRtBwmgMP940k_umGEaJE-UjE"
     sheet_gid: str = "0"

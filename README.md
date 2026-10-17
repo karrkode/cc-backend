@@ -50,7 +50,13 @@ FRONTEND_DIR=/path/to/cc-site/public docker compose --profile web up -d   # cc-s
 The page finds the API by itself (`localhost:8000` when opened from localhost,
 `api.<its own domain>` anywhere else), so nothing needs configuring.
 
-To make yourself an admin, register through `/docs` (POST /auth/register), then:
+The local stack comes with an admin ready to use: sign in as **admin@example.com** with
+password **local-admin-only**. It's created (or its password and role put back) every time
+the API container starts, so it survives database wipes. These values live in
+`docker-compose.yml`, and `scripts/dev_admin.py` refuses to run unless `ENV=local`, so this
+account can't exist in production.
+
+To make your own account an admin instead, register through `/docs` (POST /auth/register), then:
 
 ```
 docker compose run --rm api python -m scripts.make_admin you@example.com
@@ -158,5 +164,6 @@ scripts/sync_sheet.py  the nightly sync
 scripts/seed.py      import seed/events.json
 seed/events.json     the events from the old Google Sheet site
 scripts/make_admin.py
+scripts/dev_admin.py the ready-made local admin (ENV=local only)
 tests/
 ```

@@ -4,6 +4,7 @@
 #   docker compose run --rm api python -m scripts.seed
 #   docker compose run --rm api python -m scripts.sync_sheet [--dry-run]
 #   docker compose run --rm api python -m scripts.make_admin you@example.com
+#   Sign in as admin@example.com / local-admin-only: created on every start (scripts/dev_admin.py)
 
 services:
   db:
@@ -30,6 +31,10 @@ services:
       JWT_SECRET: local-dev-secret-not-for-production
       CORS_ORIGINS: http://localhost:4173,http://127.0.0.1:4173
       COOKIE_SECURE: "false"
+      # A ready-made admin for trying the admin pages, created on every start (scripts/dev_admin.py).
+      # Local throwaway values: the script refuses to run unless ENV=local.
+      DEV_ADMIN_EMAIL: admin@example.com
+      DEV_ADMIN_PASSWORD: local-admin-only
     ports:
       - "8000:8000"
     depends_on:
