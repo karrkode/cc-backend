@@ -8,7 +8,7 @@ To run them against real Postgres (what production uses):
 import os
 
 os.environ.setdefault("ENV", "test")
-os.environ.setdefault("JWT_SECRET", "test-secret")
+os.environ.setdefault("JWT_SECRET", "test-signing-key-at-least-32-bytes-long")
 
 from datetime import date, timedelta  # noqa: E402
 

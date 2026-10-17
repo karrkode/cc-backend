@@ -61,7 +61,7 @@ def test_protected_routes_need_a_valid_token(client, user_token):
     assert client.get("/auth/me", headers=auth(expired)).status_code == 401
 
     claims["exp"] = datetime.now(UTC) + timedelta(minutes=5)
-    forged = jwt.encode(claims, "someone-elses-secret", algorithm="HS256")
+    forged = jwt.encode(claims, "someone-elses-signing-key-also-32-bytes-plus", algorithm="HS256")
     assert client.get("/auth/me", headers=auth(forged)).status_code == 401
 
 
