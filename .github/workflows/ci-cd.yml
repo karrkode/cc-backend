@@ -31,7 +31,7 @@ jobs:
           --health-cmd "pg_isready -U culture -d culture_test"
           --health-interval 2s --health-timeout 3s --health-retries 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12" # same as the Docker image
@@ -49,7 +49,7 @@ jobs:
     name: Terraform and scripts
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: "~1.16"
@@ -84,7 +84,7 @@ jobs:
     env:
       AWS_REGION: us-east-2
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: aws-actions/configure-aws-credentials@v6
         with:
