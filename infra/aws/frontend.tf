@@ -109,6 +109,18 @@ resource "aws_cloudfront_distribution" "site" {
     response_headers_policy_id = local.response_policy_security_headers
   }
 
+  # Any path that isn't on the site gets the friendly 404 page. The private bucket answers
+  # a missing file with 403 (it won't confirm what does or doesn't exist), so map both.
+  dynamic "custom_error_response" {
+    for_each = [403, 404]
+    content {
+      error_code            = custom_error_response.value
+      response_code         = 404
+      response_page_path    = "/404.html"
+      error_caching_min_ttl = 60
+    }
+  }
+
   restrictions {
     geo_restriction { restriction_type = "none" }
   }
