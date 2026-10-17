@@ -36,6 +36,18 @@ class LoginIn(BaseModel):
     password: str = Field(max_length=200)
 
 
+class ProfilePatch(BaseModel):
+    """Change your own name and/or email. Leave a field out to keep it.
+
+    Changing the email needs current_password, so someone at an unlocked computer can't take
+    over the account by moving it to their own address. The name needs no password; a blank
+    name is allowed and means nothing is shown (no "Suggested by" credit either).
+    """
+    display_name: str | None = Field(default=None, max_length=80)
+    email: EmailStr | None = None
+    current_password: str | None = Field(default=None, max_length=200)
+
+
 class UserOut(ORM):
     id: uuid.UUID
     email: str
