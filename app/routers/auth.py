@@ -8,7 +8,7 @@ from ..config import get_settings
 from ..deps import DB, CurrentUser
 from ..models import RefreshToken, User
 from ..ratelimit import limit_auth_attempts
-from ..schemas import LoginIn, RegisterIn, TokenOut, UserOut
+from ..schemas import LoginIn, ProfilePatch, RegisterIn, TokenOut, UserOut
 from ..security import (create_access_token, hash_password, hash_refresh_token, new_refresh_token,
                         verify_password)
 
@@ -107,4 +107,30 @@ def logout(db: DB, response: Response, cc_refresh: str | None = Cookie(default=N
 
 @router.get("/me", response_model=UserOut)
 def me(user: CurrentUser):
+    return user
+
+
+@router.patch("/me", response_model=UserOut, dependencies=[Depends(limit_auth_attempts)])
+def update_me(body: ProfilePatch, db: DB, user: CurrentUser):
+    """Edit your own profile. All or nothing: if any part is refused, nothing is saved.
+
+    - email is stored lower-case; the same address in different case is not a change
+    - a new email needs the right current_password (403 if wrong, so the page doesn't
+      mistake it for an expired sign-in) and must not belong to another account (409)
+    - there is no email verification yet: a new address takes effect at once
+    - other sessions stay signed in; tokens carry the account id, not the email
+    - role and id can't be changed here
+    """
+    if body.email is not None and body.email.lower() != user.email:
+        if not body.current_password or not verify_password(body.current_password, user.password_hash):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Current password is incorrect")
+        user.email = body.email.lower()
+    if body.display_name is not None:
+        user.display_name = body.display_name.strip()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, "An account with that email already exists")
+    db.refresh(user)
     return user
