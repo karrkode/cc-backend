@@ -1,5 +1,10 @@
 # GitHub Actions deploys without any stored AWS keys: each workflow run gets short-lived
-# credentials through OIDC, and only for its own repo's main branch.
+# credentials through OIDC.
+#
+# Deploy jobs run in a GitHub *environment* ("production"), which is what shows deploys in
+# Jira. A job in an environment gets the subject "repo:<owner>/<repo>:environment:<name>"
+# (not ":ref:refs/heads/main"), so the roles trust exactly that. The environment itself is
+# limited to the main branch in each repo's GitHub settings, so other branches can't use it.
 
 resource "aws_iam_openid_connect_provider" "github" {
   url            = "https://token.actions.githubusercontent.com"
@@ -15,8 +20,10 @@ locals {
         Principal = { Federated = aws_iam_openid_connect_provider.github.arn }
         Action    = "sts:AssumeRoleWithWebIdentity"
         Condition = {
-          StringEquals = { "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com" }
-          StringLike   = { "token.actions.githubusercontent.com:sub" = [for ref in var.github_deploy_refs : "repo:${repo}:ref:${ref}"] }
+          StringEquals = {
+            "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
+            "token.actions.githubusercontent.com:sub" = "repo:${repo}:environment:${var.github_deploy_environment}"
+          }
         }
       }]
     })
@@ -50,7 +57,7 @@ resource "aws_iam_role_policy" "deploy_backend" {
   })
 }
 
-# cultures-crew-app: upload the page and clear CloudFront's cache.
+# cc-site: upload the page and clear CloudFront's cache.
 resource "aws_iam_role" "deploy_frontend" {
   name               = "${var.name}-deploy-frontend"
   assume_role_policy = local.github_trust[var.github_frontend_repo]

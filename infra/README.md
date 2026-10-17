@@ -108,6 +108,9 @@ Then open https://chiculturecrew.com.
 
 | Task | How |
 |---|---|
+| Deploy the API | merge to `main`; GitHub Actions builds, pushes and deploys (see the repo README) |
+| Deploy by hand | push an image as in step 4, then `aws ssm send-command ... commands=["/usr/local/bin/culture-crew-deploy <tag>"]` |
+| Roll back | `culture-crew-deploy <older tag>` (ECR keeps the 15 newest images, each tagged with its commit) |
 | Shell on the server | `aws ssm start-session --target <api_instance_id>` |
 | API logs | CloudWatch → `/culture-crew/api` (streams `api`, `caddy`) |
 | Sync results | CloudWatch → `/culture-crew/sheet-sync`, or `GET /admin/syncs` |

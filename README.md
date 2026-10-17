@@ -10,6 +10,23 @@ The site itself (a static page) is a separate repo, **cc-site**
 This code started in cc-site's `backend/` folder and was moved here with its history
 (`git subtree split`); see the merge commit that brought it in.
 
+## How work flows
+
+Work is planned in Jira (project **CC** at chiculturecrew.atlassian.net), and GitHub for Jira
+links code to issues by their key:
+
+- **Branch:** `CC-123-short-description`
+- **Commits:** start with the key, e.g. `CC-123: Add publish_at to events`
+- **Pull request** into `main`. CI runs the tests on SQLite and Postgres, checks the Terraform
+  formatting and validity, and checks the server scripts parse.
+- **Merge.** CI builds the arm64 image, pushes it to ECR tagged with the commit, deploys it to
+  the server through SSM, and checks `https://api.chiculturecrew.com/health`. The deploy appears
+  on the Jira issue under *Deployments*.
+
+The deploy job assumes an AWS role through OIDC; there are no AWS keys in GitHub. Only the
+`production` environment may assume it, and only `main` may use that environment.
+Infrastructure (`infra/`) is planned and applied by hand; see `infra/README.md`.
+
 ## Run it locally
 
 Needs Docker Desktop.
