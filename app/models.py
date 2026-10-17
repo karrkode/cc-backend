@@ -5,7 +5,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (Boolean, CheckConstraint, Date, DateTime, Enum, ForeignKey, Index, Integer,
-                        Numeric, String, Text, UniqueConstraint, Uuid, func)
+                        Numeric, String, Text, UniqueConstraint, Uuid, false, func)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -91,12 +91,21 @@ class Event(Base):
     # An approved event with a future publish_at stays hidden until then (admins can schedule events).
     publish_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     submitted_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    # The submitter ticked "credit me" for this event; without it their name is never shown publicly.
+    credit_me: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(),
                                                  onupdate=func.now())
 
     venue: Mapped[Venue] = relationship(lazy="joined")
-    submitter: Mapped[User | None] = relationship()  # loaded only where admins need it
+    submitter: Mapped[User | None] = relationship(lazy="selectin")  # one extra query per batch, not per event
+
+    @property
+    def submitted_by_name(self) -> str | None:
+        """The submitter's display name, but only if they chose to be credited for this event."""
+        if self.credit_me and self.submitter is not None and self.submitter.display_name.strip():
+            return self.submitter.display_name.strip()
+        return None
 
 
 class Attended(Base):
