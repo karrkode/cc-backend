@@ -1,6 +1,6 @@
-"""Load events from the old site's data/events.json into the database.
+"""Load events from seed/events.json (the old Google Sheet site's saved copy) into the database.
 
-    python -m scripts.seed                      # reads /data/events.json (Docker) or ../data/events.json
+    python -m scripts.seed                      # reads seed/events.json
     python -m scripts.seed path/to/events.json
 
 Safe to run again: events are matched on their old id (source_id) and updated in place,
@@ -18,7 +18,7 @@ from app.db import SessionLocal
 from app.models import Area, Event, EventStatus, Venue
 
 AREAS = {"City": Area.city, "Suburbs": Area.suburbs, "Out of town": Area.out_of_town}
-DEFAULT_PATHS = [Path("/data/events.json"), Path(__file__).resolve().parents[2] / "data" / "events.json"]
+DEFAULT_PATH = Path(__file__).resolve().parents[1] / "seed" / "events.json"
 
 
 def _date(s):
@@ -62,12 +62,9 @@ def seed(path: Path) -> dict:
 
 
 def main():
-    if len(sys.argv) > 1:
-        path = Path(sys.argv[1])
-    else:
-        path = next((p for p in DEFAULT_PATHS if p.exists()), None)
-        if path is None:
-            raise SystemExit("Could not find events.json. Pass its path: python -m scripts.seed path/to/events.json")
+    path = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_PATH
+    if not path.exists():
+        raise SystemExit(f"Could not find {path}. Pass its path: python -m scripts.seed path/to/events.json")
     counts = seed(path)
     print(f"Seeded from {path}: {counts['added']} added, {counts['updated']} updated, "
           f"{counts['skipped']} skipped, {counts['venues_added']} new venues.")

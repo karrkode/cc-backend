@@ -3,23 +3,35 @@
 FastAPI + PostgreSQL backend for chiculturecrew.com: events, venues, accounts, event
 submissions with admin review, and each user's "I've been" list.
 
+The site itself (a static page) is a separate repo, **cc-site**
+(github.com/karrkode/cultures-crew-app). The two only meet at this API: the page calls
+`api.chiculturecrew.com` from the browser. Each repo deploys on its own.
+
+This code started in cc-site's `backend/` folder and was moved here with its history
+(`git subtree split`); see the merge commit that brought it in.
+
 ## Run it locally
 
 Needs Docker Desktop.
 
 ```
-cd backend
 docker compose up --build -d                                  # Postgres + API, migrations run on start
-docker compose run --rm api python -m scripts.seed            # load data/events.json (safe to re-run)
+docker compose run --rm api python -m scripts.seed            # load seed/events.json (safe to re-run)
 ```
 
-- The site: http://localhost:4173 (`public/index.html`, served by nginx the way S3 will serve it)
 - API: http://localhost:8000
 - Interactive docs (try every endpoint): http://localhost:8000/docs
 
-The page finds the API by itself: `localhost:8000` when it is opened from localhost, and
-`api.<its own domain>` anywhere else. To point it somewhere else, set the `cc-api` meta tag
-at the top of `public/index.html`.
+To run the whole site locally, clone cc-site next to this repo (`../cc-site`) and add the
+`web` profile; the page is then on http://localhost:4173:
+
+```
+docker compose --profile web up --build -d
+FRONTEND_DIR=/path/to/cc-site/public docker compose --profile web up -d   # cc-site somewhere else
+```
+
+The page finds the API by itself (`localhost:8000` when opened from localhost,
+`api.<its own domain>` anywhere else), so nothing needs configuring.
 
 To make yourself an admin, register through `/docs` (POST /auth/register), then:
 
@@ -93,7 +105,8 @@ app/security.py      bcrypt, JWTs, refresh tokens
 app/deps.py          database session, current user, admin check
 app/routers/         auth, events, venues, me, admin
 alembic/             migrations
-scripts/seed.py      import data/events.json
+scripts/seed.py      import seed/events.json
+seed/events.json     the events from the old Google Sheet site
 scripts/make_admin.py
 tests/
 ```

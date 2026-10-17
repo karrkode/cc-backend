@@ -1,5 +1,6 @@
 # Local development: Postgres + the API.
-#   docker compose up --build                       page on http://localhost:4173, API on :8000 (docs at /docs)
+#   docker compose up --build                       API on http://localhost:8000 (docs at /docs)
+#   docker compose --profile web up --build         also serve the cc-site page on http://localhost:4173
 #   docker compose run --rm api python -m scripts.seed
 #   docker compose run --rm api python -m scripts.make_admin you@example.com
 
@@ -30,19 +31,19 @@ services:
       COOKIE_SECURE: "false"
     ports:
       - "8000:8000"
-    volumes:
-      - ../data:/data:ro  # data/events.json, for the seed script
     depends_on:
       db:
         condition: service_healthy
 
   web:
-    # The static page, served the way S3 + CloudFront will serve it: http://localhost:4173
+    # The frontend (the cc-site repo), served the way S3 + CloudFront will serve it.
+    # Off unless asked for with --profile web. FRONTEND_DIR defaults to a cc-site checkout beside this repo.
+    profiles: ["web"]
     image: nginx:1.27-alpine
     ports:
       - "4173:80"
     volumes:
-      - ../public:/usr/share/nginx/html:ro
+      - ${FRONTEND_DIR:-../cc-site/public}:/usr/share/nginx/html:ro
 
 volumes:
   pgdata:

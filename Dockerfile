@@ -14,6 +14,7 @@ COPY alembic.ini .
 COPY alembic ./alembic
 COPY app ./app
 COPY scripts ./scripts
+COPY seed ./seed
 COPY docker-entrypoint.sh .
 
 RUN useradd --system --uid 10001 api && chmod +x docker-entrypoint.sh
