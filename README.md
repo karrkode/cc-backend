@@ -98,9 +98,9 @@ applies new migrations when it starts.
 |---|---|---|
 | Auth | `POST /auth/register`, `/auth/login`, `/auth/refresh`, `/auth/logout`; `GET /auth/me` | anyone / signed in |
 | Events | `GET /events` (filters: `q`, `area`, `category`, `from`, `to`, `max_price`, `include_past`, `limit`, `offset`), `GET /events/{id}` | anyone |
-| | `POST /events` (pending for users, published for admins) | signed in |
+| | `POST /events` (always pending for users; admins choose `publish`: `now`, `later` with `publish_at`, or `review`) | signed in |
 | | `PATCH /events/{id}`, `DELETE /events/{id}` | admin |
-| Review | `GET /admin/events?status=pending`, `POST /admin/events/{id}/approve`, `/reject` | admin |
+| Review | `GET /admin/events?status=pending`, `GET /admin/events/scheduled`, `POST /admin/events/{id}/approve` (publishes now), `/reject` | admin |
 | Venues | `GET /venues`, `POST /venues` | anyone / admin |
 | Me | `GET /me/attended`, `PUT`/`DELETE /me/attended/{event_id}`, `GET /me/submissions` | signed in |
 | Ops | `GET /health` (API and database) | anyone |

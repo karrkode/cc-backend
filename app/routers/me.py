@@ -2,8 +2,9 @@ from fastapi import APIRouter, HTTPException, Response, status
 from sqlalchemy import delete, select
 
 from ..deps import DB, CurrentUser
-from ..models import Attended, Event, EventStatus
+from ..models import Attended, Event
 from ..schemas import AttendedOut, EventOut
+from ..visibility import is_live
 
 router = APIRouter(prefix="/me", tags=["me"])
 
@@ -21,7 +22,7 @@ def mark_attended(event_id: int, db: DB, user: CurrentUser, response: Response):
     if existing:
         return existing
     event = db.get(Event, event_id)
-    if event is None or event.status != EventStatus.approved:
+    if event is None or not is_live(event):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Event not found")
     mark = Attended(user_id=user.id, event_id=event_id)
     db.add(mark)

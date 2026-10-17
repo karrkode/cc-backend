@@ -1,9 +1,9 @@
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy import select
 
-from app.models import Area, EventStatus, Venue
+from app.models import Area, Event, EventStatus, Venue
 
 from .conftest import auth
 
@@ -89,12 +89,80 @@ def test_user_submission_waits_for_approval(client, user_token, db):
     assert len(db.scalars(select(Venue).where(Venue.name.ilike("tiny stage"))).all()) == 1
 
 
-def test_admin_submission_is_published(client, admin_token, make_event):
+def test_admin_publish_now(client, admin_token, make_event):
     venue_id = make_event("Seed").venue_id
     r = client.post("/events", headers=auth(admin_token), json={
-        "title": "Admin Show", "category": "Concert", "venue_id": venue_id, "min_price": "20.00"})
-    assert r.status_code == 201 and r.json()["status"] == "approved"
+        "title": "Admin Show", "category": "Concert", "venue_id": venue_id, "min_price": "20.00", "publish": "now"})
+    assert r.status_code == 201 and r.json()["status"] == "approved" and r.json()["publish_at"] is None
     assert "Admin Show" in titles(client.get("/events"))
+
+
+def test_admin_review_later_is_the_default(client, admin_token, make_event):
+    venue_id = make_event("Seed").venue_id
+    body = {"title": "Needs a look", "category": "Theater", "venue_id": venue_id}
+    assert client.post("/events", headers=auth(admin_token), json=body).json()["status"] == "pending"
+    body = {**body, "title": "Explicitly later", "publish": "review"}
+    assert client.post("/events", headers=auth(admin_token), json=body).json()["status"] == "pending"
+    assert client.get("/admin/events", headers=auth(admin_token)).json()["total"] == 2
+
+
+def test_admin_publish_later(client, admin_token, user_token, make_event, db):
+    venue_id = make_event("Seed").venue_id
+    when = datetime.now(UTC) + timedelta(days=3)
+    r = client.post("/events", headers=auth(admin_token), json={
+        "title": "Opening Soon", "category": "Theater", "venue_id": venue_id,
+        "publish": "later", "publish_at": when.isoformat()})
+    assert r.status_code == 201, r.text
+    ev = r.json()
+    assert ev["status"] == "approved" and ev["publish_at"] is not None
+
+    # hidden from the public, from other users, and from "I've been" until then
+    assert "Opening Soon" not in titles(client.get("/events?include_past=true"))
+    assert client.get(f"/events/{ev['id']}").status_code == 404
+    assert client.get(f"/events/{ev['id']}", headers=auth(user_token)).status_code == 404
+    assert client.put(f"/me/attended/{ev['id']}", headers=auth(user_token)).status_code == 404
+    assert client.get(f"/events/{ev['id']}", headers=auth(admin_token)).status_code == 200
+    assert [e["title"] for e in client.get("/admin/events/scheduled", headers=auth(admin_token)).json()] == ["Opening Soon"]
+
+    # the time arrives: it's live, with nothing having to run
+    event = db.get(Event, ev["id"])
+    event.publish_at = datetime.now(UTC) - timedelta(minutes=1)
+    db.commit()
+    assert "Opening Soon" in titles(client.get("/events"))
+    assert client.get("/admin/events/scheduled", headers=auth(admin_token)).json() == []
+
+
+def test_publish_now_brings_a_scheduled_event_forward(client, admin_token, make_event):
+    venue_id = make_event("Seed").venue_id
+    ev = client.post("/events", headers=auth(admin_token), json={
+        "title": "Later", "category": "Theater", "venue_id": venue_id, "publish": "later",
+        "publish_at": (datetime.now(UTC) + timedelta(days=9)).isoformat()}).json()
+    r = client.post(f"/admin/events/{ev['id']}/approve", headers=auth(admin_token))
+    assert r.json()["publish_at"] is None
+    assert "Later" in titles(client.get("/events"))
+
+
+def test_publish_options_are_admin_only(client, user_token, make_event):
+    venue_id = make_event("Seed").venue_id
+    for extra in ({"publish": "now"},
+                  {"publish": "later", "publish_at": (datetime.now(UTC) + timedelta(days=1)).isoformat()}):
+        r = client.post("/events", headers=auth(user_token), json={
+            "title": "Sneaky", "category": "Theater", "venue_id": venue_id, **extra})
+        assert r.status_code == 201 and r.json()["status"] == "pending" and r.json()["publish_at"] is None
+
+
+def test_publish_later_validation(client, admin_token, make_event):
+    venue_id = make_event("Seed").venue_id
+    base = {"title": "X", "category": "Theater", "venue_id": venue_id}
+    h = auth(admin_token)
+    future = (datetime.now(UTC) + timedelta(days=1)).isoformat()
+    assert client.post("/events", json={**base, "publish": "later"}, headers=h).status_code == 422
+    past = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
+    assert client.post("/events", json={**base, "publish": "later", "publish_at": past}, headers=h).status_code == 422
+    naive = (datetime.now() + timedelta(days=1)).replace(microsecond=0).isoformat()
+    assert client.post("/events", json={**base, "publish": "later", "publish_at": naive}, headers=h).status_code == 422
+    assert client.post("/events", json={**base, "publish": "now", "publish_at": future}, headers=h).status_code == 422
+    assert client.post("/events", json={**base, "publish": "soon"}, headers=h).status_code == 422
 
 
 def test_create_event_validation(client, user_token, make_event):

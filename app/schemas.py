@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, mo
 from .models import Area, EventStatus, Role
 
 Category = Literal["Theater", "Concert", "Comedy", "Visual Art"]
+Publish = Literal["now", "later", "review"]
 
 
 class ORM(BaseModel):
@@ -80,6 +81,7 @@ class EventOut(ORM):
     category: str
     url: str
     status: EventStatus
+    publish_at: datetime | None  # set while an approved event is scheduled for later
 
 
 class EventPage(BaseModel):
@@ -114,14 +116,32 @@ class _EventFields(BaseModel):
 
 
 class EventIn(_EventFields):
-    """Give venue_id for a known venue, or venue (name + neighborhood) to use or add one."""
+    """Give venue_id for a known venue, or venue (name + neighborhood) to use or add one.
+
+    publish / publish_at are for admins: "now" goes live at once, "later" goes live at
+    publish_at, "review" waits in the review queue. Everyone else's submissions always
+    wait for review, whatever these say.
+    """
     venue_id: int | None = None
     venue: VenueIn | None = None
+    publish: Publish = "review"
+    publish_at: datetime | None = None
 
     @model_validator(mode="after")
     def _one_venue(self):
         if (self.venue_id is None) == (self.venue is None):
             raise ValueError("Give exactly one of venue_id or venue")
+        return self
+
+    @model_validator(mode="after")
+    def _publish_time(self):
+        if self.publish == "later":
+            if self.publish_at is None:
+                raise ValueError('publish_at is required when publish is "later"')
+            if self.publish_at.tzinfo is None:
+                raise ValueError("publish_at needs a time zone, e.g. 2026-11-01T09:00:00-05:00")
+        elif self.publish_at is not None:
+            raise ValueError('publish_at only goes with publish "later"')
         return self
 
 
@@ -136,6 +156,14 @@ class EventPatch(BaseModel):
     category: Category | None = None
     url: str | None = Field(default=None, max_length=2000)
     status: EventStatus | None = None
+    publish_at: datetime | None = None  # null publishes as soon as the event is approved
+
+    @field_validator("publish_at")
+    @classmethod
+    def _aware(cls, v):
+        if v is not None and v.tzinfo is None:
+            raise ValueError("publish_at needs a time zone")
+        return v
 
 
 # ---- sheet sync log --------------------------------------------------------

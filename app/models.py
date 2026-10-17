@@ -88,6 +88,8 @@ class Event(Base):
     category: Mapped[str] = mapped_column(String(40))
     url: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[EventStatus] = mapped_column(_enum(EventStatus, "event_status"), default=EventStatus.pending)
+    # An approved event with a future publish_at stays hidden until then (admins can schedule events).
+    publish_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     submitted_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(),
