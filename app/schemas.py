@@ -134,6 +134,18 @@ class EventPage(BaseModel):
     offset: int
 
 
+class NeighborhoodOut(BaseModel):
+    name: str
+    area: Area
+
+
+class EventFacets(BaseModel):
+    categories: list[str]  # most events first
+    neighborhoods: list[NeighborhoodOut]  # alphabetical
+    current: int  # live and not closed yet (as of the caller's date)
+    total: int  # live, including closed ones
+
+
 class SubmitterOut(ORM):
     id: uuid.UUID
     display_name: str
