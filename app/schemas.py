@@ -18,22 +18,30 @@ class ORM(BaseModel):
 
 # ---- auth ------------------------------------------------------------------
 
+def _bcrypt_limit(v: str) -> str:
+    if len(v.encode()) > 72:  # bcrypt only uses the first 72 bytes
+        raise ValueError("Password must be at most 72 bytes")
+    return v
+
+
 class RegisterIn(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=72)
     display_name: str = Field(default="", max_length=80)
 
-    @field_validator("password")
-    @classmethod
-    def _bcrypt_limit(cls, v: str) -> str:
-        if len(v.encode()) > 72:  # bcrypt only uses the first 72 bytes
-            raise ValueError("Password must be at most 72 bytes")
-        return v
+    _password_fits_bcrypt = field_validator("password")(_bcrypt_limit)
 
 
 class LoginIn(BaseModel):
     email: EmailStr
     password: str = Field(max_length=200)
+
+
+class PasswordChangeIn(BaseModel):
+    current_password: str = Field(max_length=200)
+    new_password: str = Field(min_length=8, max_length=72)  # the same rules as at sign-up
+
+    _password_fits_bcrypt = field_validator("new_password")(_bcrypt_limit)
 
 
 class ProfilePatch(BaseModel):

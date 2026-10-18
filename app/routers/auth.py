@@ -8,7 +8,7 @@ from ..config import get_settings
 from ..deps import DB, CurrentUser
 from ..models import RefreshToken, User
 from ..ratelimit import limit_auth_attempts
-from ..schemas import LoginIn, ProfilePatch, RegisterIn, TokenOut, UserOut
+from ..schemas import LoginIn, PasswordChangeIn, ProfilePatch, RegisterIn, TokenOut, UserOut
 from ..security import (create_access_token, hash_password, hash_refresh_token, new_refresh_token,
                         verify_password)
 
@@ -34,6 +34,12 @@ def _issue(db: DB, user: User, response: Response) -> TokenOut:
                         domain=s.cookie_domain, secure=s.cookie_secure, httponly=True, samesite="lax")
     access, expires_in = create_access_token(user.id, user.role.value)
     return TokenOut(access_token=access, expires_in=expires_in, user=UserOut.model_validate(user))
+
+
+def _end_all_sessions(db: DB, user: User):
+    """Sign the account out everywhere: no refresh token survives. Access tokens already
+    handed out still work until they expire (at most access_token_minutes)."""
+    db.execute(delete(RefreshToken).where(RefreshToken.user_id == user.id))
 
 
 def _clear_cookie(response: Response):
@@ -134,3 +140,20 @@ def update_me(body: ProfilePatch, db: DB, user: CurrentUser):
         raise HTTPException(status.HTTP_409_CONFLICT, "An account with that email already exists")
     db.refresh(user)
     return user
+
+
+@router.post("/password", response_model=TokenOut, dependencies=[Depends(limit_auth_attempts)])
+def change_password(body: PasswordChangeIn, db: DB, user: CurrentUser, response: Response):
+    """Change your password. Every other session is signed out; this one gets a fresh
+    access token and refresh cookie, so it stays signed in.
+
+    - wrong current_password: 403 (not 401, so the page doesn't mistake it for an expired sign-in)
+    - a new password the same as the current one: 400
+    """
+    if not verify_password(body.current_password, user.password_hash):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Current password is incorrect")
+    if body.new_password == body.current_password:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "The new password is the same as the current one")
+    user.password_hash = hash_password(body.new_password)
+    _end_all_sessions(db, user)
+    return _issue(db, user, response)  # commits the new password and this session's new token together
