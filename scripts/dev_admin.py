@@ -8,6 +8,8 @@ it again changes nothing. The local API container runs this on every start.
 
 Only works with ENV=local, so it can never create an account in production.
 """
+from datetime import UTC, datetime
+
 from sqlalchemy import select
 
 from app.config import get_settings
@@ -21,10 +23,14 @@ def ensure_dev_admin(db, email: str, password: str) -> str:
     email = email.strip().lower()
     user = db.scalar(select(User).where(User.email == email))
     if user is None:
-        db.add(User(email=email, password_hash=hash_password(password), display_name="Local Admin", role=Role.admin))
+        db.add(User(email=email, password_hash=hash_password(password), display_name="Local Admin", role=Role.admin,
+                    email_verified_at=datetime.now(UTC)))
         db.commit()
         return "created"
     changed = False
+    if user.email_verified_at is None:  # local mail is never really sent, so count it as confirmed
+        user.email_verified_at = datetime.now(UTC)
+        changed = True
     if not verify_password(password, user.password_hash):
         user.password_hash = hash_password(password)
         changed = True
