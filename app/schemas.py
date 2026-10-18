@@ -59,9 +59,29 @@ class ProfilePatch(BaseModel):
 class UserOut(ORM):
     id: uuid.UUID
     email: str
+    email_verified: bool  # they've opened the link emailed to this address
     display_name: str
     role: Role
     created_at: datetime
+
+
+class TokenIn(BaseModel):
+    """The token from an emailed link (the part after #verify= or #reset=)."""
+    token: str = Field(min_length=10, max_length=200)
+
+
+class ForgotPasswordIn(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordIn(TokenIn):
+    new_password: str = Field(min_length=8, max_length=72)  # the same rules as at sign-up
+
+    _password_fits_bcrypt = field_validator("new_password")(_bcrypt_limit)
+
+
+class MessageOut(BaseModel):
+    detail: str
 
 
 class TokenOut(BaseModel):

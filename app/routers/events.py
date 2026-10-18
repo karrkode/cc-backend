@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, or_, select
 
 from ..areas import area_of
+from ..config import get_settings
 from ..deps import DB, AdminUser, CurrentUser, OptionalUser
 from ..models import Area, Event, EventStatus, Role, Venue
 from ..schemas import EventIn, EventOut, EventPage, EventPatch, VenueIn
@@ -75,6 +76,9 @@ def get_event(event_id: int, db: DB, user: OptionalUser):
 def create_event(body: EventIn, db: DB, user: CurrentUser):
     """Everyone's submissions wait for review, except that admins can choose to publish
     now or at a set time (publish / publish_at)."""
+    if get_settings().require_verified_email and user.role != Role.admin and not user.email_verified:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Confirm your email address before sending in events. "
+                            "Use the link we emailed you, or send a new one from your account page.")
     status_, publish_at = EventStatus.pending, None
     if user.role == Role.admin:
         if body.publish == "now":

@@ -4,7 +4,7 @@ On AWS the container gets these from Secrets Manager at start-up; nothing secret
 lives in the image or the repo.
 """
 from functools import lru_cache
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -27,6 +27,20 @@ class Settings(BaseSettings):
     cookie_domain: str | None = None  # ".chiculturecrew.com" in prod so the API and page share it
 
     login_attempts_per_minute: int = 10
+
+    # Account emails (CC-44): address verification and password reset. See app/email.py.
+    # email_backend: ses (send through Amazon SES), log (write the email to the log; local),
+    # memory (keep it for tests), none (skip). Unset: log when ENV=local, none otherwise.
+    email_backend: Literal["ses", "log", "memory", "none"] | None = None
+    ses_region: str = "us-east-1"  # where the SES identity lives (infra/aws/ses.tf)
+    mail_from: str = "Culture Crew <no-reply@chiculturecrew.com>"
+    mail_reply_to: str = "info@chiculturecrew.com"  # replies reach a real inbox; no-reply@ has none
+    site_url: str = "http://localhost:4173"  # links in emails open the site, never the API
+    verify_link_hours: int = 24
+    reset_link_minutes: int = 60
+    # Turn on once real users can receive the email (SES production access): until then an
+    # unverified account could never be verified, so it would be locked out of submitting.
+    require_verified_email: bool = False
 
     # Local only: the admin that scripts.dev_admin creates (see docker-compose.yml). Never set in prod.
     dev_admin_email: str = ""
@@ -52,6 +66,11 @@ class Settings(BaseSettings):
         if info.data.get("env") == "prod" and (v == "change-me-local-only" or len(v) < 32):
             raise ValueError("JWT_SECRET must be set to a random value of 32+ characters in prod")
         return v
+
+
+    @property
+    def email_mode(self) -> str:
+        return self.email_backend or ("log" if self.env == "local" else "none")
 
 
 @lru_cache

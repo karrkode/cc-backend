@@ -56,6 +56,19 @@ the API container starts, so it survives database wipes. These values live in
 `docker-compose.yml`, and `scripts/dev_admin.py` refuses to run unless `ENV=local`, so this
 account can't exist in production.
 
+**Email locally.** Signing up, changing your email, and "Forgot password?" send emails with
+single-use links. The local stack never really sends them: each one is written to the API log,
+link included. To open one, copy its link from:
+
+```
+docker compose logs api | grep -A12 "Email to"
+```
+
+In production the API sends through Amazon SES (`EMAIL_BACKEND=ses`; the SES setup is in
+`infra/aws/ses.tf`). With no `EMAIL_BACKEND` set, production skips emails rather than logging
+their links. `REQUIRE_VERIFIED_EMAIL=true` makes people confirm their address before submitting
+events; it stays off until SES can reach every inbox (production access).
+
 To make your own account an admin instead, register through `/docs` (POST /auth/register), then:
 
 ```

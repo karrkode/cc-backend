@@ -7,3 +7,4 @@ pydantic-settings==2.16.0
 email-validator==2.3.0
 bcrypt==5.0.0
 pyjwt==2.15.1
+boto3==1.43.103  # Amazon SES for account emails (app/mail.py)

@@ -9,6 +9,7 @@ import os
 
 os.environ.setdefault("ENV", "test")
 os.environ.setdefault("JWT_SECRET", "test-signing-key-at-least-32-bytes-long")
+os.environ.setdefault("EMAIL_BACKEND", "memory")  # emails land in app.mail.OUTBOX; nothing is sent
 
 from datetime import date, timedelta  # noqa: E402
 
@@ -19,6 +20,7 @@ from sqlalchemy.orm import sessionmaker  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
 from app.db import Base, get_db  # noqa: E402
+from app.mail import OUTBOX  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import Area, Event, EventStatus, Role, User, Venue  # noqa: E402
 from app.ratelimit import auth_limiter  # noqa: E402
@@ -63,6 +65,7 @@ def client(Session):
 
     app.dependency_overrides[get_db] = _get_db
     auth_limiter.reset()
+    OUTBOX.clear()
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()

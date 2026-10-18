@@ -16,6 +16,11 @@ class Role(str, enum.Enum):
     admin = "admin"
 
 
+class EmailTokenPurpose(str, enum.Enum):
+    verify_email = "verify_email"
+    reset_password = "reset_password"
+
+
 class Area(str, enum.Enum):
     city = "city"
     suburbs = "suburbs"
@@ -42,7 +47,13 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(100))
     display_name: Mapped[str] = mapped_column(String(80), default="")
     role: Mapped[Role] = mapped_column(_enum(Role, "user_role"), default=Role.user)
+    # Set when they open the link emailed to this address; cleared when the email changes.
+    email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    @property
+    def email_verified(self) -> bool:
+        return self.email_verified_at is not None
 
 
 class RefreshToken(Base):
@@ -53,6 +64,21 @@ class RefreshToken(Base):
     token_hash: Mapped[str] = mapped_column(String(64), unique=True)  # sha256 hex; the raw token is never stored
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class EmailToken(Base):
+    """A single-use link sent by email: confirm an address, or reset a password.
+    Only the SHA-256 of the token is stored, like refresh tokens."""
+    __tablename__ = "email_tokens"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    purpose: Mapped[EmailTokenPurpose] = mapped_column(_enum(EmailTokenPurpose, "email_token_purpose"))
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    email: Mapped[str] = mapped_column(String(320))  # the address it was sent to; must still be theirs
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
