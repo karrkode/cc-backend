@@ -204,9 +204,10 @@ def test_submitting_needs_a_confirmed_address_only_when_switched_on(client, admi
     assert client.post("/events", headers=auth(admin_token), json=EVENT).status_code == 201  # admins aren't held up
 
 
-def test_dev_admin_counts_as_confirmed(db):
-    from scripts import dev_admin
-    dev_admin.ensure_dev_admin(db, "admin@example.com", "local-admin-only")
+def test_dev_users_count_as_confirmed(db):
+    from app.models import Role
+    from scripts import dev_users
+    dev_users.ensure_dev_user(db, "admin@example.com", "local-admin-only", Role.admin, "Local Admin")
     assert db.scalar(select(User)).email_verified is True
 
 

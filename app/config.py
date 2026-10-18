@@ -42,9 +42,11 @@ class Settings(BaseSettings):
     # unverified account could never be verified, so it would be locked out of submitting.
     require_verified_email: bool = False
 
-    # Local only: the admin that scripts.dev_admin creates (see docker-compose.yml). Never set in prod.
+    # Local only: the test accounts scripts.dev_users creates (see docker-compose.yml). Never set in prod.
     dev_admin_email: str = ""
     dev_admin_password: str = ""
+    dev_user_email: str = ""
+    dev_user_password: str = ""
 
     # The Google Sheet the nightly sync reads (shared as "Anyone with the link can view").
     sheet_id: str = "1jn-XC4Hun11m4t3xmpzRtBwmgMP940k_umGEaJE-UjE"
