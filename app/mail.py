@@ -98,6 +98,18 @@ def redeem_token(db: Session, raw: str, purpose: EmailTokenPurpose) -> User | No
     return user
 
 
+def already_confirmed_by(db: Session, raw: str) -> User | None:
+    """The user, if this confirm link was already used and the address it was sent to is still
+    theirs and confirmed. Mail scanners often open links before the person does; they then
+    see "already confirmed" instead of an error."""
+    token = db.scalar(select(EmailToken).where(EmailToken.token_hash == hash_token(raw),
+                                               EmailToken.purpose == EmailTokenPurpose.verify_email))
+    if token is None or token.used_at is None:
+        return None
+    user = db.get(User, token.user_id)
+    return user if user is not None and user.email == token.email and user.email_verified else None
+
+
 # ---- the emails ------------------------------------------------------------------
 
 def _greeting(user: User) -> str:
