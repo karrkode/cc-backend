@@ -49,7 +49,8 @@ def test_sign_up_emails_a_link_that_confirms_the_address(client, db):
     r = client.post("/auth/verify-email", json={"token": raw})  # no sign-in needed
     assert r.status_code == 200 and r.json()["email_verified"] is True
     assert me(client, token)["email_verified"] is True
-    assert client.post("/auth/verify-email", json={"token": raw}).status_code == 400  # single use
+    again = client.post("/auth/verify-email", json={"token": raw})  # e.g. after a mail scanner opened it first
+    assert again.status_code == 200 and again.json()["email_verified"] is True
     assert raw not in {t.token_hash for t in db.scalars(select(EmailToken))}  # only the hash is stored
 
 
@@ -207,3 +208,12 @@ def test_dev_admin_counts_as_confirmed(db):
     from scripts import dev_admin
     dev_admin.ensure_dev_admin(db, "admin@example.com", "local-admin-only")
     assert db.scalar(select(User)).email_verified is True
+
+
+def test_a_used_link_no_longer_confirms_once_the_address_changes(client, db):
+    token = register(client)
+    raw = link_token("verify")
+    assert client.post("/auth/verify-email", json={"token": raw}).status_code == 200  # (a scanner, say)
+    client.patch("/auth/me", headers=auth(token), json={"email": "new@example.com", "current_password": PW})
+    assert client.post("/auth/verify-email", json={"token": raw}).status_code == 400  # not proof for the new address
+    assert me(client, token)["email_verified"] is False
