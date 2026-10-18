@@ -119,8 +119,14 @@ resource "aws_iam_role_policy" "email_sender" {
     Version = "2012-10-17"
     Statement = [{
       Sid = "SendAccountEmail", Effect = "Allow", Action = "ses:SendEmail"
-      # the identity, and the configuration set every email from it uses
-      Resource = [aws_sesv2_email_identity.domain.arn, aws_sesv2_configuration_set.default.arn]
+      # The sending identity and the configuration set every email from it uses. While SES is in
+      # its sandbox it also checks the recipient's identity, so the verified inbox is listed too;
+      # once production access is granted that check stops and nothing here needs to change.
+      Resource = [
+        aws_sesv2_email_identity.domain.arn,
+        aws_sesv2_configuration_set.default.arn,
+        aws_sesv2_email_identity.alert_inbox.arn,
+      ]
     }]
   })
 }
