@@ -1,15 +1,15 @@
 from datetime import UTC, date
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import case, func, or_, select
 
 from ..areas import area_of
 from ..config import get_settings
 from ..deps import DB, AdminUser, CurrentUser, OptionalUser
 from ..models import Area, Event, EventStatus, Role, Venue
-from ..schemas import EventIn, EventOut, EventPage, EventPatch, VenueIn
+from ..schemas import EventFacets, EventIn, EventOut, EventPage, EventPatch, VenueIn
 from ..visibility import live_condition, utcnow, visible_to
 
 router = APIRouter(prefix="/events", tags=["events"])
@@ -26,29 +26,58 @@ def get_or_create_venue(db: DB, v: VenueIn) -> Venue:
     return venue
 
 
+Sort = Literal["start", "closing", "opening", "az", "price"]
+
+
+def _order(sort: Sort, today: date):
+    """ORDER BY for each sort the site offers; every one ends in a stable tie-break."""
+    closing = (Event.end_date.asc().nulls_last(), Event.sort_title, Event.id)
+    if sort == "closing":  # soonest to close first; open runs and no end date last
+        return closing
+    if sort == "opening":  # not open yet, soonest first; then everything already running, by closing
+        upcoming = case((Event.begin_date > today, Event.begin_date), else_=None)
+        return (upcoming.asc().nulls_last(), *closing)
+    if sort == "az":
+        return (Event.sort_title, Event.id)
+    if sort == "price":  # cheapest first; "price not posted" last
+        return (Event.min_price.asc().nulls_last(), *closing)
+    return (Event.begin_date.asc().nulls_first(), Event.title, Event.id)  # start: TBD first, as the old site
+
+
 @router.get("", response_model=EventPage)
 def list_events(
     db: DB,
-    q: Annotated[str | None, Query(max_length=100, description="Search titles and venue names")] = None,
+    q: Annotated[str | None, Query(max_length=100, description="Search titles, venues and neighborhoods")] = None,
     area: Annotated[list[Area] | None, Query()] = None,
+    hood: Annotated[list[str] | None, Query(description="Only these neighborhoods (exact names)")] = None,
     category: Annotated[list[str] | None, Query()] = None,
     date_from: Annotated[date | None, Query(alias="from", description="Running on or after this date")] = None,
     date_to: Annotated[date | None, Query(alias="to", description="Running on or before this date")] = None,
+    ended_before: Annotated[date | None, Query(description="Only events that closed before this date")] = None,
     max_price: Annotated[Decimal | None, Query(ge=0, description="0 = free only")] = None,
     include_past: bool = False,
+    sort: Sort = "start",
     limit: Annotated[int, Query(ge=1, le=1000)] = 100,
     offset: Annotated[int, Query(ge=0)] = 0,
 ):
-    """Live events (approved, and past any scheduled publish time), soonest first.
-    Events with no start date (TBD) come first, as on the site."""
+    """Live events (approved, and past any scheduled publish time).
+
+    Dates are the caller's: the site sends its own local "today" in from= / ended_before=
+    (with include_past=true), so a Chicago evening isn't already "tomorrow" on a UTC server.
+    sort: start (TBD first, then by opening date), closing, opening, az, price."""
     conds = [live_condition()]
     if q:
-        conds.append(or_(Event.title.icontains(q, autoescape=True), Venue.name.icontains(q, autoescape=True)))
+        conds.append(or_(Event.title.icontains(q, autoescape=True), Venue.name.icontains(q, autoescape=True),
+                         Venue.neighborhood.icontains(q, autoescape=True)))
     if area:
         conds.append(Venue.area.in_(area))
+    if hood:
+        conds.append(Venue.neighborhood.in_(hood))
     if category:
         conds.append(Event.category.in_(category))
-    if not include_past:
+    if ended_before:
+        conds.append(Event.end_date < ended_before)
+    elif not include_past:
         conds.append(or_(Event.end_date.is_(None), Event.end_date >= date.today()))
     if date_from:  # still running on date_from
         conds.append(or_(Event.end_date.is_(None), Event.end_date >= date_from))
@@ -59,9 +88,33 @@ def list_events(
 
     total = db.scalar(select(func.count(Event.id)).join(Venue).where(*conds))
     rows = db.scalars(select(Event).join(Venue).where(*conds)
-                      .order_by(Event.begin_date.asc().nulls_first(), Event.title, Event.id)
+                      .order_by(*_order(sort, date_from or date.today()))
                       .limit(limit).offset(offset)).all()
     return EventPage(items=rows, total=total, limit=limit, offset=offset)
+
+
+@router.get("/facets", response_model=EventFacets)
+def facets(db: DB, today: Annotated[date | None, Query(description="The caller's local date")] = None):
+    """What the site needs to build its filters and headline counts, without loading every event:
+    the categories and neighborhoods in use, and how many events there are."""
+    today = today or date.today()
+    live = live_condition()
+    categories = db.scalars(select(Event.category).where(live).group_by(Event.category)
+                            .order_by(func.count(Event.id).desc(), Event.category)).all()
+    hoods = db.execute(select(Venue.neighborhood, Venue.area).join(Event).where(live, Venue.neighborhood != "")
+                       .group_by(Venue.neighborhood, Venue.area).order_by(Venue.neighborhood)).all()
+    current = db.scalar(select(func.count(Event.id)).where(live, or_(Event.end_date.is_(None), Event.end_date >= today)))
+    return EventFacets(categories=categories, neighborhoods=[{"name": n, "area": a} for n, a in hoods],
+                       current=current, total=db.scalar(select(func.count(Event.id)).where(live)))
+
+
+@router.get("/lookup", response_model=list[EventOut])
+def lookup(db: DB, ids: Annotated[list[str], Query(max_length=10, description="Event ids, or the old site's ids")]):
+    """Live events by id, for shared outing links. Old-site links carry 6-character sheet ids,
+    which match source_id; unknown ids are left out. Closed events are included."""
+    numbers = [int(i) for i in ids if i.isdigit()]
+    return db.scalars(select(Event).where(live_condition(), or_(Event.id.in_(numbers), Event.source_id.in_(ids)))
+                      .order_by(Event.id)).all()
 
 
 @router.get("/{event_id}", response_model=EventOut)

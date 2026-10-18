@@ -1,12 +1,13 @@
 """Database tables. Alembic migrations in alembic/versions must match these."""
 import enum
+import re
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (Boolean, CheckConstraint, Date, DateTime, Enum, ForeignKey, Index, Integer,
                         Numeric, String, Text, UniqueConstraint, Uuid, false, func)
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from .db import Base
 
@@ -32,6 +33,11 @@ class EventStatus(str, enum.Enum):
     approved = "approved"
     rejected = "rejected"
     withdrawn = "withdrawn"  # was on the Google Sheet, then removed from it; hidden but kept
+
+
+def sort_title(title: str) -> str:
+    """How a title files alphabetically: "The Lion King" under L, ignoring case."""
+    return re.sub(r"^(the|a|an)\s+", "", title.strip(), flags=re.I).lower()
 
 
 def _enum(cls, name):
@@ -105,6 +111,7 @@ class Event(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     source_id: Mapped[str | None] = mapped_column(String(40), unique=True)  # id from the old sheet, for re-seeding
     title: Mapped[str] = mapped_column(String(300))
+    sort_title: Mapped[str] = mapped_column(String(300), index=True)  # kept in step with title, see below
     venue_id: Mapped[int] = mapped_column(ForeignKey("venues.id", ondelete="RESTRICT"), index=True)
     begin_date: Mapped[date | None] = mapped_column(Date)  # NULL = start date not announced
     end_date: Mapped[date | None] = mapped_column(Date)
@@ -125,6 +132,11 @@ class Event(Base):
 
     venue: Mapped[Venue] = relationship(lazy="joined")
     submitter: Mapped[User | None] = relationship(lazy="selectin")  # one extra query per batch, not per event
+
+    @validates("title")
+    def _keep_sort_title(self, _key, value):
+        self.sort_title = sort_title(value)
+        return value
 
     @property
     def submitted_by_name(self) -> str | None:
