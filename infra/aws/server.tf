@@ -36,6 +36,8 @@ resource "aws_iam_role_policy" "api" {
         Resource = aws_db_instance.main.master_user_secret[0].secret_arn
       },
       { Sid = "ReadJwtKey", Effect = "Allow", Action = "ssm:GetParameter", Resource = aws_ssm_parameter.jwt_secret.arn },
+      # Account emails (verification, password reset) from @<domain> only; SES is in us-east-1 (ses.tf).
+      { Sid = "SendEmail", Effect = "Allow", Action = "ses:SendEmail", Resource = aws_sesv2_email_identity.domain.arn },
       {
         Sid      = "WriteLogs", Effect = "Allow"
         Action   = ["logs:CreateLogStream", "logs:PutLogEvents", "logs:DescribeLogStreams"]
