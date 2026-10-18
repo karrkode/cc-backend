@@ -130,3 +130,92 @@ resource "aws_iam_role_policy" "email_sender" {
     }]
   })
 }
+
+# ---- bounces and complaints: tell me --------------------------------------------------
+# SES can only publish to an SNS topic in its own region, so these alerts have their own
+# us-east-1 topic, emailed to the same inbox as the other alerts (monitoring.tf). The account's
+# suppression list already stops repeat sends to those addresses; this is so someone knows.
+
+resource "aws_sns_topic" "ses_alerts" {
+  provider = aws.us_east_1
+  name     = "${var.name}-ses-alerts"
+}
+
+resource "aws_sns_topic_subscription" "ses_alerts_email" {
+  provider  = aws.us_east_1
+  topic_arn = aws_sns_topic.ses_alerts.arn
+  protocol  = "email"
+  endpoint  = var.alert_email # AWS emails a confirmation link; nothing arrives until it's clicked
+}
+
+resource "aws_sns_topic_policy" "ses_alerts" {
+  provider = aws.us_east_1
+  arn      = aws_sns_topic.ses_alerts.arn
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "SesEvents", Effect = "Allow", Principal = { Service = "ses.amazonaws.com" }
+        Action    = "sns:Publish", Resource = aws_sns_topic.ses_alerts.arn
+        Condition = { StringEquals = { "aws:SourceAccount" = data.aws_caller_identity.me.account_id } }
+      },
+      {
+        Sid       = "CloudWatchAlarms", Effect = "Allow", Principal = { Service = "cloudwatch.amazonaws.com" }
+        Action    = "sns:Publish", Resource = aws_sns_topic.ses_alerts.arn
+        Condition = { StringEquals = { "aws:SourceAccount" = data.aws_caller_identity.me.account_id } }
+      },
+    ]
+  })
+}
+
+# One message per bounced, complained-about or rejected email sent with the configuration set
+# (every email from the domain, since it's the identity's default).
+resource "aws_sesv2_configuration_set_event_destination" "problems" {
+  provider               = aws.us_east_1
+  configuration_set_name = aws_sesv2_configuration_set.default.configuration_set_name
+  event_destination_name = "bounces-and-complaints"
+
+  event_destination {
+    enabled              = true
+    matching_event_types = ["BOUNCE", "COMPLAINT", "REJECT"]
+    sns_destination {
+      topic_arn = aws_sns_topic.ses_alerts.arn
+    }
+  }
+
+  depends_on = [aws_sns_topic_policy.ses_alerts]
+}
+
+# Account-wide rates (from the configuration set's reputation metrics). AWS reviews an account at
+# 5% bounces or 0.1% complaints and may pause sending at 10% / 0.5%: warn well before either.
+resource "aws_cloudwatch_metric_alarm" "ses_bounce_rate" {
+  provider            = aws.us_east_1
+  alarm_name          = "${var.name}-ses-bounce-rate"
+  alarm_description   = "SES bounce rate is over 3%. AWS reviews the account at 5% and may pause sending at 10%."
+  namespace           = "AWS/SES"
+  metric_name         = "Reputation.BounceRate"
+  statistic           = "Maximum"
+  period              = 3600
+  evaluation_periods  = 1
+  threshold           = 0.03
+  comparison_operator = "GreaterThanThreshold"
+  treat_missing_data  = "notBreaching" # no email sent is not a problem
+  alarm_actions       = [aws_sns_topic.ses_alerts.arn]
+  ok_actions          = [aws_sns_topic.ses_alerts.arn]
+}
+
+resource "aws_cloudwatch_metric_alarm" "ses_complaint_rate" {
+  provider            = aws.us_east_1
+  alarm_name          = "${var.name}-ses-complaint-rate"
+  alarm_description   = "SES complaint rate is over 0.05%. AWS reviews the account at 0.1% and may pause sending at 0.5%."
+  namespace           = "AWS/SES"
+  metric_name         = "Reputation.ComplaintRate"
+  statistic           = "Maximum"
+  period              = 3600
+  evaluation_periods  = 1
+  threshold           = 0.0005
+  comparison_operator = "GreaterThanThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.ses_alerts.arn]
+  ok_actions          = [aws_sns_topic.ses_alerts.arn]
+}
