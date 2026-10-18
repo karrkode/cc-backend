@@ -18,7 +18,6 @@ import logging
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from functools import lru_cache
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
@@ -40,10 +39,11 @@ class Email:
 OUTBOX: list[Email] = []  # the "memory" mode's sent mail, for tests
 
 
-@lru_cache
 def _ses():
+    """A new client per email. In production the credentials are short-lived and refreshed in a
+    file by the host (infra/aws/server/mail-creds.sh); a new client reads the current ones."""
     import boto3  # only production needs it loaded
-    return boto3.client("sesv2", region_name=get_settings().ses_region)
+    return boto3.session.Session().client("sesv2", region_name=get_settings().ses_region)
 
 
 def send(email: Email) -> None:
