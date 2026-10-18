@@ -50,11 +50,24 @@ FRONTEND_DIR=/path/to/cc-site/public docker compose --profile web up -d   # cc-s
 The page finds the API by itself (`localhost:8000` when opened from localhost,
 `api.<its own domain>` anywhere else), so nothing needs configuring.
 
-The local stack comes with an admin ready to use: sign in as **admin@example.com** with
-password **local-admin-only**. It's created (or its password and role put back) every time
-the API container starts, so it survives database wipes. These values live in
-`docker-compose.yml`, and `scripts/dev_admin.py` refuses to run unless `ENV=local`, so this
-account can't exist in production.
+### Test accounts
+
+The local stack comes with two accounts ready to use, so both sides of a feature can be tried
+(for example, submit an event as the user, then review it as the admin):
+
+| Sign in as | Password | Role | Name | Use it for |
+|---|---|---|---|---|
+| `admin@example.com` | `local-admin-only` | admin | Local Admin | the review queue, publishing now or later, admin-only details |
+| `user@example.com` | `local-user-only` | user | Local User | everything a regular visitor can do: submit (pending review), "I've been", profile |
+
+- **Always there:** `scripts/dev_users.py` runs every time the API container starts. It creates
+  each account, or puts back its password, role and confirmed email if they were changed (making
+  the test user an admin to try something is undone on the next start), so they survive
+  database wipes.
+- **Local only:** the logins are in `docker-compose.yml` (`DEV_ADMIN_*`, `DEV_USER_*`), which
+  production never uses, and the script refuses to run unless `ENV=local`.
+- **Both count as confirmed,** since local email is never really sent.
+- Any other account you register locally is ordinary data: it lasts until the database is wiped.
 
 **Email locally.** Signing up, changing your email, and "Forgot password?" send emails with
 single-use links. The local stack never really sends them: each one is written to the API log,
@@ -204,6 +217,6 @@ scripts/sheet_ids.py   the ID column to paste into the sheet
 scripts/seed.py      import seed/events.json
 seed/events.json     the events from the old Google Sheet site
 scripts/make_admin.py
-scripts/dev_admin.py the ready-made local admin (ENV=local only)
+scripts/dev_users.py the local test accounts (ENV=local only)
 tests/
 ```
