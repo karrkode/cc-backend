@@ -99,3 +99,28 @@ resource "aws_route53_record" "ses_mail_from_spf" {
   ttl     = 1800
   records = ["v=spf1 include:amazonses.com ~all"]
 }
+
+# The only thing the API container can do with AWS: send account email from @<domain>.
+# The API server's role assumes it and passes on hour-long credentials (server/mail-creds.sh),
+# so the container never sees the server's own role and no long-lived key exists.
+resource "aws_iam_role" "email_sender" {
+  name                 = "${var.name}-email-sender"
+  max_session_duration = 3600
+  assume_role_policy = jsonencode({
+    Version   = "2012-10-17"
+    Statement = [{ Effect = "Allow", Principal = { AWS = aws_iam_role.api.arn }, Action = "sts:AssumeRole" }]
+  })
+}
+
+resource "aws_iam_role_policy" "email_sender" {
+  name = "send-account-email"
+  role = aws_iam_role.email_sender.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid = "SendAccountEmail", Effect = "Allow", Action = "ses:SendEmail"
+      # the identity, and the configuration set every email from it uses
+      Resource = [aws_sesv2_email_identity.domain.arn, aws_sesv2_configuration_set.default.arn]
+    }]
+  })
+}

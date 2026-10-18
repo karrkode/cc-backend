@@ -26,5 +26,7 @@ DATABASE_URL=$DATABASE_URL
 JWT_SECRET=$JWT
 CORS_ORIGINS=$CORS_ORIGINS
 COOKIE_SECURE=true
+EMAIL_BACKEND=ses
+SITE_URL=$SITE_URL
 EOF
 mv /etc/culture-crew/api.env.tmp /etc/culture-crew/api.env
