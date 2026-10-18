@@ -3,7 +3,7 @@
 # Log: /var/log/cloud-init-output.log
 set -euxo pipefail
 
-dnf install -y docker
+dnf install -y docker amazon-ecr-credential-helper
 systemctl enable --now docker
 
 mkdir -p /etc/culture-crew
@@ -19,7 +19,16 @@ export DB_NAME="${db_name}"
 export JWT_PARAM="${jwt_param}"
 export CORS_ORIGINS="${cors_origins}"
 export LOG_GROUP="${log_group}"
+# Docker asks the ECR credential helper for registry access (using the instance role) on each
+# pull, so no docker login and no registry token on disk; the helper's own cache is off too.
+export DOCKER_CONFIG=/etc/culture-crew/docker
+export AWS_ECR_DISABLE_CACHE=true
 CONFIG
+
+mkdir -p /etc/culture-crew/docker
+cat > /etc/culture-crew/docker/config.json <<'DOCKER'
+{ "credHelpers": { "${split("/", image_repo)[0]}": "ecr-login" } }
+DOCKER
 
 cat > /etc/culture-crew/Caddyfile <<'CADDY'
 {

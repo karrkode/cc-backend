@@ -8,7 +8,8 @@ source /etc/culture-crew/config
 TAG="${1:-$(cat /etc/culture-crew/deployed-tag 2>/dev/null || echo "$IMAGE_TAG")}"
 IMAGE="$IMAGE_REPO:$TAG"
 
-aws ecr get-login-password --region "$REGION" | docker login --username AWS --password-stdin "${IMAGE_REPO%%/*}"
+# No docker login: the ECR credential helper (set up in DOCKER_CONFIG at boot) gets access
+# from the instance role for each pull, so no registry token is stored on the server.
 docker pull "$IMAGE"
 /usr/local/bin/culture-crew-env
 
