@@ -36,8 +36,10 @@ class EventStatus(str, enum.Enum):
 
 
 def sort_title(title: str) -> str:
-    """How a title files alphabetically: "The Lion King" under L, ignoring case."""
-    return re.sub(r"^(the|a|an)\s+", "", title.strip(), flags=re.I).lower()
+    """How a title files alphabetically: "The Lion King" under L, "(Re)arranging" under R and
+    "... before the dawn" under B, ignoring case."""
+    t = re.sub(r"^\W+", "", title.strip())  # leading punctuation
+    return re.sub(r"^\W+", "", re.sub(r"^(the|a|an)\s+", "", t, flags=re.I)).lower() or title.strip().lower()
 
 
 def _enum(cls, name):

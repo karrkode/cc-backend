@@ -83,6 +83,13 @@ def test_lookup_by_id_or_old_site_id(client, make_event, db):
     assert client.get("/events/facets").status_code == 200  # not mistaken for an event id
 
 
+def test_sort_titles():
+    from app.models import sort_title
+    assert [sort_title(t) for t in ("The Lion King", "A Midsummer", "(Re)arranging", "... before the dawn",
+                                    "Theater of Dreams", "4000 Miles", "???")] == \
+        ["lion king", "midsummer", "re)arranging", "before the dawn", "theater of dreams", "4000 miles", "???"]
+
+
 def test_sort_title_follows_title_changes(client, admin_token, make_event, db):
     ev = make_event("The Zebra")
     assert ev.sort_title == "zebra"
