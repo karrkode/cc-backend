@@ -134,11 +134,16 @@ for the site or email:
    visitor could reach them.
 4. **Switch the nameservers at GoDaddy.** For up to 48 hours (the `.com` NS TTL) resolvers
    could get either side; both served working answers and identical email records.
+5. **Afterwards, GoDaddy only registers the domain.** Its DNS page shows "DNS Provider:
+   Amazon Route 53" and no records, so the staging and validation records added there are
+   gone and nothing needs cleaning up (checked 2026-10-18). Route 53 is the only copy of
+   the DNS, including the email records: `dns_mail.tf` is their source of truth.
 
 ## Tearing it down
 
 **This takes the site and the domain's email offline** unless the nameservers go back to
-GoDaddy first (`ns51`/`ns52.domaincontrol.com`), with the email records re-created there.
+GoDaddy first (`ns51`/`ns52.domaincontrol.com`), with the email records re-created there
+(copy them from `dns_mail.tf`; GoDaddy no longer keeps a copy).
 Then: set `db_deletion_protection = false` in `terraform.tfvars`, `terraform apply`, and
 `terraform destroy`. RDS keeps a final snapshot (`culture-crew-db-final`), which you can
 delete in the console.
