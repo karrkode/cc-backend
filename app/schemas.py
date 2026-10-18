@@ -1,12 +1,12 @@
 """Request and response shapes. FastAPI validates against these and builds /docs from them."""
 import uuid
-from datetime import date, datetime
+from datetime import date, date as date_, datetime
 from decimal import Decimal
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
-from .models import Area, EventStatus, Role
+from .models import Area, EventStatus, PlanStatus, Role
 
 Category = Literal["Theater", "Concert", "Comedy", "Visual Art"]
 Publish = Literal["now", "later", "review"]
@@ -262,6 +262,27 @@ class SheetSyncOut(ORM):
 
 
 # ---- attended --------------------------------------------------------------
+
+class PlanIn(BaseModel):
+    """status "interested", or "going" with the date (a day the event is on, not in the past)."""
+    status: Literal["interested", "going"]
+    date: date_ | None = None
+
+    @model_validator(mode="after")
+    def _date_only_when_going(self):
+        if self.status == "going" and self.date is None:
+            raise ValueError('Choose the date you\'re going ("date")')
+        if self.status == "interested" and self.date is not None:
+            raise ValueError('A date only goes with "going"')
+        return self
+
+
+class PlanOut(ORM):
+    event: EventOut
+    status: PlanStatus
+    date: date_ | None = Field(validation_alias="going_on")
+    updated_at: datetime
+
 
 class AttendedOut(ORM):
     event: EventOut

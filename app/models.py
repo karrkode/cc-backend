@@ -17,6 +17,11 @@ class Role(str, enum.Enum):
     admin = "admin"
 
 
+class PlanStatus(str, enum.Enum):
+    interested = "interested"
+    going = "going"  # with the date they're going on
+
+
 class EmailTokenPurpose(str, enum.Enum):
     verify_email = "verify_email"
     reset_password = "reset_password"
@@ -154,6 +159,26 @@ class Attended(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     event_id: Mapped[int] = mapped_column(ForeignKey("events.id", ondelete="CASCADE"), primary_key=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    event: Mapped[Event] = relationship(lazy="joined")
+
+
+class Plan(Base):
+    """A user's own plan for an event (CC-53): interested, or going on a date. Private to them;
+    sharing with friends comes later and must be opted into."""
+    __tablename__ = "plans"
+    __table_args__ = (
+        CheckConstraint("(status = 'going') = (going_on IS NOT NULL)", name="ck_plans_going_has_a_date"),
+        Index("ix_plans_user_status", "user_id", "status"),
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    event_id: Mapped[int] = mapped_column(ForeignKey("events.id", ondelete="CASCADE"), primary_key=True)
+    status: Mapped[PlanStatus] = mapped_column(_enum(PlanStatus, "plan_status"))
+    going_on: Mapped[date | None] = mapped_column(Date)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(),
+                                                 onupdate=func.now())
 
     event: Mapped[Event] = relationship(lazy="joined")
 
