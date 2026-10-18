@@ -12,6 +12,9 @@ IMAGE="$IMAGE_REPO:$TAG"
 # from the instance role for each pull, so no registry token is stored on the server.
 docker pull "$IMAGE"
 /usr/local/bin/culture-crew-env
+# Email is optional for the API: if this fails, emails fail (and are logged) but the site stays up.
+mkdir -p /etc/culture-crew/mail-creds
+/usr/local/bin/culture-crew-mail-creds || echo "warning: no SES credentials for the API; emails will fail" >&2
 
 docker network inspect cc >/dev/null 2>&1 || docker network create cc
 
@@ -19,6 +22,8 @@ docker network inspect cc >/dev/null 2>&1 || docker network create cc
 docker rm -f api >/dev/null 2>&1 || true
 docker run -d --name api --network cc --restart unless-stopped \
   --env-file /etc/culture-crew/api.env \
+  -v /etc/culture-crew/mail-creds:/run/aws:ro \
+  -e AWS_SHARED_CREDENTIALS_FILE=/run/aws/credentials -e AWS_EC2_METADATA_DISABLED=true \
   --log-driver awslogs --log-opt awslogs-region="$REGION" \
   --log-opt awslogs-group="$LOG_GROUP" --log-opt awslogs-stream=api \
   "$IMAGE"

@@ -19,6 +19,8 @@ export DB_NAME="${db_name}"
 export JWT_PARAM="${jwt_param}"
 export CORS_ORIGINS="${cors_origins}"
 export LOG_GROUP="${log_group}"
+export SITE_URL="${site_url}"
+export MAIL_ROLE_ARN="${mail_role_arn}"
 # Docker asks the ECR credential helper for registry access (using the instance role) on each
 # pull, so no docker login and no registry token on disk; the helper's own cache is off too.
 export DOCKER_CONFIG=/etc/culture-crew/docker
@@ -57,7 +59,12 @@ cat > /usr/local/bin/culture-crew-sync <<'SCRIPT'
 ${sync_sh}
 SCRIPT
 
-chmod 755 /usr/local/bin/culture-crew-deploy /usr/local/bin/culture-crew-env /usr/local/bin/culture-crew-sync
+cat > /usr/local/bin/culture-crew-mail-creds <<'SCRIPT'
+${mail_creds_sh}
+SCRIPT
+
+chmod 755 /usr/local/bin/culture-crew-deploy /usr/local/bin/culture-crew-env /usr/local/bin/culture-crew-sync \
+  /usr/local/bin/culture-crew-mail-creds
 
 cat > /etc/systemd/system/culture-crew.service <<'UNIT'
 [Unit]
@@ -76,7 +83,32 @@ TimeoutStartSec=600
 WantedBy=multi-user.target
 UNIT
 
+# Fresh send-only credentials for the API every 30 minutes (they last an hour).
+cat > /etc/systemd/system/culture-crew-mail-creds.service <<'UNIT'
+[Unit]
+Description=Refresh the API's short-lived SES credentials
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/culture-crew-mail-creds
+UNIT
+
+cat > /etc/systemd/system/culture-crew-mail-creds.timer <<'UNIT'
+[Unit]
+Description=Refresh the API's short-lived SES credentials every 30 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=30min
+
+[Install]
+WantedBy=timers.target
+UNIT
+
 systemctl daemon-reload
+systemctl enable --now culture-crew-mail-creds.timer
 systemctl enable culture-crew.service
 # Fails harmlessly on the very first boot if no image has been pushed to ECR yet.
 systemctl start culture-crew.service || echo "First deploy didn't start; push an image, then run culture-crew-deploy."
