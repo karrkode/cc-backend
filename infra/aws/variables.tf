@@ -67,6 +67,12 @@ variable "alert_email" {
   type        = string
 }
 
+variable "ses_test_inboxes" {
+  description = "Outside inboxes allowed to receive account emails while SES is in its sandbox (CC-58). Keep in terraform.tfvars, never in the repo; empty it once production access is granted."
+  type        = list(string)
+  default     = []
+}
+
 variable "monthly_budget_usd" {
   type    = number
   default = 15
