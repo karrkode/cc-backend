@@ -244,6 +244,21 @@ class EventPatch(BaseModel):
             raise ValueError("publish_at needs a time zone")
         return v
 
+    @field_validator("url")
+    @classmethod
+    def _http_only(cls, v):  # the same rule as new events (CC-56: the site's edit form sends it)
+        if v and not v.startswith(("https://", "http://")):
+            raise ValueError("URL must start with http:// or https://")
+        return v
+
+    @model_validator(mode="after")
+    def _no_nulls_where_required(self):
+        # Leaving a field out keeps it; only dates, price and publish time can be cleared with null.
+        for name in ("title", "venue_id", "open_run", "cost_text", "category", "url", "status"):
+            if name in self.model_fields_set and getattr(self, name) is None:
+                raise ValueError(f"{name} can't be empty")
+        return self
+
 
 # ---- sheet sync log --------------------------------------------------------
 
