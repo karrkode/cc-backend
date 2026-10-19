@@ -103,3 +103,19 @@ def test_plans_are_private(client, user_token, admin_token, make_event):
     assert len(plans(client, user_token)) == 1
     assert "plan" not in client.get(f"/events/{ev.id}", headers=auth(user_token)).text  # public shapes unchanged
     assert client.get("/me/plans").status_code == 401
+
+
+def test_ive_been_clears_the_plan(client, user_token, make_event):
+    """CC-63: marking "I've been" moves the event out of your plans for good."""
+    ev, other = make_event("Hamlet"), make_event("Bug")
+    put(client, user_token, ev.id, status="going", date=T.isoformat())
+    put(client, user_token, other.id, status="interested")
+    assert client.put(f"/me/attended/{ev.id}", headers=auth(user_token)).status_code == 201
+    assert [t for t, _, _ in plans(client, user_token)] == ["Bug"]  # only that event's plan goes
+    assert client.delete(f"/me/attended/{ev.id}", headers=auth(user_token)).status_code == 204
+    assert [t for t, _, _ in plans(client, user_token)] == ["Bug"]  # un-marking doesn't bring it back
+    # already marked, then planned again: marking again still clears it
+    client.put(f"/me/attended/{ev.id}", headers=auth(user_token))
+    put(client, user_token, ev.id, status="interested")
+    assert client.put(f"/me/attended/{ev.id}", headers=auth(user_token)).status_code == 200
+    assert [t for t, _, _ in plans(client, user_token)] == ["Bug"]
