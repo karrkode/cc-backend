@@ -57,7 +57,7 @@ The local stack comes with two accounts ready to use, so both sides of a feature
 
 | Sign in as | Password | Role | Name | Use it for |
 |---|---|---|---|---|
-| `admin@example.com` | `local-admin-only` | admin | Local Admin | the review queue, publishing now or later, admin-only details |
+| `admin@example.com` | `local-admin-only` | admin | Local Admin | the review queue, publishing now or later, admin-only details, the plan dolphins |
 | `user@example.com` | `local-user-only` | user | Local User | everything a regular visitor can do: submit (pending review), "I've been", profile |
 
 - **Always there:** `scripts/dev_users.py` runs every time the API container starts. It creates
@@ -217,6 +217,7 @@ scripts/sheet_ids.py   the ID column to paste into the sheet
 scripts/seed.py      import seed/events.json
 seed/events.json     the events from the old Google Sheet site
 scripts/make_admin.py
+scripts/dolphins.py  turn the plan dolphins on for an account (CC-61)
 scripts/dev_users.py the local test accounts (ENV=local only)
 tests/
 ```

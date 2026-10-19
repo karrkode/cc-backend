@@ -117,6 +117,7 @@ Then open https://chiculturecrew.com.
 | Run the sync now | `aws ssm send-command ... commands=["/usr/local/bin/culture-crew-sync"]` |
 | Look at the database | run the `db_tunnel_command` output, then connect a GUI to `localhost:5433` (user `culture_admin`, password from Secrets Manager) |
 | Make an admin | on the server: `docker exec api python -m scripts.make_admin you@example.com` |
+| Plan dolphins on an account | on the server: `docker exec api python -m scripts.dolphins you@example.com` (`--off` to remove) |
 
 ## How the domain moved (October 2026)
 
