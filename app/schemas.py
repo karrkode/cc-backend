@@ -107,6 +107,25 @@ class VenueIn(BaseModel):
     area: Area | None = None  # worked out from the neighborhood when left out
 
 
+class VenuePatch(BaseModel):
+    """Rename a venue or move it (CC-57). Left out = unchanged. A new neighborhood without an area
+    gets the area worked out from it."""
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    neighborhood: str | None = Field(default=None, max_length=120)
+    area: Area | None = None
+
+
+class VenueAdminOut(VenueOut):
+    """A venue with how many events use it, for the admin venues list."""
+    events: int
+    sheet_events: int  # of those, how many come from the Google Sheet (their venue follows the sheet)
+
+
+class VenueMergeOut(BaseModel):
+    moved: int  # events that moved over
+    into: VenueOut
+
+
 # ---- events ----------------------------------------------------------------
 
 class EventOut(ORM):
