@@ -1,1 +1,4 @@
 alert_email = "you@example.com"  # budget, health and failed-sync alerts
+# Outside inboxes that can get account emails while SES is in its sandbox (CC-58). Empty once
+# production access is granted (CC-46).
+# ses_test_inboxes = ["you@gmail.com"]

@@ -66,6 +66,17 @@ resource "aws_sesv2_email_identity" "alert_inbox" {
   configuration_set_name = aws_sesv2_configuration_set.default.configuration_set_name
 }
 
+# CC-58: extra outside inboxes (e.g. a Gmail) for testing confirm and reset emails while SES is in
+# its sandbox. Set in terraform.tfvars, which isn't committed, so no address lands in this public
+# repo. Each one gets a "please verify" email from AWS; click it. Empty this list (CC-46) once
+# production access is granted.
+resource "aws_sesv2_email_identity" "test_inbox" {
+  for_each               = toset(var.ses_test_inboxes)
+  provider               = aws.us_east_1
+  email_identity         = each.value
+  configuration_set_name = aws_sesv2_configuration_set.default.configuration_set_name
+}
+
 resource "aws_route53_record" "ses_dkim" {
   count   = 3 # SES Easy DKIM always issues three tokens
   zone_id = aws_route53_zone.main.zone_id
@@ -122,11 +133,11 @@ resource "aws_iam_role_policy" "email_sender" {
       # The sending identity and the configuration set every email from it uses. While SES is in
       # its sandbox it also checks the recipient's identity, so the verified inbox is listed too;
       # once production access is granted that check stops and nothing here needs to change.
-      Resource = [
+      Resource = concat([
         aws_sesv2_email_identity.domain.arn,
         aws_sesv2_configuration_set.default.arn,
         aws_sesv2_email_identity.alert_inbox.arn,
-      ]
+      ], [for inbox in aws_sesv2_email_identity.test_inbox : inbox.arn])
     }]
   })
 }
