@@ -7,6 +7,8 @@
 | DEV_ADMIN_EMAIL / _PASSWORD     | admin | Local Admin | the review queue, publishing, admin   |
 | DEV_USER_EMAIL / _PASSWORD      | user  | Local User  | everything a regular visitor can do   |
 
+The admin also has the plan dolphins on (CC-61) and the user doesn't, so both looks can be tried.
+
 The values are set for the local stack in docker-compose.yml (and listed in the README). Each
 account is created, or has its password, role and confirmed email put back if they were changed;
 running it again changes nothing. The local API container runs this on every start.
@@ -26,10 +28,11 @@ from app.security import hash_password, verify_password
 def ensure_dev_user(db, email: str, password: str, role: Role, display_name: str) -> str:
     """Returns what happened: "created", "updated" or "unchanged"."""
     email = email.strip().lower()
+    dolphins = role == Role.admin
     user = db.scalar(select(User).where(User.email == email))
     if user is None:
         db.add(User(email=email, password_hash=hash_password(password), display_name=display_name, role=role,
-                    email_verified_at=datetime.now(UTC)))
+                    dolphins=dolphins, email_verified_at=datetime.now(UTC)))
         db.commit()
         return "created"
     changed = False
@@ -41,6 +44,9 @@ def ensure_dev_user(db, email: str, password: str, role: Role, display_name: str
         changed = True
     if user.role != role:  # e.g. the test user was made an admin to try something
         user.role = role
+        changed = True
+    if user.dolphins != dolphins:
+        user.dolphins = dolphins
         changed = True
     db.commit()
     return "updated" if changed else "unchanged"

@@ -62,6 +62,7 @@ class UserOut(ORM):
     email_verified: bool  # they've opened the link emailed to this address
     display_name: str
     role: Role
+    dolphins: bool  # CC-61: plans show the dolphin icons for this account
     created_at: datetime
 
 

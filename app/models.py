@@ -62,6 +62,9 @@ class User(Base):
     role: Mapped[Role] = mapped_column(_enum(Role, "user_role"), default=Role.user)
     # Set when they open the link emailed to this address; cleared when the email changes.
     email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # CC-61: show the dolphin icons on this account's plans. Only the owner's accounts have it
+    # (set with scripts.dolphins); everyone else's plans get their own look later.
+    dolphins: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     @property

@@ -33,6 +33,7 @@ def test_creates_both_accounts_ready_to_use(client, monkeypatch, Session, capsys
         r = client.post("/auth/login", json={"email": email, "password": password})
         me = r.json()["user"]
         assert r.status_code == 200 and (me["role"], me["display_name"], me["email_verified"]) == (role.value, name, True)
+        assert me["dolphins"] is (role == Role.admin)  # CC-61: the admin can try the dolphins, the user the plain look
     user_token = client.post("/auth/login", json={"email": USER[0], "password": USER[1]}).json()["access_token"]
     assert client.get("/admin/events", headers=auth(user_token)).status_code == 403  # really a regular user
 
@@ -47,11 +48,12 @@ def test_running_again_changes_nothing(monkeypatch, Session, db, capsys):
 
 
 def test_puts_back_a_changed_password_role_or_unconfirmed_email(db):
-    db.add(User(email=USER[0], password_hash=hash_password("someone-changed-it"), role=Role.admin))
+    db.add(User(email=USER[0], password_hash=hash_password("someone-changed-it"), role=Role.admin, dolphins=True))
     db.commit()
     assert dev_users.ensure_dev_user(db, *USER) == "updated"
     user = db.scalar(select(User).where(User.email == USER[0]))
     assert user.role == Role.user and verify_password(USER[1], user.password_hash) and user.email_verified
+    assert not user.dolphins
 
 
 def test_either_account_can_be_left_out(monkeypatch, Session, db, capsys):

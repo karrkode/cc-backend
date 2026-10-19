@@ -20,18 +20,19 @@ def list_attended(db: DB, user: CurrentUser):
 
 @router.put("/attended/{event_id}", response_model=AttendedOut)
 def mark_attended(event_id: int, db: DB, user: CurrentUser, response: Response):
-    """Idempotent: marking an event twice is fine and returns the existing mark."""
-    existing = db.get(Attended, (user.id, event_id))
-    if existing:
-        return existing
-    event = db.get(Event, event_id)
-    if event is None or not is_live(event):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Event not found")
-    mark = Attended(user_id=user.id, event_id=event_id)
-    db.add(mark)
+    """Idempotent: marking an event twice is fine and returns the existing mark.
+    Having been, any plan for the event is done with, so it's cleared (CC-63); un-marking doesn't bring it back."""
+    mark = db.get(Attended, (user.id, event_id))
+    if mark is None:
+        event = db.get(Event, event_id)
+        if event is None or not is_live(event):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Event not found")
+        mark = Attended(user_id=user.id, event_id=event_id)
+        db.add(mark)
+        response.status_code = status.HTTP_201_CREATED
+    db.execute(delete(Plan).where(Plan.user_id == user.id, Plan.event_id == event_id))
     db.commit()
     db.refresh(mark)
-    response.status_code = status.HTTP_201_CREATED
     return mark
 
 
