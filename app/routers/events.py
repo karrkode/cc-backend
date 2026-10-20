@@ -9,6 +9,7 @@ from ..areas import area_of
 from ..config import get_settings
 from ..deps import DB, AdminUser, CurrentUser, OptionalUser
 from ..models import Area, Event, EventStatus, Plan, PlanStatus, Role, Venue
+from ..picks import attach_picks, pick_condition
 from ..schemas import EventFacets, EventIn, EventOut, EventPage, EventPatch, VenueIn
 from ..visibility import live_condition, utcnow, visible_to
 
@@ -57,6 +58,7 @@ def list_events(
     max_price: Annotated[Decimal | None, Query(ge=0, description="0 = free only")] = None,
     include_past: bool = False,
     mine: Annotated[list[PlanStatus] | None, Query(description="Only events you're interested in or going to (needs sign-in)")] = None,
+    picks: Annotated[list[PlanStatus] | None, Query(description="Only the owner's picks of these kinds (the dolphins)")] = None,
     user: OptionalUser = None,
     sort: Sort = "start",
     limit: Annotated[int, Query(ge=1, le=1000)] = 100,
@@ -67,12 +69,15 @@ def list_events(
     Dates are the caller's: the site sends its own local "today" in from= / ended_before=
     (with include_past=true), so a Chicago evening isn't already "tomorrow" on a UTC server.
     sort: start (TBD first, then by opening date), closing, opening, az, price.
-    mine (CC-66): only your own plans of those kinds; it never shows anyone else's."""
+    mine (CC-66): only your own plans of those kinds; it never shows anyone else's.
+    picks (CC-66): only the owner's public picks of those kinds (the dolphin filter buttons)."""
     conds = [live_condition()]
     if mine:
         if user is None:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sign in to filter by your plans")
         conds.append(Event.id.in_(select(Plan.event_id).where(Plan.user_id == user.id, Plan.status.in_(mine))))
+    if picks:
+        conds.append(pick_condition(picks))
     if q:
         conds.append(or_(Event.title.icontains(q, autoescape=True), Venue.name.icontains(q, autoescape=True),
                          Venue.neighborhood.icontains(q, autoescape=True)))
@@ -97,7 +102,7 @@ def list_events(
     rows = db.scalars(select(Event).join(Venue).where(*conds)
                       .order_by(*_order(sort, date_from or date.today()))
                       .limit(limit).offset(offset)).all()
-    return EventPage(items=rows, total=total, limit=limit, offset=offset)
+    return EventPage(items=attach_picks(db, rows), total=total, limit=limit, offset=offset)
 
 
 @router.get("/facets", response_model=EventFacets)
@@ -120,8 +125,8 @@ def lookup(db: DB, ids: Annotated[list[str], Query(max_length=10, description="E
     """Live events by id, for shared outing links. Old-site links carry 6-character sheet ids,
     which match source_id; unknown ids are left out. Closed events are included."""
     numbers = [int(i) for i in ids if i.isdigit()]
-    return db.scalars(select(Event).where(live_condition(), or_(Event.id.in_(numbers), Event.source_id.in_(ids)))
-                      .order_by(Event.id)).all()
+    return attach_picks(db, db.scalars(select(Event).where(live_condition(), or_(Event.id.in_(numbers), Event.source_id.in_(ids)))
+                                       .order_by(Event.id)).all())
 
 
 @router.get("/{event_id}", response_model=EventOut)
@@ -129,7 +134,7 @@ def get_event(event_id: int, db: DB, user: OptionalUser):
     event = db.get(Event, event_id)
     if event is None or not visible_to(event, user):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Event not found")
-    return event
+    return attach_picks(db, [event])[0]
 
 
 @router.post("", response_model=EventOut, status_code=status.HTTP_201_CREATED)
