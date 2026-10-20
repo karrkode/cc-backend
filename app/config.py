@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     mail_from: str = "Culture Crew <no-reply@chiculturecrew.com>"
     mail_reply_to: str = "info@chiculturecrew.com"  # replies reach a real inbox; no-reply@ has none
     site_url: str = "http://localhost:4173"  # links in emails open the site, never the API
+    recap_to: str = "info@chiculturecrew.com"  # the weekly discovery recap (CC-77)
     verify_link_hours: int = 24
     reset_link_minutes: int = 60
     # Turn on once real users can receive the email (SES production access): until then an

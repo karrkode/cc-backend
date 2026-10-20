@@ -1,4 +1,4 @@
-"""The site's own emails: confirming an address and resetting a password.
+"""The site's own emails: confirming an address, resetting a password, and the weekly discovery recap.
 
 How an email goes out depends on settings.email_mode:
 - ses: Amazon SES (production). The SES identity lives in us-east-1 (infra/aws/ses.tf).
@@ -7,7 +7,8 @@ How an email goes out depends on settings.email_mode:
 - memory: kept in OUTBOX (tests).
 - none: skipped, with a one-line note in the log (and never the link).
 
-Sending never raises: a failed email is logged and the request that triggered it still succeeds.
+Sending never raises (unless strict): a failed email is logged and the request that triggered it still
+succeeds. The scheduled recap sends strictly, so a failure fails the run and alerts.
 Emails go out after the response (FastAPI background tasks), so asking for a password reset
 takes as long whether or not the address has an account.
 
@@ -46,7 +47,7 @@ def _ses():
     return boto3.session.Session().client("sesv2", region_name=get_settings().ses_region)
 
 
-def send(email: Email) -> None:
+def send(email: Email, strict: bool = False) -> None:
     s = get_settings()
     mode = s.email_mode
     try:
@@ -66,6 +67,8 @@ def send(email: Email) -> None:
             log.warning("Email to %s skipped: no email backend is set up (%r)", email.to, email.subject)
     except Exception:
         log.exception("Email to %s failed (%r)", email.to, email.subject)
+        if strict:
+            raise
 
 
 # ---- single-use links ------------------------------------------------------------
