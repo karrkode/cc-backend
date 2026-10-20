@@ -591,6 +591,15 @@ class CrewBoardItem(BaseModel):
     people: list[CrewPlanPerson]
 
 
+class CrewEmailInviteOut(BaseModel):
+    """CC-59: an email invite waiting on a crew. The address shows only to whoever sent it."""
+    id: int
+    made_by: str
+    yours: bool
+    email: str | None  # only for the member who sent it
+    expires_at: datetime
+
+
 class CrewOut(BaseModel):
     id: int
     name: str
@@ -600,6 +609,7 @@ class CrewOut(BaseModel):
     invites: list[CrewInviteOut]  # live invite links
     max_members: int
     plans: list[CrewBoardItem] = []  # CC-75: members' shared plans for upcoming events, soonest first
+    email_invites: list[CrewEmailInviteOut] = []  # CC-59: waiting email invites
 
 
 class CrewInviteLink(BaseModel):
@@ -628,3 +638,20 @@ class JoinIn(BaseModel):
 
 class OwnerIn(BaseModel):
     user_id: uuid.UUID
+
+
+class EmailInviteIn(BaseModel):
+    email: EmailStr
+
+
+class PendingInviteOut(BaseModel):
+    """CC-59: an invite waiting for you: the crew, who invited you, how many are in it. Never the members."""
+    id: int
+    crew_id: int
+    crew_name: str
+    description: str
+    invited_by: str
+    members: int
+    full: bool
+    expires_at: datetime
+

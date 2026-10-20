@@ -15,9 +15,9 @@ from sqlalchemy import func, select
 from ..config import get_settings
 from ..crewplans import crew_board, unshare
 from ..deps import DB, CurrentUser, OptionalUser
-from ..models import Crew, CrewInvite, CrewMember, User
+from ..models import Crew, CrewEmailInvite, CrewInvite, CrewMember, User
 from ..ratelimit import SlidingWindowLimiter
-from ..schemas import (CrewBoardItem, CrewIn, CrewInviteLink, CrewInviteOut, CrewInvitePreview, CrewMemberOut, CrewOut, CrewPatch,
+from ..schemas import (CrewBoardItem, CrewEmailInviteOut, CrewIn, EmailInviteIn, PendingInviteOut, CrewInviteLink, CrewInviteOut, CrewInvitePreview, CrewMemberOut, CrewOut, CrewPatch,
                        JoinIn, OwnerIn)
 from ..security import hash_refresh_token as hash_token
 from ..stats import today_in_chicago
@@ -27,6 +27,7 @@ router = APIRouter(prefix="/crews", tags=["crews"])
 MAX_MEMBERS = 25
 MAX_OWNED = 10  # crews one person can start
 INVITE_DAYS = 7
+EMAIL_INVITE_DAYS = 14  # CC-59: long enough for someone to get round to registering
 INVITES_PER_HOUR = 20
 invite_limiter = SlidingWindowLimiter(window_seconds=3600)
 
@@ -69,7 +70,11 @@ def _out(db: DB, crew: Crew, user: User, board: dict | None = None) -> CrewOut:
                  for m in sorted(crew.members, key=lambda m: (m.user_id != crew.owner_id, _aware(m.joined_at), name_of(m.user)))],
         invites=[CrewInviteOut(id=i.id, made_by=name_of(i.creator), yours=i.created_by == user.id, created_at=i.created_at,
                                expires_at=i.expires_at, uses=i.uses) for i in invites if _live(i)],
-        plans=[CrewBoardItem(event=row["event"], people=row["people"]) for row in board.get(crew.id, [])])
+        plans=[CrewBoardItem(event=row["event"], people=row["people"]) for row in board.get(crew.id, [])],
+        email_invites=[CrewEmailInviteOut(id=i.id, made_by=name_of(i.inviter), yours=i.invited_by == user.id,
+                                          email=i.email if i.invited_by == user.id else None, expires_at=i.expires_at)
+                       for i in db.scalars(select(CrewEmailInvite).where(CrewEmailInvite.crew_id == crew.id)
+                                           .order_by(CrewEmailInvite.created_at)) if _aware(i.expires_at) > datetime.now(UTC)])
 
 
 @router.get("", response_model=list[CrewOut])
@@ -207,3 +212,93 @@ def hand_over(crew_id: int, body: OwnerIn, db: DB, user: CurrentUser):
     crew.owner_id = body.user_id
     db.commit()
     return _out(db, crew, user)
+
+
+# ---- invites by email address (CC-59) --------------------------------------------------
+# Any member can invite an address. It shows to the account with that address on sign-in (now, or once someone
+# registers with it within 14 days), never by email yet (CC-83 adds that once SES allows). The inviter is never
+# told whether the address has an account, or whether that person is already in the crew.
+SENT = "Invite sent. They'll see it when they sign in."
+
+
+def _sees_invites(user: User) -> bool:
+    """With require_verified_email on (once SES can reach everyone, CC-46), only a confirmed address sees them."""
+    return user.email_verified or not get_settings().require_verified_email
+
+
+@router.post("/{crew_id}/email-invites", status_code=status.HTTP_202_ACCEPTED)
+def invite_by_email(crew_id: int, body: EmailInviteIn, db: DB, user: CurrentUser):
+    crew = _member_crew(db, crew_id, user)
+    if len(crew.members) >= MAX_MEMBERS:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"This crew is full ({MAX_MEMBERS} members).")
+    if not invite_limiter.hit(str(user.id), INVITES_PER_HOUR):
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "That's a lot of invites. Try again in an hour.")
+    email = str(body.email).strip().lower()
+    member_emails = {m.user.email for m in crew.members}
+    waiting = db.scalar(select(CrewEmailInvite).where(CrewEmailInvite.crew_id == crew.id, CrewEmailInvite.email == email))
+    if waiting is not None and _aware(waiting.expires_at) <= datetime.now(UTC):
+        db.delete(waiting)  # an old one that ran out: start again
+        db.flush()
+        waiting = None
+    if email not in member_emails and waiting is None:  # already in, or already invited: say the same, change nothing
+        db.add(CrewEmailInvite(crew_id=crew.id, email=email, invited_by=user.id,
+                               expires_at=datetime.now(UTC) + timedelta(days=EMAIL_INVITE_DAYS)))
+        db.commit()
+    return {"message": SENT}
+
+
+@router.delete("/{crew_id}/email-invites/{invite_id}", status_code=status.HTTP_204_NO_CONTENT)
+def cancel_email_invite(crew_id: int, invite_id: int, db: DB, user: CurrentUser):
+    """Whoever sent the invite, or the owner, can cancel it."""
+    crew = _member_crew(db, crew_id, user)
+    invite = db.get(CrewEmailInvite, invite_id)
+    if invite is None or invite.crew_id != crew.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Invite not found")
+    if invite.invited_by != user.id and crew.owner_id != user.id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only whoever sent this invite, or the owner, can cancel it")
+    db.delete(invite)
+    db.commit()
+
+
+def _pending(db: DB, user: User) -> list[CrewEmailInvite]:
+    if not _sees_invites(user):
+        return []
+    rows = db.scalars(select(CrewEmailInvite).where(CrewEmailInvite.email == user.email).order_by(CrewEmailInvite.created_at)).all()
+    now = datetime.now(UTC)
+    return [i for i in rows if _aware(i.expires_at) > now and not any(m.user_id == user.id for m in i.crew.members)]
+
+
+@router.get("/pending", response_model=list[PendingInviteOut])
+def pending_invites(db: DB, user: CurrentUser):
+    """Invites waiting for you, oldest first."""
+    return [PendingInviteOut(id=i.id, crew_id=i.crew_id, crew_name=i.crew.name, description=i.crew.description,
+                             invited_by=name_of(i.inviter), members=len(i.crew.members),
+                             full=len(i.crew.members) >= MAX_MEMBERS, expires_at=i.expires_at) for i in _pending(db, user)]
+
+
+def _my_invite(db: DB, user: User, invite_id: int) -> CrewEmailInvite:
+    invite = next((i for i in _pending(db, user) if i.id == invite_id), None)
+    if invite is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "This invite has expired or was cancelled.")
+    return invite
+
+
+@router.post("/pending/{invite_id}/accept", response_model=CrewOut)
+def accept_invite(invite_id: int, db: DB, user: CurrentUser):
+    invite = _my_invite(db, user, invite_id)
+    crew = invite.crew
+    if len(crew.members) >= MAX_MEMBERS:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"This crew is full ({MAX_MEMBERS} members).")
+    crew.members.append(CrewMember(user_id=user.id))
+    db.delete(invite)
+    db.commit()
+    db.refresh(crew)
+    return _out(db, crew, user)
+
+
+@router.post("/pending/{invite_id}/decline", status_code=status.HTTP_204_NO_CONTENT)
+def decline_invite(invite_id: int, db: DB, user: CurrentUser):
+    """Say no. The inviter isn't told; the invite just goes."""
+    db.delete(_my_invite(db, user, invite_id))
+    db.commit()
+

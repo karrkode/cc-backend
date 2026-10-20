@@ -319,6 +319,24 @@ class CrewInvite(Base):
     creator: Mapped[User | None] = relationship(lazy="joined")
 
 
+class CrewEmailInvite(Base):
+    """CC-59: an invite to a crew by email address. It shows to whichever account has that address (now, or
+    once someone registers with it) until it's accepted, declined, cancelled or 14 days pass. The inviter
+    never learns whether the address has an account."""
+    __tablename__ = "crew_email_invites"
+    __table_args__ = (UniqueConstraint("crew_id", "email", name="uq_crew_email_invite"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    crew_id: Mapped[int] = mapped_column(ForeignKey("crews.id", ondelete="CASCADE"), index=True)
+    email: Mapped[str] = mapped_column(String(320), index=True)  # lower-case, as users.email
+    invited_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    crew: Mapped[Crew] = relationship(lazy="joined")
+    inviter: Mapped[User | None] = relationship(lazy="joined")
+
+
 class PlanShare(Base):
     """CC-75: a plan shared with one of its owner's crews. Only that crew's members see it. Goes when the
     plan does (cleared, or "I've been"), when the crew does, and when its owner leaves the crew."""
