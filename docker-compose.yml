@@ -31,7 +31,8 @@ services:
       JWT_SECRET: local-dev-secret-not-for-production
       CORS_ORIGINS: http://localhost:4173,http://127.0.0.1:4173
       COOKIE_SECURE: "false"
-      # Ready-made test accounts, an admin and a regular user, created on every start (scripts/dev_users.py).
+      # Ready-made test accounts, an admin and a regular user, created on every start (scripts/dev_users.py),
+      # plus three culture crews whose seven other members use DEV_USER_PASSWORD (see the README).
       # Local throwaway values: the script refuses to run unless ENV=local.
       DEV_ADMIN_EMAIL: admin@example.com
       DEV_ADMIN_PASSWORD: local-admin-only

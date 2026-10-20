@@ -69,6 +69,21 @@ The local stack comes with two accounts ready to use, so both sides of a feature
 - **Both count as confirmed,** since local email is never really sent.
 - Any other account you register locally is ordinary data: it lasts until the database is wiped.
 
+**Ready-made culture crews (CC-74).** The same script makes three crews and seven more members.
+The members sign in with the test user's password (`local-user-only`). The admin is in all three and owns
+one, so both an owner's and a member's view can be tried. The test user is in none, so joining from an
+invite link can be tried too.
+
+| Crew | Owner | Members |
+|---|---|---|
+| Thursday Theater | Local Admin | Maya Chen, Jordan Reyes, Priya Patel, Marcus Bell |
+| The Visual Gaze | Priya Patel | Local Admin, Lena Fischer, Rosa Alvarez |
+| Laughin Times | Sam Okafor | Local Admin, Jordan Reyes, Marcus Bell, Rosa Alvarez |
+
+The members' logins are `maya@`, `jordan@`, `priya@`, `sam@`, `lena@`, `marcus@` and `rosa@example.com`.
+A missing crew is made again, and anyone listed who left is put back, on the next start; members you add
+yourself are left alone.
+
 **Email locally.** Signing up, changing your email, and "Forgot password?" send emails with
 single-use links. The local stack never really sends them: each one is written to the API log,
 link included. To open one, copy its link from:
@@ -165,7 +180,7 @@ app/models.py        tables (SQLAlchemy)
 app/schemas.py       request/response shapes (Pydantic)
 app/security.py      bcrypt, JWTs, refresh tokens
 app/deps.py          database session, current user, admin check
-app/routers/         auth, events, venues, me, admin, traffic, discovery (sources; found events to review, CC-71)
+app/routers/         auth, events, venues, me, admin, traffic, discovery (sources; found events to review, CC-71), crews (CC-74)
 alembic/             migrations
 app/seeding.py       loads seed/events.json into a database (local development and tests)
 scripts/seed.py      import seed/events.json

@@ -28,7 +28,7 @@ def run(monkeypatch, Session, settings, capsys=None):
 
 def test_creates_both_accounts_ready_to_use(client, monkeypatch, Session, capsys):
     out = run(monkeypatch, Session, local(), capsys)
-    assert out == "Local admin admin@example.com: created.\nLocal user user@example.com: created.\n"
+    assert out.startswith("Local admin admin@example.com: created.\nLocal user user@example.com: created.\n")
     for email, password, role, name in (ADMIN, USER):
         r = client.post("/auth/login", json={"email": email, "password": password})
         me = r.json()["user"]
@@ -42,7 +42,7 @@ def test_running_again_changes_nothing(monkeypatch, Session, db, capsys):
     run(monkeypatch, Session, local(), capsys)
     before = {u.email: u.password_hash for u in db.scalars(select(User))}
     out = run(monkeypatch, Session, local(), capsys)
-    assert out.count(": unchanged.") == 2
+    assert out.count(": unchanged.") == 5  # the two accounts and the three crews
     db.expire_all()
     assert {u.email: u.password_hash for u in db.scalars(select(User))} == before
 
@@ -82,3 +82,29 @@ def test_settings_must_make_sense(monkeypatch, change, message):
     monkeypatch.setattr(dev_users, "SessionLocal", lambda: pytest.fail("must not touch the database"))
     with pytest.raises(SystemExit, match=message):
         dev_users.main()
+
+
+def test_ready_made_crews(client, monkeypatch, Session, db, capsys):
+    """CC-74: three crews; the admin in all of them; seven members, each in at least one; three or more in each."""
+    from app.models import Crew
+    out = run(monkeypatch, Session, local(), capsys)
+    assert "Crew Thursday Theater: created." in out and "Crew Laughin Times: created." in out
+    admin = auth(client.post("/auth/login", json={"email": ADMIN[0], "password": ADMIN[1]}).json()["access_token"])
+    crews = {c["name"]: c for c in client.get("/crews", headers=admin).json()}
+    assert list(crews) == ["Thursday Theater", "The Visual Gaze", "Laughin Times"]
+    assert all(len(c["members"]) >= 3 for c in crews.values())
+    assert [c["owner"] for c in crews.values()] == [True, False, False]  # the admin owns one, so both views can be tried
+    named = {m["name"] for c in crews.values() for m in c["members"]} - {"Local Admin"}
+    assert named == set(dev_users.CREW_MEMBERS.values())
+    # members sign in with the test user's password; the test user is in no crew
+    r = client.post("/auth/login", json={"email": "rosa@example.com", "password": USER[1]})
+    assert r.status_code == 200 and [c["name"] for c in client.get("/crews", headers=auth(r.json()["access_token"])).json()] == \
+        ["The Visual Gaze", "Laughin Times"]
+    user = auth(client.post("/auth/login", json={"email": USER[0], "password": USER[1]}).json()["access_token"])
+    assert client.get("/crews", headers=user).json() == []
+    # someone who left is put back on the next start; nothing is duplicated
+    client.post(f"/crews/{crews['Laughin Times']['id']}/leave", headers=admin)
+    out = run(monkeypatch, Session, local(), capsys)
+    assert "Crew Laughin Times: 1 put back." in out
+    db.expire_all()
+    assert db.scalar(select(func.count()).select_from(Crew)) == 3

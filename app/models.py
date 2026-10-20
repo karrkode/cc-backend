@@ -272,6 +272,51 @@ class Plan(Base):
     event: Mapped[Event] = relationship(lazy="joined")
 
 
+class Crew(Base):
+    """A culture crew (CC-74): people who go out together. Members see each other's names, never emails;
+    nobody outside the crew can see who's in it."""
+    __tablename__ = "crews"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(60))
+    description: Mapped[str] = mapped_column(String(200), default="")
+    # Deleting the owner's account deletes the crew (there's no self-service account deletion yet; when there
+    # is, hand the crew to its longest-standing member first).
+    owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    members: Mapped[list["CrewMember"]] = relationship(back_populates="crew", cascade="all, delete-orphan",
+                                                       order_by="CrewMember.joined_at", lazy="selectin")
+
+
+class CrewMember(Base):
+    __tablename__ = "crew_members"
+
+    crew_id: Mapped[int] = mapped_column(ForeignKey("crews.id", ondelete="CASCADE"), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True, index=True)
+    joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    crew: Mapped[Crew] = relationship(back_populates="members")
+    user: Mapped[User] = relationship(lazy="joined")
+
+
+class CrewInvite(Base):
+    """An invite link: anyone with it can join until it expires or is revoked. Only its hash is kept;
+    the link itself is shown once, to the member who made it."""
+    __tablename__ = "crew_invites"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    crew_id: Mapped[int] = mapped_column(ForeignKey("crews.id", ondelete="CASCADE"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    uses: Mapped[int] = mapped_column(Integer, default=0)
+
+    creator: Mapped[User | None] = relationship(lazy="joined")
+
+
 class SheetSync(Base):
     """One run of the nightly Google Sheet sync. The sync was retired in October 2026 (CC-72); the table
     keeps its history and nothing writes to it."""
