@@ -27,6 +27,10 @@ def test_new_venues_get_a_region_and_the_catalog_filters_by_it(client, admin_tok
     titles = lambda **p: sorted(e["title"] for e in client.get("/events", params={"include_past": "true", **p}).json()["items"])
     assert titles(region="downtown") == ["Downtown show"]
     assert titles(region=["north", "suburbs"]) == ["Burbs show", "North show"]
+    # CC-85: several places at once: sides of town and neighborhoods together mean any of them
+    assert titles(hood=["Loop", "Nowhereville"]) == ["Downtown show", "Odd show"]
+    assert titles(region="north", hood="Loop") == ["Downtown show", "North show"]
+    assert titles(region="north", hood="Loop", q="North") == ["North show"]  # still with the other filters
     hoods = {n["name"]: n["region"] for n in client.get("/events/facets").json()["neighborhoods"]}
     assert hoods["Lakeview"] == "north" and hoods["Nowhereville"] is None
 
