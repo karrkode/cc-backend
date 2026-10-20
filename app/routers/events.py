@@ -8,7 +8,7 @@ from sqlalchemy import case, func, or_, select
 from ..areas import area_of
 from ..config import get_settings
 from ..deps import DB, AdminUser, CurrentUser, OptionalUser
-from ..models import Area, Event, EventStatus, Role, Venue
+from ..models import Area, Event, EventStatus, Plan, PlanStatus, Role, Venue
 from ..schemas import EventFacets, EventIn, EventOut, EventPage, EventPatch, VenueIn
 from ..visibility import live_condition, utcnow, visible_to
 
@@ -56,6 +56,8 @@ def list_events(
     ended_before: Annotated[date | None, Query(description="Only events that closed before this date")] = None,
     max_price: Annotated[Decimal | None, Query(ge=0, description="0 = free only")] = None,
     include_past: bool = False,
+    mine: Annotated[list[PlanStatus] | None, Query(description="Only events you're interested in or going to (needs sign-in)")] = None,
+    user: OptionalUser = None,
     sort: Sort = "start",
     limit: Annotated[int, Query(ge=1, le=1000)] = 100,
     offset: Annotated[int, Query(ge=0)] = 0,
@@ -64,8 +66,13 @@ def list_events(
 
     Dates are the caller's: the site sends its own local "today" in from= / ended_before=
     (with include_past=true), so a Chicago evening isn't already "tomorrow" on a UTC server.
-    sort: start (TBD first, then by opening date), closing, opening, az, price."""
+    sort: start (TBD first, then by opening date), closing, opening, az, price.
+    mine (CC-66): only your own plans of those kinds; it never shows anyone else's."""
     conds = [live_condition()]
+    if mine:
+        if user is None:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sign in to filter by your plans")
+        conds.append(Event.id.in_(select(Plan.event_id).where(Plan.user_id == user.id, Plan.status.in_(mine))))
     if q:
         conds.append(or_(Event.title.icontains(q, autoescape=True), Venue.name.icontains(q, autoescape=True),
                          Venue.neighborhood.icontains(q, autoescape=True)))

@@ -119,3 +119,27 @@ def test_ive_been_clears_the_plan(client, user_token, make_event):
     put(client, user_token, ev.id, status="interested")
     assert client.put(f"/me/attended/{ev.id}", headers=auth(user_token)).status_code == 200
     assert [t for t, _, _ in plans(client, user_token)] == ["Bug"]
+
+
+def test_catalog_filter_by_my_plans(client, user_token, make_event):
+    """CC-66: the dolphin buttons: only my interested / going events, with the other filters and paging."""
+    def titles(token, **params):
+        r = client.get("/events", params={"sort": "az", **params}, headers=auth(token) if token else {})
+        assert r.status_code == 200, r.text
+        return [e["title"] for e in r.json()["items"]], r.json()["total"]
+    a, b, c, d = (make_event(t) for t in ("Alpha", "Bravo", "Charlie", "Delta"))
+    make_event("Echo", category="Comedy")
+    put(client, user_token, a.id, status="interested")
+    put(client, user_token, b.id, status="interested")
+    put(client, user_token, c.id, status="going", date=T.isoformat())
+    assert titles(user_token, mine="interested") == (["Alpha", "Bravo"], 2)
+    assert titles(user_token, mine="going") == (["Charlie"], 1)
+    assert titles(user_token, mine=["interested", "going"]) == (["Alpha", "Bravo", "Charlie"], 3)
+    assert titles(user_token, mine="interested", q="brav") == (["Bravo"], 1)  # works with the other filters
+    assert titles(user_token, mine="interested", category="Comedy") == ([], 0)
+    assert titles(user_token, mine="interested", limit=1, offset=1) == (["Bravo"], 2)  # paging and totals stay right
+    assert titles(user_token)[1] == 5  # without it, everything
+    other = register(client, email="bo@example.com", name="Bo")
+    assert titles(other, mine="interested") == ([], 0)  # only your own plans, never someone else's
+    assert client.get("/events", params={"mine": "interested"}).status_code == 401
+    assert client.get("/events", params={"mine": "maybe"}, headers=auth(user_token)).status_code == 422
