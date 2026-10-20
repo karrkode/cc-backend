@@ -101,7 +101,8 @@ def test_plans_are_private(client, user_token, admin_token, make_event):
     assert plans(client, admin_token) == []  # admins don't see other people's plans either
     assert client.delete(f"/me/plans/{ev.id}", headers=auth(other)).status_code == 204  # only clears Bo's own (none)
     assert len(plans(client, user_token)) == 1
-    assert "plan" not in client.get(f"/events/{ev.id}", headers=auth(user_token)).text  # public shapes unchanged
+    shown = client.get(f"/events/{ev.id}", headers=auth(user_token))
+    assert "going" not in shown.text and shown.json()["crew_plans"] == []  # your own plan isn't on the event itself
     assert client.get("/me/plans").status_code == 401
 
 

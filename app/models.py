@@ -6,7 +6,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import (JSON, Boolean, CheckConstraint, Date, DateTime, Enum, ForeignKey, Index, Integer,
+from sqlalchemy import (JSON, Boolean, CheckConstraint, Date, DateTime, Enum, ForeignKey, ForeignKeyConstraint, Index, Integer,
                         Numeric, String, Text, UniqueConstraint, Uuid, false, func, true as sa_true)
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
@@ -227,6 +227,8 @@ class Event(Base):
 
     # CC-66: set per request by app.picks.attach_picks (not stored); the owner's public pick, if any.
     pick = None
+    # CC-75: set per request by app.crewplans.attach_crew_plans (not stored); your crew-mates' shared plans.
+    crew_plans = ()
 
     @property
     def schedule(self) -> dict:
@@ -253,8 +255,8 @@ class Attended(Base):
 
 
 class Plan(Base):
-    """A user's own plan for an event (CC-53): interested, or going on a date. Private to them;
-    sharing with friends comes later and must be opted into."""
+    """A user's own plan for an event (CC-53): interested, or going on a date. Private to them unless
+    they share it with crews they're in (PlanShare, CC-75)."""
     __tablename__ = "plans"
     __table_args__ = (
         CheckConstraint("(status = 'going') = (going_on IS NOT NULL)", name="ck_plans_going_has_a_date"),
@@ -315,6 +317,17 @@ class CrewInvite(Base):
     uses: Mapped[int] = mapped_column(Integer, default=0)
 
     creator: Mapped[User | None] = relationship(lazy="joined")
+
+
+class PlanShare(Base):
+    """CC-75: a plan shared with one of its owner's crews. Only that crew's members see it. Goes when the
+    plan does (cleared, or "I've been"), when the crew does, and when its owner leaves the crew."""
+    __tablename__ = "plan_shares"
+    __table_args__ = (ForeignKeyConstraint(["user_id", "event_id"], ["plans.user_id", "plans.event_id"], ondelete="CASCADE"),)
+
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    event_id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    crew_id: Mapped[int] = mapped_column(ForeignKey("crews.id", ondelete="CASCADE"), primary_key=True, index=True)
 
 
 class SheetSync(Base):

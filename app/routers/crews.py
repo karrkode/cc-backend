@@ -13,12 +13,14 @@ from fastapi import APIRouter, HTTPException, Response, status
 from sqlalchemy import func, select
 
 from ..config import get_settings
+from ..crewplans import crew_board, unshare
 from ..deps import DB, CurrentUser, OptionalUser
 from ..models import Crew, CrewInvite, CrewMember, User
 from ..ratelimit import SlidingWindowLimiter
-from ..schemas import (CrewIn, CrewInviteLink, CrewInviteOut, CrewInvitePreview, CrewMemberOut, CrewOut, CrewPatch,
+from ..schemas import (CrewBoardItem, CrewIn, CrewInviteLink, CrewInviteOut, CrewInvitePreview, CrewMemberOut, CrewOut, CrewPatch,
                        JoinIn, OwnerIn)
 from ..security import hash_refresh_token as hash_token
+from ..stats import today_in_chicago
 
 router = APIRouter(prefix="/crews", tags=["crews"])
 
@@ -56,7 +58,9 @@ def _owned_crew(db: DB, crew_id: int, user: User) -> Crew:
     return crew
 
 
-def _out(db: DB, crew: Crew, user: User) -> CrewOut:
+def _out(db: DB, crew: Crew, user: User, board: dict | None = None) -> CrewOut:
+    if board is None:
+        board = crew_board(db, {crew.id}, user, today_in_chicago())
     invites = db.scalars(select(CrewInvite).where(CrewInvite.crew_id == crew.id).order_by(CrewInvite.created_at.desc())).all()
     return CrewOut(
         id=crew.id, name=crew.name, description=crew.description, owner=crew.owner_id == user.id, max_members=MAX_MEMBERS,
@@ -64,14 +68,16 @@ def _out(db: DB, crew: Crew, user: User) -> CrewOut:
                                joined_at=m.joined_at)
                  for m in sorted(crew.members, key=lambda m: (m.user_id != crew.owner_id, _aware(m.joined_at), name_of(m.user)))],
         invites=[CrewInviteOut(id=i.id, made_by=name_of(i.creator), yours=i.created_by == user.id, created_at=i.created_at,
-                               expires_at=i.expires_at, uses=i.uses) for i in invites if _live(i)])
+                               expires_at=i.expires_at, uses=i.uses) for i in invites if _live(i)],
+        plans=[CrewBoardItem(event=row["event"], people=row["people"]) for row in board.get(crew.id, [])])
 
 
 @router.get("", response_model=list[CrewOut])
 def my_crews(db: DB, user: CurrentUser):
     """Your crews, oldest first, with their members and live invite links."""
     crews = db.scalars(select(Crew).join(CrewMember).where(CrewMember.user_id == user.id).order_by(Crew.created_at, Crew.id)).all()
-    return [_out(db, c, user) for c in crews]
+    board = crew_board(db, {c.id for c in crews}, user, today_in_chicago())  # CC-75: each crew's shared plans
+    return [_out(db, c, user, board) for c in crews]
 
 
 @router.post("", response_model=CrewOut, status_code=status.HTTP_201_CREATED)
@@ -176,6 +182,7 @@ def leave(crew_id: int, db: DB, user: CurrentUser):
     if crew.owner_id == user.id:
         raise HTTPException(status.HTTP_409_CONFLICT, "You own this crew. Hand it to another member first, or delete it.")
     crew.members = [m for m in crew.members if m.user_id != user.id]
+    unshare(db, user.id, crew_id=crew.id)  # CC-75: your plans leave with you
     db.commit()
 
 
@@ -187,6 +194,7 @@ def remove_member(crew_id: int, user_id: uuid.UUID, db: DB, user: CurrentUser):
     if not any(m.user_id == user_id for m in crew.members):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not a member of this crew")
     crew.members = [m for m in crew.members if m.user_id != user_id]
+    unshare(db, user_id, crew_id=crew.id)
     db.commit()
     return _out(db, crew, user)
 

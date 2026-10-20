@@ -6,8 +6,9 @@ from sqlalchemy import case, delete, select
 
 from ..deps import DB, CurrentUser
 from ..models import Attended, Event, Plan, PlanStatus
+from ..crewplans import attach_crew_plans, my_crew_ids, share_plan, shared_with, unshare
 from ..picks import attach_picks
-from ..schemas import AttendedOut, EventOut, PlanIn, PlanOut
+from ..schemas import AttendedOut, EventOut, PlanCrewsIn, PlanIn, PlanOut
 from ..visibility import is_live, live_condition
 
 router = APIRouter(prefix="/me", tags=["me"])
@@ -18,6 +19,7 @@ def list_attended(db: DB, user: CurrentUser):
     rows = db.scalars(select(Attended).where(Attended.user_id == user.id)
                       .order_by(Attended.created_at.desc())).all()
     attach_picks(db, [r.event for r in rows])
+    attach_crew_plans(db, [r.event for r in rows], user)
     return rows
 
 
@@ -33,9 +35,11 @@ def mark_attended(event_id: int, db: DB, user: CurrentUser, response: Response):
         mark = Attended(user_id=user.id, event_id=event_id)
         db.add(mark)
         response.status_code = status.HTTP_201_CREATED
+    unshare(db, user.id, event_id=event_id)  # CC-75: the plan's gone, so it's no longer shared
     db.execute(delete(Plan).where(Plan.user_id == user.id, Plan.event_id == event_id))
     db.commit()
     db.refresh(mark)
+    attach_crew_plans(db, [mark.event], user)
     return mark
 
 
@@ -71,6 +75,10 @@ def list_plans(db: DB, user: CurrentUser):
     rows = db.scalars(select(Plan).join(Event).where(Plan.user_id == user.id, live_condition())
                       .order_by(going_first, Plan.going_on, Plan.updated_at.desc(), Plan.event_id)).unique().all()
     attach_picks(db, [r.event for r in rows])
+    attach_crew_plans(db, [r.event for r in rows], user)
+    shares = shared_with(db, user, {r.event_id for r in rows})
+    for r in rows:
+        r.crews = shares.get(r.event_id, [])
     return rows
 
 
@@ -99,11 +107,33 @@ def set_plan(event_id: int, body: PlanIn, db: DB, user: CurrentUser, response: R
     plan.going_on = body.date if body.status == "going" else None
     db.commit()
     db.refresh(plan)
+    return _plan_out(db, plan, user)
+
+
+def _plan_out(db, plan: Plan, user) -> Plan:
+    attach_picks(db, [plan.event])
+    attach_crew_plans(db, [plan.event], user)
+    plan.crews = shared_with(db, user, {plan.event_id}).get(plan.event_id, [])
     return plan
+
+
+@router.put("/plans/{event_id}/crews", response_model=PlanOut)
+def share_with_crews(event_id: int, body: PlanCrewsIn, db: DB, user: CurrentUser):
+    """CC-75: share your plan for this event with exactly these crews of yours ([] = nobody). Only members
+    of those crews see it. Changing the plan later keeps the crews; clearing it unshares it."""
+    plan = db.get(Plan, (user.id, event_id))
+    if plan is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Mark it Interested or choose a date first")
+    if set(body.crews) - my_crew_ids(db, user):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Crew not found")
+    share_plan(db, user, event_id, body.crews)
+    db.commit()
+    return _plan_out(db, plan, user)
 
 
 @router.delete("/plans/{event_id}", status_code=status.HTTP_204_NO_CONTENT)
 def clear_plan(event_id: int, db: DB, user: CurrentUser):
-    """Clear your plan for an event. Idempotent."""
+    """Clear your plan for an event, and its sharing with crews. Idempotent."""
+    unshare(db, user.id, event_id=event_id)
     db.execute(delete(Plan).where(Plan.user_id == user.id, Plan.event_id == event_id))
     db.commit()
