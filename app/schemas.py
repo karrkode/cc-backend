@@ -128,6 +128,13 @@ class VenueMergeOut(BaseModel):
 
 # ---- events ----------------------------------------------------------------
 
+class PickOut(BaseModel):
+    """CC-66: the owner's public pick on an event (the dolphins on its card)."""
+    status: PlanStatus
+    date: date_ | None  # set for "going": the day they're going
+    by: str  # the account's display name ("" if it has none)
+
+
 class EventOut(ORM):
     id: int
     source_id: str | None  # id from the old Google Sheet site, so its share links keep working
@@ -145,6 +152,7 @@ class EventOut(ORM):
     # "Suggested by …": the submitter's display name if they opted in for this event, else null.
     # Never the email or id; those are only in EventAdminOut.
     submitted_by_name: str | None
+    pick: PickOut | None = None  # CC-66: the owner's public pick (null when there isn't one)
 
 
 class EventPage(BaseModel):

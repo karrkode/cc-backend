@@ -155,6 +155,9 @@ class Event(Base):
             return self.submitter.display_name.strip()
         return None
 
+    # CC-66: set per request by app.picks.attach_picks (not stored); the owner's public pick, if any.
+    pick = None
+
 
 class Attended(Base):
     __tablename__ = "attended"

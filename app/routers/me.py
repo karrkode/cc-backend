@@ -6,6 +6,7 @@ from sqlalchemy import case, delete, select
 
 from ..deps import DB, CurrentUser
 from ..models import Attended, Event, Plan, PlanStatus
+from ..picks import attach_picks
 from ..schemas import AttendedOut, EventOut, PlanIn, PlanOut
 from ..visibility import is_live, live_condition
 
@@ -14,8 +15,10 @@ router = APIRouter(prefix="/me", tags=["me"])
 
 @router.get("/attended", response_model=list[AttendedOut])
 def list_attended(db: DB, user: CurrentUser):
-    return db.scalars(select(Attended).where(Attended.user_id == user.id)
+    rows = db.scalars(select(Attended).where(Attended.user_id == user.id)
                       .order_by(Attended.created_at.desc())).all()
+    attach_picks(db, [r.event for r in rows])
+    return rows
 
 
 @router.put("/attended/{event_id}", response_model=AttendedOut)
@@ -65,8 +68,10 @@ def list_plans(db: DB, user: CurrentUser):
     """Your plans for live events: going first (soonest date first), then interested (newest first).
     Plans for withdrawn or unpublished events are left out (and come back if the event does)."""
     going_first = case((Plan.status == PlanStatus.going, 0), else_=1)
-    return db.scalars(select(Plan).join(Event).where(Plan.user_id == user.id, live_condition())
+    rows = db.scalars(select(Plan).join(Event).where(Plan.user_id == user.id, live_condition())
                       .order_by(going_first, Plan.going_on, Plan.updated_at.desc(), Plan.event_id)).unique().all()
+    attach_picks(db, [r.event for r in rows])
+    return rows
 
 
 @router.put("/plans/{event_id}", response_model=PlanOut)
