@@ -677,8 +677,9 @@ class IssueIn(BaseModel):
 
 
 class IssueOut(ORM):
-    """A report as its member sees it: what they wrote, its status, and an admin's note."""
+    """A report as its member sees it: its ticket number, what they wrote, its status, and an admin's note."""
     id: int
+    key: str  # the ticket number, ISS-0007
     what_happened: str
     expected: str
     page: str

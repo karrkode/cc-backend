@@ -54,5 +54,20 @@ def test_new_reports_are_in_the_recap(client, user_token, db):
     client.post("/issues", json=REPORT, headers=auth(user_token))
     email = build_recap(db)
     assert "1 issue reported" in email.subject
-    assert "ISSUES REPORTED THIS WEEK: 1 (1 open in all)" in email.text and "Ana on Plan an outing: The Tonight list was empty" in email.text
+    assert "ISSUES REPORTED THIS WEEK: 1 (1 open in all)" in email.text and "ISS-0001 Ana on Plan an outing: The Tonight list was empty" in email.text
+    assert "/#issues/ISS-0001" in email.html
     assert "/#issues" in email.html and "The Tonight list was empty" in email.html
+
+
+def test_every_report_has_a_ticket_number_admins_can_search(client, user_token, admin_token):
+    issues_router.report_limiter.reset()
+    first = client.post("/issues", json=REPORT, headers=auth(user_token)).json()
+    second = client.post("/issues", json={**REPORT, "what_happened": "The dolphin overlaps the date"}, headers=auth(user_token)).json()
+    assert (first["key"], second["key"]) == (f"ISS-{first['id']:04d}", f"ISS-{second['id']:04d}")
+    assert client.get("/me/issues", headers=auth(user_token)).json()[0]["key"] == second["key"]
+    find = lambda q: [i["key"] for i in client.get("/admin/issues", params={"q": q}, headers=auth(admin_token)).json()["items"]]
+    for q in (second["key"], second["key"].lower(), str(second["id"]), f"#{second['id']}", f"iss {second['id']}"):
+        assert find(q) == [second["key"]], q
+    assert find("dolphin") == [second["key"]]  # words in the report
+    assert find("ana@example") == [second["key"], first["key"]]  # the sender's email, newest first
+    assert find("ISS-9999") == []

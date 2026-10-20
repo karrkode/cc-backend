@@ -83,7 +83,7 @@ class Week:
     spent: float = 0
     budget: float = 10
     sources: list[tuple[str, str, str]] = field(default_factory=list)  # name, how often, next check
-    issues: list[tuple[str, str, str]] = field(default_factory=list)  # CC-84: reported this week: who, page, what happened
+    issues: list[tuple[str, str, str, str]] = field(default_factory=list)  # CC-84: reported this week: ticket, who, page, what happened
     issues_open: int = 0  # new or being looked into, all time
 
     @property
@@ -144,7 +144,7 @@ def gather(db, now: datetime) -> Week:
     for i in db.scalars(select(IssueReport).where(IssueReport.created_at >= since).order_by(IssueReport.created_at)):
         who = (i.reporter.display_name.strip() if i.reporter else "") or ("A member" if i.reporter else "A deleted account")
         what = i.what_happened if len(i.what_happened) <= 140 else i.what_happened[:137].rstrip() + "..."
-        w.issues.append((who, i.page or "-", what))
+        w.issues.append((i.key, who, i.page or "-", what))
     w.issues_open = db.scalar(select(func.count()).select_from(IssueReport).where(IssueReport.status.in_(["new", "looking"]))) or 0
     return w
 
@@ -198,7 +198,7 @@ def as_text(w: Week) -> str:
     if w.by_hand:
         lines += ["", "CHECK THESE BY HAND:"] + [f"  - {name}: {page}" for name, page in w.by_hand]
     lines += ["", f"ISSUES REPORTED THIS WEEK: {len(w.issues)} ({w.issues_open} open in all)"]
-    lines += [f"  - {who} on {page}: {what}" for who, page, what in w.issues] or ["  None."]
+    lines += [f"  - {key} {who} on {page}: {what}" for key, who, page, what in w.issues] or ["  None."]
     lines += [f"  Review them: {w.link('issues')}"] if w.issues or w.issues_open else []
     lines += ["", f"CHECKS THIS WEEK: {_n(w.checks, 'check')}, {_n(w.pages, 'page')} read, about ${w.week_cost:.2f}",
               f"This month: ${w.spent:.2f} of the ${w.budget:.0f} budget." + (f" {budget_note(w)}" if budget_note(w) else "")]
@@ -305,7 +305,8 @@ def as_html(w: Week) -> str:
 
     parts.append(_h("Issues reported this week", f' <span style="font-family:{FONT};font-weight:400;font-size:13px;color:{MUTED}">'
                     f'&middot; {w.issues_open} open in all</span>'))
-    parts.append(_table(["Reported by", "Page", "What happened"], [[escape(a), escape(b), escape(c)] for a, b, c in w.issues])
+    parts.append(_table(["Ticket", "Reported by", "Page", "What happened"],
+                        [[_a(w.link("issues/" + k), k), escape(a), escape(b), escape(c)] for k, a, b, c in w.issues])
                  if w.issues else _none("None this week."))
     if w.issues or w.issues_open:
         parts.append(f'<p style="margin:8px 0 0;font-size:13px">{_a(w.link("issues"), "Review issues")}</p>')

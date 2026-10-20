@@ -368,6 +368,11 @@ class IssueReport(Base):
 
     reporter: Mapped[User | None] = relationship(lazy="joined")
 
+    @property
+    def key(self) -> str:
+        """Its ticket number, e.g. ISS-0007: told to the member, and searchable on the Issues page."""
+        return f"ISS-{self.id:04d}"
+
 
 class SheetSync(Base):
     """One run of the nightly Google Sheet sync. The sync was retired in October 2026 (CC-72); the table
