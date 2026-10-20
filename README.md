@@ -165,7 +165,7 @@ app/models.py        tables (SQLAlchemy)
 app/schemas.py       request/response shapes (Pydantic)
 app/security.py      bcrypt, JWTs, refresh tokens
 app/deps.py          database session, current user, admin check
-app/routers/         auth, events, venues, me, admin, traffic, discovery (sources; found events to review, CC-71)
+app/routers/         auth, events, venues, me, admin, traffic, discovery (sources; found events to review, CC-71), crews (CC-74)
 alembic/             migrations
 app/seeding.py       loads seed/events.json into a database (local development and tests)
 scripts/seed.py      import seed/events.json

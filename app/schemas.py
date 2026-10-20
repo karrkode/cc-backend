@@ -526,3 +526,76 @@ class SkipRuleOut(BaseModel):
     caught: int
     created_at: datetime
 
+
+
+# ---- culture crews (CC-74) --------------------------------------------------------------
+
+class CrewIn(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    description: str = Field(default="", max_length=200)
+
+    @field_validator("name", "description")
+    @classmethod
+    def _trim(cls, v: str) -> str:
+        return v.strip()
+
+
+class CrewPatch(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=60)
+    description: str | None = Field(default=None, max_length=200)
+
+
+class CrewMemberOut(BaseModel):
+    """A member as other members see them: a name, never an email."""
+    user_id: uuid.UUID
+    name: str
+    owner: bool
+    you: bool
+    joined_at: datetime
+
+
+class CrewInviteOut(BaseModel):
+    id: int
+    made_by: str  # the member's name
+    yours: bool
+    created_at: datetime
+    expires_at: datetime
+    uses: int
+
+
+class CrewOut(BaseModel):
+    id: int
+    name: str
+    description: str
+    owner: bool  # you own it
+    members: list[CrewMemberOut]
+    invites: list[CrewInviteOut]  # live invite links
+    max_members: int
+
+
+class CrewInviteLink(BaseModel):
+    """A new invite link. The token is shown this once; only its hash is kept."""
+    id: int
+    token: str
+    url: str
+    expires_at: datetime
+
+
+class CrewInvitePreview(BaseModel):
+    """What an invite link shows before joining: the crew's name, who invited you, and how many are in it.
+    Never who the members are."""
+    crew_id: int
+    crew_name: str
+    description: str
+    invited_by: str
+    members: int
+    already_member: bool
+    full: bool
+
+
+class JoinIn(BaseModel):
+    token: str = Field(min_length=10, max_length=100)
+
+
+class OwnerIn(BaseModel):
+    user_id: uuid.UUID
