@@ -108,6 +108,9 @@ def test_event_interest_ranking(client, db, admin_token, make_event):
     assert ("Closed", 1, 0, 0) in ranked(include_closed="true")
     assert all(t != "Hidden" for t, *_ in ranked(range="all", include_closed="true"))  # withdrawn events never show
     assert ranked(limit=1) == [("Hamlet", 1, 1, 1)]
+    bug.category = "Comedy"; db.commit()
+    assert ranked(category="Comedy") == [("Bug", 0, 1, 0)]  # by event type
+    assert ranked(category=["Comedy", "Theater"]) == [("Hamlet", 1, 1, 1), ("Bug", 0, 1, 0)]
     r = client.get("/admin/stats/events", headers=h)
     assert "@example.com" not in r.text  # never who
     assert client.get("/admin/stats/events", headers=auth(register(client, email="z@example.com"))).status_code == 403

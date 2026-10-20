@@ -103,7 +103,8 @@ def weekly_stats(db, today: date, weeks: int = 12) -> dict:
     }
 
 
-def event_interest(db, today: date, since: date | None, include_closed: bool, limit: int) -> list[dict]:
+def event_interest(db, today: date, since: date | None, include_closed: bool, limit: int,
+                   categories: list[str] | None = None) -> list[dict]:
     """CC-69: live events ranked by members' interest and commitments, with "I've been" counts.
     Counts plans and marks made on or after `since` (Chicago time; None = all time), by members only
     (admins are left out). Current plans are counted: a plan changed from interested to going counts
@@ -126,6 +127,8 @@ def event_interest(db, today: date, since: date | None, include_closed: bool, li
     conds = [live_condition(), Event.id.in_(counts)]
     if not include_closed:
         conds.append(or_(Event.end_date.is_(None), Event.end_date >= today))
+    if categories:
+        conds.append(Event.category.in_(categories))
     events = db.scalars(select(Event).where(*conds)).all()
     rows = [{"event": e, **counts[e.id]} for e in events]
     rows.sort(key=lambda r: (-(r["interested"] + r["going"]), -r["going"], -r["attended"], r["event"].title.lower()))

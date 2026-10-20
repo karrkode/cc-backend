@@ -77,10 +77,12 @@ def _callers_day(today: date | None) -> date:
 def stats_events(db: DB, _: AdminUser,
                  range_: Annotated[Literal["week", "30d", "all"], Query(alias="range")] = "30d",
                  include_closed: bool = False,
+                 category: Annotated[list[str] | None, Query(description="Only these event types")] = None,
                  limit: Annotated[int, Query(ge=1, le=50)] = 15,
                  today: Annotated[date | None, Query(description="The caller's local date")] = None):
     """CC-69: the events drawing the most interest and commitments from members, with "I've been"
-    counts. range: this week (from Monday), the last 30 days, or all time. Totals only, never who."""
+    counts. range: this week (from Monday), the last 30 days, or all time; category narrows it to event
+    types. Totals only, never who."""
     day = _callers_day(today)
     since = {"week": day - timedelta(days=day.weekday()), "30d": day - timedelta(days=29), "all": None}[range_]
-    return event_interest(db, day, since, include_closed, limit)
+    return event_interest(db, day, since, include_closed, limit, category)
