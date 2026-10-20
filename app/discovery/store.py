@@ -7,6 +7,9 @@
   ("update", with the changes), for an admin to accept or dismiss. Nothing is changed by itself.
 - An item seen again just has its details refreshed (unless an admin has already decided on it).
 - A new item matching one of the admin's skip rules (CC-71) is rejected quietly, and the rule counts it.
+- CC-79: an item that is a catalog event (listed or approved) passes its performance dates and times on
+  to that event, for the planner. That's the one thing discovery changes on an event by itself: the
+  dates aren't shown on cards, and admins don't edit them.
 """
 from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
@@ -147,8 +150,27 @@ def _same_title(db, source: DiscoverySource, found: FoundEvent, key: str):
     return None
 
 
+def sync_performances(db, item: DiscoveredItem) -> None:
+    """CC-79: give the catalog event this item is the dates and times found for it (when any were found)."""
+    if not item.event_id or not item.performances:
+        return
+    event = db.get(Event, item.event_id)
+    found = sorted({(p.get("date"), p.get("time")) for p in item.performances if p.get("date")}, key=lambda dt: (dt[0], dt[1] or ""))
+    dates = [{"date": d, "time": t} for d, t in found]
+    if event is not None and dates and dates != (event.performances or []):
+        event.performances = dates
+
+
 def record(db, source: DiscoverySource, found: FoundEvent, skip: str) -> str:
     """Store one found event. Returns what it was: new | update | skipped | seen."""
+    what = _record(db, source, found, skip)
+    item = db.scalar(select(DiscoveredItem).where(DiscoveredItem.source_id == source.id, DiscoveredItem.key == key_for(found)))
+    if item is not None:
+        sync_performances(db, item)
+    return what
+
+
+def _record(db, source: DiscoverySource, found: FoundEvent, skip: str) -> str:
     now = datetime.now(UTC)
     f = fields_of(found)
     key = key_for(found)

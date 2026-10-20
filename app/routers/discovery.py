@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 from ..deps import DB, AdminUser
 from ..discovery.readers import cost_usd
 from ..discovery.rules import norm_title
-from ..discovery.store import matching_rule, possible_duplicates, rule_reason, venue_for
+from ..discovery.store import matching_rule, possible_duplicates, rule_reason, sync_performances, venue_for
 from ..models import DiscoveredItem, DiscoveryCheck, DiscoverySource, Event, SkipRule
 from ..schemas import (DiscoveredItemOut, DiscoveredPage, DiscoveryOverview, DiscoverySourceOut, DiscoverySourcePatch,
                        EventIn, EventRef, FoundChange, RejectIn, RejectOut, SkipRuleOut, UnreadableSource)
@@ -179,6 +179,7 @@ def approve(item_id: int, body: EventIn, db: DB, user: AdminUser):
     db.add(event)
     db.flush()
     item.status, item.event_id, item.skip_reason = "approved", event.id, ""
+    sync_performances(db, item)  # CC-79: its dates and times, for the planner
     db.commit()
     return _item_out(db, item)
 

@@ -151,6 +151,16 @@ class PickOut(BaseModel):
     by: str  # the account's display name ("" if it has none)
 
 
+class ScheduleOut(BaseModel):
+    """CC-79: when an event is on, for Plan an outing. dates: upcoming specific dates and times
+    ({"date", "time"}; time may be null). weekly: usual start times by weekday, the event's own
+    (weekly_from "event") or its venue's ("venue"). hours: the venue's opening hours."""
+    dates: list[dict] = []
+    weekly: dict = {}
+    weekly_from: str = ""
+    hours: dict = {}
+
+
 class EventOut(ORM):
     id: int
     source_id: str | None  # id from the old Google Sheet site, so its share links keep working
@@ -169,6 +179,7 @@ class EventOut(ORM):
     # Never the email or id; those are only in EventAdminOut.
     submitted_by_name: str | None
     pick: PickOut | None = None  # CC-66: the owner's public pick (null when there isn't one)
+    schedule: ScheduleOut = ScheduleOut()  # CC-79: for the planner; not shown on cards
 
 
 class EventPage(BaseModel):
@@ -280,6 +291,7 @@ class EventPatch(BaseModel):
     url: str | None = Field(default=None, max_length=2000)
     status: EventStatus | None = None
     publish_at: datetime | None = None  # null publishes as soon as the event is approved
+    weekly: ShowTimes | None = None  # CC-79: its usual show times, over the venue's; {} goes back to the venue's
 
     @field_validator("publish_at")
     @classmethod
@@ -298,7 +310,7 @@ class EventPatch(BaseModel):
     @model_validator(mode="after")
     def _no_nulls_where_required(self):
         # Leaving a field out keeps it; only dates, price and publish time can be cleared with null.
-        for name in ("title", "venue_id", "open_run", "cost_text", "category", "url", "status"):
+        for name in ("title", "venue_id", "open_run", "cost_text", "category", "url", "status", "weekly"):
             if name in self.model_fields_set and getattr(self, name) is None:
                 raise ValueError(f"{name} can't be empty")
         return self
