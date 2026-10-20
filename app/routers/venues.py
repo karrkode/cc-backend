@@ -51,7 +51,9 @@ def _counts(db: DB, ids: list[int] | None = None) -> dict[int, int]:
 
 def _admin_out(venue: Venue, counts: dict[int, int]) -> VenueAdminOut:
     return VenueAdminOut(id=venue.id, name=venue.name, neighborhood=venue.neighborhood, area=venue.area,
-                         region=venue.region, events=counts.get(venue.id, 0))
+                         region=venue.region, events=counts.get(venue.id, 0), open_hours=venue.open_hours or {},
+                         open_hours_by=venue.open_hours_by or "", show_times=venue.show_times or {},
+                         show_times_by=venue.show_times_by or "")
 
 
 @router.get("/manage", response_model=list[VenueAdminOut])
@@ -89,6 +91,11 @@ def update_venue(venue_id: int, body: VenuePatch, db: DB, _: AdminUser):
     elif hood != venue.neighborhood or "area" in changes:  # moved: work the side of town out again
         venue.region = region_of(hood, venue.area)
     venue.name, venue.neighborhood = name, hood
+    for field in ("open_hours", "show_times"):  # CC-78: an admin's hours stay; clearing lets discovery fill them again
+        if changes.get(field) is not None:
+            value = {day: (list(v) if isinstance(v, tuple) else v) for day, v in changes[field].items()}
+            setattr(venue, field, value)
+            setattr(venue, field + "_by", "admin" if value else "")
     db.commit()
     return _admin_out(venue, _counts(db, [venue.id]))
 
@@ -100,6 +107,10 @@ def merge_venue(venue_id: int, other_id: int, db: DB, _: AdminUser):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Choose a different venue to merge into")
     venue, into = _venue(db, venue_id), _venue(db, other_id)
     moved = db.execute(update(Event).where(Event.venue_id == venue.id).values(venue_id=into.id)).rowcount
+    for field in ("open_hours", "show_times"):  # keep the hours if the venue merged into has none
+        if not getattr(into, field) and getattr(venue, field):
+            setattr(into, field, getattr(venue, field))
+            setattr(into, field + "_by", getattr(venue, field + "_by"))
     db.delete(venue)
     db.commit()
     return VenueMergeOut(moved=moved, into=into)

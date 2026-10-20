@@ -2,7 +2,7 @@
 import uuid
 from datetime import date, date as date_, datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
@@ -108,6 +108,14 @@ class VenueIn(BaseModel):
     area: Area | None = None  # worked out from the neighborhood when left out
 
 
+# CC-78: a venue's opening hours and usual show times. Times are 24-hour HH:MM; a closing time earlier
+# than the opening time runs past midnight (a club open 8 PM to 1 AM).
+Weekday = Literal["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+Clock = Annotated[str, Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")]
+OpenHours = dict[Weekday, tuple[Clock, Clock] | None]  # null: closed that day; a day left out isn't known
+ShowTimes = dict[Weekday, Annotated[list[Clock], Field(max_length=6)]]
+
+
 class VenuePatch(BaseModel):
     """Rename a venue or move it (CC-57). Left out = unchanged. A new neighborhood without an area
     gets the area worked out from it."""
@@ -115,11 +123,18 @@ class VenuePatch(BaseModel):
     neighborhood: str | None = Field(default=None, max_length=120)
     area: Area | None = None
     region: Region | None = None  # CC-73: send null to clear; left out, it's worked out again when the venue moves
+    # CC-78: set by an admin, discovery leaves them alone from then on; {} clears them (discovery may fill them again)
+    open_hours: OpenHours | None = None
+    show_times: ShowTimes | None = None
 
 
 class VenueAdminOut(VenueOut):
-    """A venue with how many events use it, for the admin venues list."""
+    """A venue with how many events use it, for the admin venues list, and its hours (CC-78)."""
     events: int
+    open_hours: dict = {}
+    open_hours_by: str = ""  # "" | discovery | admin
+    show_times: dict = {}
+    show_times_by: str = ""
 
 
 class VenueMergeOut(BaseModel):

@@ -174,6 +174,7 @@ scripts/make_admin.py
 scripts/dolphins.py  turn the plan dolphins on for an account (CC-61)
 scripts/discover.py  check event sources that are due (CC-70; hourly on the server)
 scripts/recap.py     the weekly discovery recap email (CC-77; Tuesdays 10 AM; --print to preview)
+scripts/fill_venue_hours.py  fill venue hours and show times from what discovery found (CC-78)
 app/discovery/       event discovery: polite fetching, page text, readers (Art Institute API, Claude Haiku 5.5), rules, holding list and skip rules
 scripts/dev_users.py the local test accounts (ENV=local only)
 tests/
