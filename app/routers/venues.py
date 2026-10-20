@@ -3,7 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, select, update
 
-from ..areas import area_of
+from ..areas import area_of, region_of
 from ..deps import DB, AdminUser
 from ..models import Event, Venue
 from ..schemas import VenueAdminOut, VenueIn, VenueMergeOut, VenueOut, VenuePatch
@@ -26,7 +26,8 @@ def create_venue(body: VenueIn, db: DB, _: AdminUser):
                                               func.lower(Venue.neighborhood) == hood.lower()))
     if exists:
         raise HTTPException(status.HTTP_409_CONFLICT, "That venue already exists")
-    venue = Venue(name=name, neighborhood=hood, area=body.area or area_of(hood))
+    area = body.area or area_of(hood)
+    venue = Venue(name=name, neighborhood=hood, area=area, region=region_of(hood, area))
     db.add(venue)
     db.commit()
     return venue
@@ -54,7 +55,7 @@ def _counts(db: DB, ids: list[int] | None = None) -> dict[int, tuple[int, int]]:
 def _admin_out(venue: Venue, counts: dict[int, tuple[int, int]]) -> VenueAdminOut:
     n, sheet = counts.get(venue.id, (0, 0))
     return VenueAdminOut(id=venue.id, name=venue.name, neighborhood=venue.neighborhood, area=venue.area,
-                         events=n, sheet_events=sheet)
+                         region=venue.region, events=n, sheet_events=sheet)
 
 
 @router.get("/manage", response_model=list[VenueAdminOut])
@@ -87,6 +88,10 @@ def update_venue(venue_id: int, body: VenuePatch, db: DB, _: AdminUser):
         venue.area = area_of(hood)
     if changes.get("area") is not None:
         venue.area = changes["area"]
+    if "region" in changes:  # set (or cleared) by an admin
+        venue.region = changes["region"]
+    elif hood != venue.neighborhood or "area" in changes:  # moved: work the side of town out again
+        venue.region = region_of(hood, venue.area)
     venue.name, venue.neighborhood = name, hood
     db.commit()
     return _admin_out(venue, _counts(db, [venue.id]))

@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
-from .models import Area, EventStatus, PlanStatus, Role
+from .models import Area, EventStatus, PlanStatus, Region, Role
 
 Category = Literal["Theater", "Concert", "Comedy", "Visual Art"]
 Publish = Literal["now", "later", "review"]
@@ -99,6 +99,7 @@ class VenueOut(ORM):
     name: str
     neighborhood: str
     area: Area
+    region: Region | None  # CC-73: side of town; null if the neighborhood isn't placed yet
 
 
 class VenueIn(BaseModel):
@@ -113,6 +114,7 @@ class VenuePatch(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     neighborhood: str | None = Field(default=None, max_length=120)
     area: Area | None = None
+    region: Region | None = None  # CC-73: send null to clear; left out, it's worked out again when the venue moves
 
 
 class VenueAdminOut(VenueOut):
@@ -165,6 +167,7 @@ class EventPage(BaseModel):
 class NeighborhoodOut(BaseModel):
     name: str
     area: Area
+    region: Region | None  # CC-73
 
 
 class EventFacets(BaseModel):

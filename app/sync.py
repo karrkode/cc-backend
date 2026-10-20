@@ -20,6 +20,7 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from .areas import region_of
 from .config import get_settings
 from .models import Area, Event, EventStatus, SheetSync, Venue
 from .sheet import SheetUnavailable, read_sheet
@@ -70,7 +71,8 @@ def apply_rows(db: Session, rows: list[dict], *, withdraw_missing: bool) -> Sync
         key = (row["venue"].strip(), row["hood"].strip())
         venue = venues.get(key)
         if venue is None:
-            venue = Venue(name=key[0], neighborhood=key[1], area=AREAS.get(row["area"], Area.city))
+            area = AREAS.get(row["area"], Area.city)
+            venue = Venue(name=key[0], neighborhood=key[1], area=area, region=region_of(key[1], area))
             db.add(venue)
             db.flush()
             venues[key] = venue
