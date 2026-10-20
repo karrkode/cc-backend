@@ -13,7 +13,7 @@ Browser ─► Route 53 ─┬─► CloudFront (HTTPS, ACM cert from us-east-1,
                                          private subnets ◄────────────────┘ port 5432 only from the API's SG
                                          RDS Postgres 16, db.t4g.micro, encrypted, no public address
 
-EventBridge Scheduler (03:00 Chicago) ─► SSM Run Command ─► culture-crew-sync on the server
+EventBridge Scheduler (hourly discovery, Tuesday recap) ─► SSM Run Command ─► scripts on the server
 Secrets Manager (DB password, managed by RDS) + Parameter Store (JWT key) ─► read by the server at start
 CloudWatch logs + alarms ─► SNS ─► email · AWS Budget ─► email
 GitHub Actions ─► OIDC roles (no stored keys) ─► push image / upload page
@@ -29,7 +29,8 @@ GitHub Actions ─► OIDC roles (no stored keys) ─► push image / upload pag
 | `aws/frontend.tf`, `aws/www-redirect.js.tftpl` | S3 bucket, CloudFront, ACM certificate, 404 page, www. redirect |
 | `aws/dns.tf` | the Route 53 zone, site and API records |
 | `aws/dns_mail.tf` | email and Microsoft 365 records, copied from GoDaddy; change only when the mail provider asks |
-| `aws/scheduler.tf` | the nightly Google Sheet sync |
+| `aws/scheduler.tf` | the scheduler's role for running commands on the server |
+| `aws/discovery.tf` | event discovery: the API key's slot, the hourly checks, the Tuesday recap email |
 | `aws/monitoring.tf` | log groups, alarms, failed-command alerts, monthly budget |
 | `aws/github.tf` | OIDC deploy roles for both repos |
 
@@ -86,10 +87,12 @@ docker push --all-tags "${REPO}"
 
 aws ssm send-command --document-name AWS-RunShellScript \
   --targets Key=InstanceIds,Values=$(terraform -chdir=infra/aws output -raw api_instance_id) \
-  --parameters 'commands=["/usr/local/bin/culture-crew-deploy","/usr/local/bin/culture-crew-sync"]'
+  --parameters 'commands=["/usr/local/bin/culture-crew-deploy"]'
 ```
 
-The deploy runs the database migrations; the sync loads every event from the sheet.
+The deploy runs the database migrations. To rebuild with the events, restore the database from
+an RDS snapshot. (The Google Sheet sync that used to load them was retired in CC-72; the server
+still has a `culture-crew-sync` script from its first boot, which no longer works and isn't scheduled.)
 `https://api.chiculturecrew.com/health` should answer `{"status":"ok"}`.
 
 ### 5. The page
@@ -113,8 +116,8 @@ Then open https://chiculturecrew.com.
 | Roll back | `culture-crew-deploy <older tag>` (ECR keeps the 15 newest images, each tagged with its commit) |
 | Shell on the server | `aws ssm start-session --target <api_instance_id>` |
 | API logs | CloudWatch → `/culture-crew/api` (streams `api`, `caddy`) |
-| Sync results | CloudWatch → `/culture-crew/sheet-sync`, or `GET /admin/syncs` |
-| Run the sync now | `aws ssm send-command ... commands=["/usr/local/bin/culture-crew-sync"]` |
+| Discovery and recap output | CloudWatch → `/culture-crew/discovery` |
+| Send the weekly recap now | on the server: `docker exec api python -m scripts.recap` (`--print` to preview) |
 | Look at the database | run the `db_tunnel_command` output, then connect a GUI to `localhost:5433` (user `culture_admin`, password from Secrets Manager) |
 | Make an admin | on the server: `docker exec api python -m scripts.make_admin you@example.com` |
 | Run event discovery now | on the server: `docker exec api python -m scripts.discover --source <id> --now` (without the API key it can't read changed pages) |

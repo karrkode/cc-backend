@@ -48,7 +48,6 @@ def test_seed_is_repeatable(Session, db, monkeypatch, tmp_path):
     path.write_text(json.dumps({"events": rows}))
     again = seed_module.seed(path)
     assert (again["added"], again["updated"], again["unchanged"], again["venues_added"]) == (0, 1, 2, 0)
-    assert again["withdrawn"] == 0  # a seed file never withdraws anything
 
     assert db.scalar(select(func.count(Event.id))) == 3
     assert db.scalar(select(func.count(Venue.id))) == 3  # Second City in two neighborhoods = two venues

@@ -120,7 +120,6 @@ class VenuePatch(BaseModel):
 class VenueAdminOut(VenueOut):
     """A venue with how many events use it, for the admin venues list."""
     events: int
-    sheet_events: int  # of those, how many come from the Google Sheet (their venue follows the sheet)
 
 
 class VenueMergeOut(BaseModel):
@@ -384,23 +383,6 @@ class StatsOut(BaseModel):
     confirmed_members: int
     active_since: date_ | None  # the first day activity was recorded
     retention: StatsRetention
-
-
-# ---- sheet sync log --------------------------------------------------------
-
-class SheetSyncOut(ORM):
-    id: int
-    started_at: datetime
-    finished_at: datetime | None
-    result: str
-    rows_read: int
-    added: int
-    updated: int
-    unchanged: int
-    withdrawn: int
-    restored: int
-    skipped: int
-    message: str
 
 
 # ---- attended --------------------------------------------------------------

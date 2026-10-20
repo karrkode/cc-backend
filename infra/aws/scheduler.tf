@@ -1,5 +1,7 @@
-# The nightly Google Sheet sync: EventBridge Scheduler asks SSM Run Command to run
-# culture-crew-sync on the server. Output goes to CloudWatch; failures alert (monitoring.tf).
+# EventBridge Scheduler's role: it may ask SSM Run Command to run shell commands on the API server.
+# The schedules that use it are in discovery.tf (hourly discovery, the weekly recap). The nightly Google
+# Sheet sync that used to run here was retired in October 2026 (CC-72). The policy keeps its old name
+# so it isn't replaced.
 
 resource "aws_iam_role" "scheduler" {
   name = "${var.name}-scheduler"
@@ -25,30 +27,4 @@ resource "aws_iam_role_policy" "scheduler" {
       ]
     }]
   })
-}
-
-resource "aws_scheduler_schedule" "sheet_sync" {
-  name                         = "${var.name}-sheet-sync"
-  description                  = "Bring events in line with the Google Sheet"
-  schedule_expression          = var.sync_schedule
-  schedule_expression_timezone = "America/Chicago"
-
-  flexible_time_window { mode = "OFF" }
-
-  target {
-    arn      = "arn:aws:scheduler:::aws-sdk:ssm:sendCommand"
-    role_arn = aws_iam_role.scheduler.arn
-    input = jsonencode({
-      DocumentName   = "AWS-RunShellScript"
-      InstanceIds    = [aws_instance.api.id]
-      Comment        = "Nightly Google Sheet sync"
-      TimeoutSeconds = 600
-      Parameters     = { commands = ["/usr/local/bin/culture-crew-sync"], executionTimeout = ["600"] }
-      CloudWatchOutputConfig = {
-        CloudWatchOutputEnabled = true
-        CloudWatchLogGroupName  = aws_cloudwatch_log_group.sync.name
-      }
-    })
-    retry_policy { maximum_retry_attempts = 2 }
-  }
 }

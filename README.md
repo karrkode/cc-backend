@@ -88,61 +88,18 @@ To make your own account an admin instead, register through `/docs` (POST /auth/
 docker compose run --rm api python -m scripts.make_admin you@example.com
 ```
 
-## Keeping up with the Google Sheet
+## The old Google Sheet (retired)
 
-The events still start life in the Culture Crew Google Sheet (shared as "Anyone with the
-link can view"). `scripts/sync_sheet.py` reads it and brings the database in line; it is
-meant to run **nightly** (scheduled on AWS in the deployment step).
+Until October 2026 the events started life in a Google Sheet, and a nightly job copied it into the
+database. That sync was retired in CC-72, after one final run on Oct 20, 2026. The sheet stays
+up as a read-only archive; the site never reads it.
 
-```
-docker compose run --rm api python -m scripts.sync_sheet --dry-run   # what would change
-docker compose run --rm api python -m scripts.sync_sheet             # apply it
-```
-
-What a run does:
-
-- **New rows** become approved events; **changed rows** update their event.
-- Events **added through the site** are never touched; only events that came from the
-  sheet (they carry the sheet's id in `source_id`) follow it.
-- An admin's **rejection stands**: the details still update, the event stays hidden.
-- **Nothing is deleted.** A row removed from the sheet makes its event `withdrawn`
-  (hidden, but people's "I've been" marks are kept); if the row comes back, so does the event.
-- If the sheet **can't be read**, has no header row, or suddenly has **fewer than half** the
-  events currently live from it, the run changes nothing and is recorded as failed. That
-  is far more likely a Google hiccup or a half-cleared tab than a real mass removal.
-- An event is identified by the sheet's **ID column**. A row with a blank ID falls back to an
-  id worked out from **title + venue + start date**, so editing one of those makes it a new
-  event (the old one is withdrawn). Each run notes how many rows have no ID.
-- Every run is logged in `sheet_syncs`; admins can read it at `GET /admin/syncs`. The
-  script exits with status 1 on failure, so the scheduler can alert on it.
-
-`scripts/seed.py` uses the same code to load `seed/events.json` into an empty database;
-it never withdraws anything.
-
-### The ID column
-
-Fill it in once, and again whenever rows are added without one:
-
-```
-.venv/bin/python -m scripts.sheet_ids    # reads the sheet only; needs no database
-```
-
-It says whether the sheet has a column headed **ID** yet and which rows are missing one,
-then prints a column to paste in, one line per sheet row from the row under the header.
-The values are each row's **current** id, the one its event already has, so share links
-and "I've been" marks carry over. Keep existing IDs as they are; any unique text up to
-40 characters works for new rows (type one in when you add the row, e.g. `ev-0325`). If two
-rows share an ID, the first one wins.
-
-Set the column to **Format → Number → Plain text**, or Sheets turns ids like `038656` or
-`541e30` into numbers (`38656`, `5.41E+32`). `scripts.sheet_ids` lists any that look
-reformatted. The sync copes meanwhile: a row whose ID matches no event, but whose title,
-venue and start date match an event no other row claims, keeps that event, and the run's
-message says how many rows that happened to.
-
-If you hide the column in Google Sheets, run `scripts.sheet_ids` afterwards and check it
-still says "ID column: found"; if hiding removes it from the sheet's public view, the sync
-can't see it.
+- Every event is now managed on the site: Submit, Review, Found events (event discovery) and
+  the edit form. Edits to the old sheet events stick.
+- Old sheet events keep the sheet's id in `source_id`, so share links from the old site still work.
+- `seed/events.json` is a saved copy of the sheet. `scripts/seed.py` (with `app/seeding.py`) loads it
+  into an empty local database; production never runs it.
+- The `sheet_syncs` table keeps the sync's run history; nothing writes to it.
 
 ## Tests
 
@@ -210,10 +167,7 @@ app/security.py      bcrypt, JWTs, refresh tokens
 app/deps.py          database session, current user, admin check
 app/routers/         auth, events, venues, me, admin, traffic, discovery (sources; found events to review, CC-71)
 alembic/             migrations
-app/sheet.py         reads and parses the Google Sheet
-app/sync.py          applies the sheet (or the seed file) to the database
-scripts/sync_sheet.py  the nightly sync
-scripts/sheet_ids.py   the ID column to paste into the sheet
+app/seeding.py       loads seed/events.json into a database (local development and tests)
 scripts/seed.py      import seed/events.json
 seed/events.json     the events from the old Google Sheet site
 scripts/make_admin.py
