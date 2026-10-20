@@ -4,6 +4,7 @@ import re
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import (JSON, Boolean, CheckConstraint, Date, DateTime, Enum, ForeignKey, Index, Integer,
                         Numeric, String, Text, UniqueConstraint, Uuid, false, func, true as sa_true)
@@ -11,6 +12,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from .db import Base
 
+
+_CHICAGO = ZoneInfo("America/Chicago")  # the site's day (app.stats has the same)
 
 class Role(str, enum.Enum):
     user = "user"
@@ -196,6 +199,11 @@ class Event(Base):
     submitted_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     # The submitter ticked "credit me" for this event; without it their name is never shown publicly.
     credit_me: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    # CC-79: when it's on, for the planner. performances: specific dates and times from event discovery,
+    # [{"date": "2026-11-05", "time": "19:30"}], kept current by discovery. weekly: a usual pattern an admin
+    # sets, {"thu": ["19:30"]}, which overrides the venue's show times. Neither is shown on cards.
+    performances: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
+    weekly: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
     # CC-71: the event source it was found on, when it was approved from discovery
     found_by_id: Mapped[int | None] = mapped_column(ForeignKey("discovery_sources.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -219,6 +227,19 @@ class Event(Base):
 
     # CC-66: set per request by app.picks.attach_picks (not stored); the owner's public pick, if any.
     pick = None
+
+    @property
+    def schedule(self) -> dict:
+        """CC-79: what the planner needs to know when it's on: upcoming dates and times, the weekly pattern
+        (the event's own, else its venue's show times), and the venue's opening hours."""
+        today = datetime.now(_CHICAGO).date().isoformat()
+        dates = sorted((p for p in self.performances or [] if (p.get("date") or "") >= today),
+                       key=lambda p: (p.get("date"), p.get("time") or ""))[:120]
+        own = bool(self.weekly)
+        venue = self.venue
+        return {"dates": dates, "weekly": self.weekly if own else (venue.show_times if venue else {}) or {},
+                "weekly_from": "event" if own else ("venue" if venue and venue.show_times else ""),
+                "hours": (venue.open_hours if venue else {}) or {}}
 
 
 class Attended(Base):
