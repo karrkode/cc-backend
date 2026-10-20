@@ -1,13 +1,13 @@
 from datetime import date, timedelta
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, select
 
 from ..deps import DB, AdminUser
 from ..models import Event, EventStatus, SheetSync
-from ..schemas import EventAdminOut, EventAdminPage, SheetSyncOut, StatsOut
-from ..stats import today_in_chicago, weekly_stats
+from ..schemas import EventAdminOut, EventAdminPage, EventInterestOut, SheetSyncOut, StatsOut
+from ..stats import event_interest, today_in_chicago, weekly_stats
 from ..visibility import utcnow
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -65,6 +65,24 @@ def sync_runs(db: DB, _: AdminUser, limit: Annotated[int, Query(ge=1, le=100)] =
 def stats(db: DB, _: AdminUser, weeks: Annotated[int, Query(ge=1, le=52)] = 12,
           today: Annotated[date | None, Query(description="The caller's local date")] = None):
     """Sign-ups and member activity for the last N weeks (CC-67). Totals only, never who."""
+    return weekly_stats(db, _callers_day(today), weeks)
+
+
+def _callers_day(today: date | None) -> date:
     server = today_in_chicago()
-    day = today if today is not None and abs((today - server).days) <= 1 else server
-    return weekly_stats(db, day, weeks)
+    return today if today is not None and abs((today - server).days) <= 1 else server
+
+
+@router.get("/stats/events", response_model=list[EventInterestOut])
+def stats_events(db: DB, _: AdminUser,
+                 range_: Annotated[Literal["week", "30d", "all"], Query(alias="range")] = "30d",
+                 include_closed: bool = False,
+                 category: Annotated[list[str] | None, Query(description="Only these event types")] = None,
+                 limit: Annotated[int, Query(ge=1, le=50)] = 15,
+                 today: Annotated[date | None, Query(description="The caller's local date")] = None):
+    """CC-69: the events drawing the most interest and commitments from members, with "I've been"
+    counts. range: this week (from Monday), the last 30 days, or all time; category narrows it to event
+    types. Totals only, never who."""
+    day = _callers_day(today)
+    since = {"week": day - timedelta(days=day.weekday()), "30d": day - timedelta(days=29), "all": None}[range_]
+    return event_interest(db, day, since, include_closed, limit, category)
