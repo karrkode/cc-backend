@@ -148,6 +148,16 @@ def create_event(body: EventIn, db: DB, user: CurrentUser):
     if get_settings().require_verified_email and user.role != Role.admin and not user.email_verified:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Confirm your email address before sending in events. "
                             "Use the link we emailed you, or send a new one from your account page.")
+    event = new_event(db, body, user)
+    db.add(event)
+    db.commit()
+    db.refresh(event)
+    return event
+
+
+def new_event(db: DB, body: EventIn, user) -> Event:
+    """The event a submission makes (not yet added): admins choose when it goes live; everyone else's
+    waits for review. Also used to approve a found event (CC-71)."""
     status_, publish_at = EventStatus.pending, None
     if user.role == Role.admin:
         if body.publish == "now":
@@ -162,12 +172,8 @@ def create_event(body: EventIn, db: DB, user: CurrentUser):
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "No venue with that venue_id")
     else:
         venue = get_or_create_venue(db, body.venue)
-    event = Event(**body.model_dump(exclude={"venue_id", "venue", "publish", "publish_at"}), venue_id=venue.id,
-                  submitted_by=user.id, status=status_, publish_at=publish_at)
-    db.add(event)
-    db.commit()
-    db.refresh(event)
-    return event
+    return Event(**body.model_dump(exclude={"venue_id", "venue", "publish", "publish_at"}), venue_id=venue.id,
+                 submitted_by=user.id, status=status_, publish_at=publish_at)
 
 
 @router.patch("/{event_id}", response_model=EventOut)

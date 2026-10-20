@@ -429,3 +429,80 @@ class PlanOut(ORM):
 class AttendedOut(ORM):
     event: EventOut
     created_at: datetime
+
+
+class FoundChange(BaseModel):
+    field: str  # cost_text | min_price | begin_date | end_date
+    listed: str | float | None  # what the catalog says
+    found: str | float | None  # what the source says now
+
+
+class EventRef(BaseModel):
+    id: int
+    title: str
+
+
+class DiscoveredItemOut(ORM):
+    """A found event for review (CC-71). venue_id: the venue it would be filed under (null: pick or
+    add one); possible_duplicate: a catalog event at that venue with a similar title."""
+    id: int
+    source_id: int
+    source_name: str = ""
+    status: str  # new | update | listed | approved | rejected | skipped
+    skip_reason: str
+    title: str
+    url: str
+    kind: str
+    category: str | None
+    venue_name: str
+    venue_id: int | None = None
+    neighborhood: str = ""
+    begin_date: date | None
+    end_date: date | None
+    open_run: bool
+    cost_text: str
+    min_price: Decimal | None
+    dates_listed: int = 0  # how many performance dates and times the source listed
+    proposed: list[FoundChange] = []  # for "update": what would change
+    event: EventRef | None = None  # the catalog event, once listed or approved
+    possible_duplicate: EventRef | None = None
+    first_seen_at: datetime
+
+
+class UnreadableSource(BaseModel):
+    id: int
+    name: str
+    status: str  # blocked | error
+    reason: str
+    last_checked_at: datetime | None
+
+
+class DiscoveredPage(BaseModel):
+    items: list[DiscoveredItemOut]
+    total: int
+    counts: dict[str, int]  # items per status, for the filter
+    unreadable: list[UnreadableSource]
+
+
+class SkipSimilar(BaseModel):
+    phrase: str = Field(min_length=2, max_length=200)
+    everywhere: bool = False  # all sources, or just this item's
+
+
+class RejectIn(BaseModel):
+    skip_similar: SkipSimilar | None = None
+
+
+class RejectOut(BaseModel):
+    item: DiscoveredItemOut
+    also_rejected: int = 0  # other waiting items the new rule caught
+
+
+class SkipRuleOut(BaseModel):
+    id: int
+    phrase: str
+    source_id: int | None
+    source_name: str | None  # None: all sources
+    caught: int
+    created_at: datetime
+

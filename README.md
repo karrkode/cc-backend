@@ -208,7 +208,7 @@ app/models.py        tables (SQLAlchemy)
 app/schemas.py       request/response shapes (Pydantic)
 app/security.py      bcrypt, JWTs, refresh tokens
 app/deps.py          database session, current user, admin check
-app/routers/         auth, events, venues, me, admin
+app/routers/         auth, events, venues, me, admin, traffic, discovery (sources; found events to review, CC-71)
 alembic/             migrations
 app/sheet.py         reads and parses the Google Sheet
 app/sync.py          applies the sheet (or the seed file) to the database
@@ -219,7 +219,7 @@ seed/events.json     the events from the old Google Sheet site
 scripts/make_admin.py
 scripts/dolphins.py  turn the plan dolphins on for an account (CC-61)
 scripts/discover.py  check event sources that are due (CC-70; hourly on the server)
-app/discovery/       event discovery: polite fetching, page text, readers (Art Institute API, Claude Haiku 5.5), rules, holding list
+app/discovery/       event discovery: polite fetching, page text, readers (Art Institute API, Claude Haiku 5.5), rules, holding list and skip rules
 scripts/dev_users.py the local test accounts (ENV=local only)
 tests/
 ```
