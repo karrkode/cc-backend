@@ -313,6 +313,24 @@ class EventInterestOut(BaseModel):
     attended: int
 
 
+class TrafficDay(BaseModel):
+    day: date_
+    views: int
+    visitors: int  # unique that day
+    returning: int  # of those, first seen on an earlier day
+    tickets: int  # clicks out to an event's own page
+    outings: int  # outings planned
+
+
+class TrafficOut(BaseModel):
+    """CC-68: cookie-free traffic for the admin Stats page. Counts only."""
+    days: list[TrafficDay]  # oldest first; the last is today
+    by_view: dict[str, int]  # views of each part of the site over the period, most first
+    visitors: int  # unique visitors over the whole period
+    returning_visitors: int  # of those, how many had visited before
+    counting_since: date_ | None
+
+
 class StatsOut(BaseModel):
     today: date_
     weeks: list[StatsWeek]  # oldest first; the last is the current week so far

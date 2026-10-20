@@ -6,8 +6,9 @@ from sqlalchemy import func, select
 
 from ..deps import DB, AdminUser
 from ..models import Event, EventStatus, SheetSync
-from ..schemas import EventAdminOut, EventAdminPage, EventInterestOut, SheetSyncOut, StatsOut
+from ..schemas import EventAdminOut, EventAdminPage, EventInterestOut, SheetSyncOut, StatsOut, TrafficOut
 from ..stats import event_interest, today_in_chicago, weekly_stats
+from ..traffic import summary as traffic_summary
 from ..visibility import utcnow
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -86,3 +87,10 @@ def stats_events(db: DB, _: AdminUser,
     day = _callers_day(today)
     since = {"week": day - timedelta(days=day.weekday()), "30d": day - timedelta(days=29), "all": None}[range_]
     return event_interest(db, day, since, include_closed, limit, category)
+
+
+@router.get("/stats/traffic", response_model=TrafficOut)
+def stats_traffic(db: DB, _: AdminUser, days: Annotated[int, Query(ge=1, le=366)] = 30,
+                  today: Annotated[date | None, Query(description="The caller's local date")] = None):
+    """CC-68: views, unique and returning visitors, ticket clicks and outings planned, day by day. Counts only."""
+    return traffic_summary(db, _callers_day(today), days)
