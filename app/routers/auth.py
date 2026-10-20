@@ -13,6 +13,7 @@ from ..schemas import (ForgotPasswordIn, LoginIn, MessageOut, PasswordChangeIn, 
                        ResetPasswordIn, TokenIn, TokenOut, UserOut)
 from ..security import (create_access_token, hash_password, hash_refresh_token, new_refresh_token,
                         verify_password)
+from ..stats import record_active
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -31,6 +32,7 @@ def _issue(db: DB, user: User, response: Response) -> TokenOut:
     raw = new_refresh_token()
     db.add(RefreshToken(user_id=user.id, token_hash=hash_refresh_token(raw),
                         expires_at=datetime.now(UTC) + timedelta(days=s.refresh_token_days)))
+    record_active(db, user)  # CC-67: every visit by a signed-in member starts or refreshes a session
     db.commit()
     response.set_cookie(COOKIE, raw, max_age=s.refresh_token_days * 86400, path=COOKIE_PATH,
                         domain=s.cookie_domain, secure=s.cookie_secure, httponly=True, samesite="lax")

@@ -1,3 +1,4 @@
+from datetime import date, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, status
@@ -5,7 +6,8 @@ from sqlalchemy import func, select
 
 from ..deps import DB, AdminUser
 from ..models import Event, EventStatus, SheetSync
-from ..schemas import EventAdminOut, EventAdminPage, SheetSyncOut
+from ..schemas import EventAdminOut, EventAdminPage, SheetSyncOut, StatsOut
+from ..stats import today_in_chicago, weekly_stats
 from ..visibility import utcnow
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -57,3 +59,12 @@ def reject(event_id: int, db: DB, _: AdminUser):
 def sync_runs(db: DB, _: AdminUser, limit: Annotated[int, Query(ge=1, le=100)] = 20):
     """The latest Google Sheet sync runs, newest first: what changed, or why a run failed."""
     return db.scalars(select(SheetSync).order_by(SheetSync.started_at.desc(), SheetSync.id.desc()).limit(limit)).all()
+
+
+@router.get("/stats", response_model=StatsOut)
+def stats(db: DB, _: AdminUser, weeks: Annotated[int, Query(ge=1, le=52)] = 12,
+          today: Annotated[date | None, Query(description="The caller's local date")] = None):
+    """Sign-ups and member activity for the last N weeks (CC-67). Totals only, never who."""
+    server = today_in_chicago()
+    day = today if today is not None and abs((today - server).days) <= 1 else server
+    return weekly_stats(db, day, weeks)

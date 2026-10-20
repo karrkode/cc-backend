@@ -8,3 +8,4 @@ email-validator==2.3.0
 bcrypt==5.0.0
 pyjwt==2.15.1
 boto3==1.43.103  # Amazon SES for account emails (app/mail.py)
+tzdata==2026.1  # time zone data for Chicago-time weekly stats (app/stats.py), on any base image
