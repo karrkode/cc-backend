@@ -9,6 +9,19 @@
 
 The admin also has the plan dolphins on (CC-61) and the user doesn't, so both looks can be tried.
 
+Three culture crews (CC-74) come ready-made too, with seven more members who sign in with the test
+user's password (DEV_USER_PASSWORD). The admin is in all three and owns one, so both the owner's and a
+member's view can be tried; the test user is in none, so joining from an invite link can be tried.
+
+| Crew             | Owner       | Members                                          |
+|------------------|-------------|--------------------------------------------------|
+| Thursday Theater | Local Admin | Maya Chen, Jordan Reyes, Priya Patel, Marcus Bell |
+| The Visual Gaze  | Priya Patel | Local Admin, Lena Fischer, Rosa Alvarez          |
+| Laughin Times    | Sam Okafor  | Local Admin, Jordan Reyes, Marcus Bell, Rosa Alvarez |
+
+The members are maya@, jordan@, priya@, sam@, lena@, marcus@ and rosa@example.com. Each crew is made if
+it's missing, and anyone listed who isn't in it is put back; members you add yourself are left alone.
+
 The values are set for the local stack in docker-compose.yml (and listed in the README). Each
 account is created, or has its password, role and confirmed email put back if they were changed;
 running it again changes nothing. The local API container runs this on every start.
@@ -21,7 +34,7 @@ from sqlalchemy import select
 
 from app.config import get_settings
 from app.db import SessionLocal
-from app.models import Role, User
+from app.models import Crew, CrewMember, Role, User
 from app.security import hash_password, verify_password
 
 
@@ -52,6 +65,37 @@ def ensure_dev_user(db, email: str, password: str, role: Role, display_name: str
     return "updated" if changed else "unchanged"
 
 
+# CC-74: the ready-made crews. "admin" is the local admin; the others are crew members made below.
+CREW_MEMBERS = {"maya": "Maya Chen", "jordan": "Jordan Reyes", "priya": "Priya Patel", "sam": "Sam Okafor",
+                "lena": "Lena Fischer", "marcus": "Marcus Bell", "rosa": "Rosa Alvarez"}
+CREWS = [("Thursday Theater", "Plays on Thursday nights, then a drink after", "admin", ["maya", "jordan", "priya", "marcus"]),
+         ("The Visual Gaze", "Gallery openings and museum late nights", "priya", ["admin", "lena", "rosa"]),
+         ("Laughin Times", "Improv, sketch and stand-up", "sam", ["admin", "jordan", "marcus", "rosa"])]
+
+
+def ensure_dev_crews(db, admin_email: str, password: str) -> list[str]:
+    """The ready-made crews and their members. Returns a line per crew saying what happened."""
+    people = {"admin": db.scalar(select(User).where(User.email == admin_email))}
+    for handle, name in CREW_MEMBERS.items():
+        ensure_dev_user(db, f"{handle}@example.com", password, Role.user, name)
+        people[handle] = db.scalar(select(User).where(User.email == f"{handle}@example.com"))
+    said = []
+    for name, about, owner, members in CREWS:
+        crew = db.scalar(select(Crew).where(Crew.name == name).order_by(Crew.id))
+        made = crew is None
+        if made:
+            crew = Crew(name=name, description=about, owner_id=people[owner].id)
+            db.add(crew)
+            db.flush()
+        have = {m.user_id for m in crew.members}
+        added = [h for h in [owner, *members] if people[h].id not in have]
+        for h in added:
+            crew.members.append(CrewMember(user_id=people[h].id))
+        db.commit()
+        said.append(f"Crew {name}: " + ("created" if made else f"{len(added)} put back" if added else "unchanged") + ".")
+    return said
+
+
 def accounts(s) -> list[tuple[str, str, Role, str, str]]:
     """The configured accounts as (label, email, role, name, password). A half-set pair is an error."""
     out = []
@@ -77,6 +121,9 @@ def main():
     with SessionLocal() as db:
         for label, email, role, name, password in wanted:
             print(f"Local {label} {email}: {ensure_dev_user(db, email, password, role, name)}.")
+        if s.dev_admin_email and s.dev_user_password:  # the crews need the admin, and a password for their members
+            for line in ensure_dev_crews(db, s.dev_admin_email.strip().lower(), s.dev_user_password):
+                print(line)
 
 
 if __name__ == "__main__":
