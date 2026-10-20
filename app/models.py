@@ -5,8 +5,8 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import (Boolean, CheckConstraint, Date, DateTime, Enum, ForeignKey, Index, Integer,
-                        Numeric, String, Text, UniqueConstraint, Uuid, false, func)
+from sqlalchemy import (JSON, Boolean, CheckConstraint, Date, DateTime, Enum, ForeignKey, Index, Integer,
+                        Numeric, String, Text, UniqueConstraint, Uuid, false, func, true as sa_true)
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from .db import Base
@@ -255,3 +255,90 @@ class SheetSync(Base):
     restored: Mapped[int] = mapped_column(Integer, default=0)
     skipped: Mapped[int] = mapped_column(Integer, default=0)
     message: Mapped[str] = mapped_column(Text, default="")
+
+
+
+# ---- event discovery (CC-70) ----------------------------------------------------------
+# A source is a venue or company whose own pages are checked now and then for new events. What a
+# check finds goes into DiscoveredItem, a holding list an admin reviews (CC-71); nothing found here
+# reaches the live catalog by itself.
+
+class SourceKind(str, enum.Enum):
+    theater = "theater"
+    opera = "opera"
+    museum = "museum"
+    music = "music"
+    comedy = "comedy"
+
+
+class DiscoverySource(Base):
+    __tablename__ = "discovery_sources"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(200), unique=True)
+    kind: Mapped[SourceKind] = mapped_column(_enum(SourceKind, "source_kind"))
+    pages: Mapped[list] = mapped_column(JSON, default=list)  # the events pages to read, in order
+    reader: Mapped[str] = mapped_column(String(20), default="claude")  # claude | aic_api (Art Institute's own API)
+    venue_id: Mapped[int | None] = mapped_column(ForeignKey("venues.id", ondelete="SET NULL"))
+    # Where its events are, when there's no venue yet: used to add one when an event is approved.
+    venue_name: Mapped[str] = mapped_column(String(200), default="")
+    neighborhood: Mapped[str] = mapped_column(String(120), default="")
+    every_days: Mapped[int] = mapped_column(Integer, default=30)  # the usual gap between checks
+    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=sa_true())
+    next_check_on: Mapped[date | None] = mapped_column(Date)  # due on or after this day; None = due now
+    unchanged_streak: Mapped[int] = mapped_column(Integer, default=0)  # checks in a row with nothing new
+    page_state: Mapped[dict] = mapped_column(JSON, default=dict)  # per page: etag, last_modified, text hash
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_status: Mapped[str] = mapped_column(String(20), default="")  # ok | unchanged | blocked | error
+    last_error: Mapped[str] = mapped_column(Text, default="")
+    venue_hours: Mapped[dict] = mapped_column(JSON, default=dict)  # what the venue's site says, for CC-78
+    venue: Mapped["Venue | None"] = relationship(lazy="joined")
+
+
+class DiscoveredItem(Base):
+    """An event a source listed: new to us, already in the catalog ("listed"), or a proposed update
+    to a listed event. Admins approve, reject or dismiss it (CC-71)."""
+    __tablename__ = "discovered_items"
+    __table_args__ = (UniqueConstraint("source_id", "key", name="uq_discovered_source_key"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source_id: Mapped[int] = mapped_column(ForeignKey("discovery_sources.id", ondelete="CASCADE"), index=True)
+    key: Mapped[str] = mapped_column(String(500))  # the event's own page, or its normalized title
+    status: Mapped[str] = mapped_column(String(20), default="new", index=True)  # new | listed | update | approved | rejected | skipped
+    skip_reason: Mapped[str] = mapped_column(String(200), default="")
+    title: Mapped[str] = mapped_column(String(300))
+    url: Mapped[str] = mapped_column(String(2000), default="")
+    kind: Mapped[str] = mapped_column(String(30), default="")  # production, exhibition, talk, ... as read
+    category: Mapped[str | None] = mapped_column(String(40))
+    venue_name: Mapped[str] = mapped_column(String(200), default="")
+    begin_date: Mapped[date | None] = mapped_column(Date)
+    end_date: Mapped[date | None] = mapped_column(Date)
+    open_run: Mapped[bool] = mapped_column(Boolean, default=False)
+    cost_text: Mapped[str] = mapped_column(String(120), default="")
+    min_price: Mapped[Decimal | None] = mapped_column(Numeric(8, 2))
+    performances: Mapped[list] = mapped_column(JSON, default=list)  # [{"date": "2026-11-05", "time": "19:30"}]
+    changes: Mapped[dict] = mapped_column(JSON, default=dict)  # for "update": {field: [listed, found]}
+    event_id: Mapped[int | None] = mapped_column(ForeignKey("events.id", ondelete="SET NULL"), index=True)
+    detail_checks: Mapped[list] = mapped_column(JSON, default=list)  # pre-opening checks done: [60, 45]
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class DiscoveryCheck(Base):
+    """One check of one source (or one event's page): what happened and what it cost. Feeds the
+    sources list, the weekly recap (CC-77) and the monthly cost."""
+    __tablename__ = "discovery_checks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source_id: Mapped[int] = mapped_column(ForeignKey("discovery_sources.id", ondelete="CASCADE"), index=True)
+    checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    what: Mapped[str] = mapped_column(String(20), default="source")  # source | detail (one event's page)
+    status: Mapped[str] = mapped_column(String(20))  # ok | unchanged | blocked | error
+    new_items: Mapped[int] = mapped_column(Integer, default=0)
+    updates: Mapped[int] = mapped_column(Integer, default=0)
+    skipped: Mapped[int] = mapped_column(Integer, default=0)
+    pages_read: Mapped[int] = mapped_column(Integer, default=0)  # pages that had to go to the model
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    note: Mapped[str] = mapped_column(Text, default="")
