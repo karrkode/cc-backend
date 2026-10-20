@@ -348,6 +348,27 @@ class PlanShare(Base):
     crew_id: Mapped[int] = mapped_column(ForeignKey("crews.id", ondelete="CASCADE"), primary_key=True, index=True)
 
 
+class IssueReport(Base):
+    """CC-84: a signed-in member's report of a problem with the site. Admins set its status and can add a
+    note the member sees beside it on Your account."""
+    __tablename__ = "issue_reports"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    what_happened: Mapped[str] = mapped_column(Text)
+    expected: Mapped[str] = mapped_column(Text, default="")
+    page: Mapped[str] = mapped_column(String(200), default="")  # the view they were on, e.g. "Catalog"
+    browser: Mapped[str] = mapped_column(String(300), default="")
+    screen: Mapped[str] = mapped_column(String(30), default="")
+    site_version: Mapped[str] = mapped_column(String(40), default="")
+    status: Mapped[str] = mapped_column(String(20), default="new", index=True)  # new | looking | fixed | wont_fix
+    admin_note: Mapped[str] = mapped_column(String(500), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    reporter: Mapped[User | None] = relationship(lazy="joined")
+
+
 class SheetSync(Base):
     """One run of the nightly Google Sheet sync. The sync was retired in October 2026 (CC-72); the table
     keeps its history and nothing writes to it."""

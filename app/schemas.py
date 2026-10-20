@@ -655,3 +655,56 @@ class PendingInviteOut(BaseModel):
     full: bool
     expires_at: datetime
 
+
+
+# ---- issue reports (CC-84) --------------------------------------------------------------
+
+IssueStatus = Literal["new", "looking", "fixed", "wont_fix"]
+
+
+class IssueIn(BaseModel):
+    what_happened: str = Field(min_length=3, max_length=2000)
+    expected: str = Field(default="", max_length=1000)
+    page: str = Field(default="", max_length=200)
+    browser: str = Field(default="", max_length=300)
+    screen: str = Field(default="", max_length=30)
+    site_version: str = Field(default="", max_length=40)
+
+    @field_validator("what_happened", "expected", "page", "browser", "screen", "site_version")
+    @classmethod
+    def _trim(cls, v: str) -> str:
+        return v.strip()
+
+
+class IssueOut(ORM):
+    """A report as its member sees it: what they wrote, its status, and an admin's note."""
+    id: int
+    what_happened: str
+    expected: str
+    page: str
+    status: str
+    admin_note: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class IssueReporter(BaseModel):
+    name: str
+    email: str
+
+
+class IssueAdminOut(IssueOut):
+    browser: str
+    screen: str
+    site_version: str
+    sent_by: IssueReporter | None = None  # None: the account was deleted
+
+
+class IssuePage(BaseModel):
+    items: list[IssueAdminOut]
+    counts: dict[str, int]
+
+
+class IssuePatch(BaseModel):
+    status: IssueStatus | None = None
+    admin_note: str | None = Field(default=None, max_length=500)
