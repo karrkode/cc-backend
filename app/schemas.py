@@ -357,6 +357,15 @@ class DiscoveryOverview(BaseModel):
     tokens_in_30d: int
     tokens_out_30d: int
     cost_30d_usd: float  # at Claude Haiku 5.5's list price; the Anthropic Console has the exact bill
+    # CC-80: this calendar month (Chicago) against the monthly budget; state ok | saving (80%+: event pages
+    # wait) | paused (100%: only Check now runs)
+    spent_month_usd: float = 0
+    budget_usd: float = 10
+    budget_state: str = "ok"
+
+
+class BudgetIn(BaseModel):
+    usd: float = Field(ge=1, le=100)  # dollars a month for reading pages with Claude
 
 
 # ---- admin stats (CC-67) ---------------------------------------------------

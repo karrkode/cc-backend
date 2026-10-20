@@ -10,7 +10,9 @@ from urllib.parse import urljoin, urlsplit
 
 SKIP = {"script", "style", "noscript", "svg", "nav", "footer", "header", "form", "iframe", "template", "head", "button"}
 BLOCK = {"p", "div", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6", "section", "article", "br", "dt", "dd", "td", "th"}
-MAX_CHARS = 120_000  # a generous page; anything beyond is cut off (and the result says so)
+# About 15,000 tokens (CC-80): enough for a season or a month of shows; a longer page is cut off (and the
+# result says so) rather than costing several times as much.
+MAX_CHARS = 50_000
 
 
 class _Text(HTMLParser):

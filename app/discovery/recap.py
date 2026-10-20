@@ -20,6 +20,7 @@ from ..config import get_settings
 from ..mail import Email
 from ..models import DiscoveredItem, DiscoveryCheck, DiscoverySource
 from ..stats import CHICAGO
+from .budget import budget_state
 from .readers import cost_usd
 
 DAYS = 7
@@ -69,7 +70,8 @@ def build_recap(db, now: datetime | None = None) -> Email:
                                           .where(DiscoveryCheck.checked_at >= since)).one()
 
     new_n, upd_n = waiting.get("new", 0), waiting.get("update", 0)
-    quiet = not (found or updates or built_in or by_rule or unreadable)
+    state, spent, budget = budget_state(db, now)
+    quiet = not (found or updates or built_in or by_rule or unreadable) and state == "ok"
     lines = ["Hi,", "", f"Event discovery for {_day(first)} to {_day(last)}.", ""]
     lines += [f"Waiting for review: {new_n + upd_n} ({new_n} new {'event' if new_n == 1 else 'events'}, "
               f"{upd_n} proposed {'update' if upd_n == 1 else 'updates'})",
@@ -114,7 +116,13 @@ def build_recap(db, now: datetime | None = None) -> Email:
     lines.append("")
 
     lines += [f"Checks this week: {checks}, {int(pages)} pages read, about ${cost_usd(int(tin), int(tout)):.2f} "
-              "(estimated; the Anthropic Console has the exact bill).", "",
+              "(estimated; the Anthropic Console has the exact bill).",
+              f"This month so far: ${spent:.2f} of the ${budget:.2f} monthly budget."]
+    if state == "saving":
+        lines.append("  Over 80% of the budget: event pages wait until next month. Sources are still checked.")
+    elif state == "paused":
+        lines.append("  The budget is used up: only Check now runs until next month. Raise it on Event sources if needed.")
+    lines += ["",
               "Event sources and how often each is checked:", f"{s.site_url.rstrip('/')}/#sources", "",
               "Culture Crew"]
 
@@ -123,5 +131,5 @@ def build_recap(db, now: datetime | None = None) -> Email:
     else:
         bits = [f"{len(found)} new"] + ([f"{len(updates)} {'update' if len(updates) == 1 else 'updates'}"] if updates else []) \
             + ([f"{len(unreadable)} to check by hand"] if unreadable else [])
-        subject = "Event discovery: " + ", ".join(bits)
+        subject = "Event discovery: " + ", ".join(bits + (["budget used up"] if state == "paused" else []))
     return Email(to=s.recap_to, subject=subject, text="\n".join(lines) + "\n")
