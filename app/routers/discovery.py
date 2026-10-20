@@ -82,6 +82,19 @@ def check_now(source_id: int, db: DB, _: AdminUser):
 
 Show = Literal["waiting", "new", "update", "approved", "rejected", "skipped", "listed", "all"]
 SHOWS = {"waiting": ["new", "update"], "all": None}
+Has = Literal["any", "listed", "none"]  # CC-82: has a price (or "Free") / has an opening or closing date
+
+
+def _has(q, has: Has, condition):
+    return q if has == "any" else q.where(condition if has == "listed" else ~condition)
+
+
+def _narrowed(q, source: int | None, price: Has, dates: Has):
+    """The filters besides status: source, price listed or not, dates listed or not."""
+    if source is not None:
+        q = q.where(DiscoveredItem.source_id == source)
+    q = _has(q, price, (DiscoveredItem.cost_text != "") | DiscoveredItem.min_price.is_not(None))
+    return _has(q, dates, DiscoveredItem.begin_date.is_not(None) | DiscoveredItem.end_date.is_not(None))
 
 
 def _item(db: DB, item_id: int) -> DiscoveredItem:
@@ -91,14 +104,12 @@ def _item(db: DB, item_id: int) -> DiscoveredItem:
     return item
 
 
-def _filtered(show: str, source: int | None):
+def _filtered(show: str, source: int | None, price: Has = "any", dates: Has = "any"):
     q = select(DiscoveredItem)
     statuses = SHOWS.get(show, [show])
     if statuses:
         q = q.where(DiscoveredItem.status.in_(statuses))
-    if source is not None:
-        q = q.where(DiscoveredItem.source_id == source)
-    return q
+    return _narrowed(q, source, price, dates)
 
 
 def _item_out(db: DB, item: DiscoveredItem, dups: dict | None = None) -> DiscoveredItemOut:
@@ -123,17 +134,16 @@ def _item_out(db: DB, item: DiscoveredItem, dups: dict | None = None) -> Discove
 
 
 @router.get("/items", response_model=DiscoveredPage)
-def items(db: DB, _: AdminUser, show: Show = "waiting", source: int | None = None,
+def items(db: DB, _: AdminUser, show: Show = "waiting", source: int | None = None, price: Has = "any", dates: Has = "any",
           limit: Annotated[int, Query(ge=1, le=500)] = 100, offset: Annotated[int, Query(ge=0)] = 0):
     """Found events for review, newest first: new events and proposed updates ("waiting"), or one
-    status. Also the count per status and the sources that couldn't be read, for a manual look."""
-    q = _filtered(show, source)
+    status; optionally only those with (or without) a price, or dates. Also the count per status
+    under the same filters, and the sources that couldn't be read, for a manual look."""
+    q = _filtered(show, source, price, dates)
     total = db.scalar(select(func.count()).select_from(q.subquery()))
     rows = db.scalars(q.order_by(DiscoveredItem.first_seen_at.desc(), DiscoveredItem.id.desc()).limit(limit).offset(offset)).all()
     dups = possible_duplicates(db, rows)
-    counted = select(DiscoveredItem.status, func.count()).group_by(DiscoveredItem.status)
-    if source is not None:
-        counted = counted.where(DiscoveredItem.source_id == source)
+    counted = _narrowed(select(DiscoveredItem.status, func.count()).group_by(DiscoveredItem.status), source, price, dates)
     counts = dict(db.execute(counted).all())
     bad = db.scalars(select(DiscoverySource).where(DiscoverySource.active, DiscoverySource.last_status.in_(["blocked", "error"]))
                      .order_by(func.lower(DiscoverySource.name))).all()
@@ -143,9 +153,9 @@ def items(db: DB, _: AdminUser, show: Show = "waiting", source: int | None = Non
 
 
 @router.get("/items.csv")
-def items_csv(db: DB, _: AdminUser, show: Show = "waiting", source: int | None = None):
+def items_csv(db: DB, _: AdminUser, show: Show = "waiting", source: int | None = None, price: Has = "any", dates: Has = "any"):
     """The same list as a spreadsheet."""
-    rows = db.scalars(_filtered(show, source).order_by(DiscoveredItem.first_seen_at.desc(), DiscoveredItem.id.desc())).all()
+    rows = db.scalars(_filtered(show, source, price, dates).order_by(DiscoveredItem.first_seen_at.desc(), DiscoveredItem.id.desc())).all()
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(["Title", "Venue", "Neighborhood", "Opens", "Closes", "Open run", "Price", "Link", "Source", "Found", "Status"])

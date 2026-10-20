@@ -1,4 +1,6 @@
 """CC-71: reviewing found events: approve, reject (and skip similar), accept or dismiss updates, CSV."""
+import csv
+import io
 from datetime import date
 
 from sqlalchemy import select
@@ -126,3 +128,29 @@ def test_csv_download(client, admin_token, db):
     assert lines[0] == "Title,Venue,Neighborhood,Opens,Closes,Open run,Price,Link,Source,Found,Status"
     assert lines[1].startswith('"Hamlet, the ""Musical""",Goodman Theatre,Loop,2027-01-10,,,$25,https://goodman.example/hamlet,Goodman,')
     assert lines[1].endswith(",new") and len(lines) == 2
+
+
+def test_filter_by_price_and_dates(client, admin_token, db):
+    """CC-82: priced or not, dated or not; counts, paging and the CSV follow the filters."""
+    s = make_source(db)
+    record(db, s, found("Priced and dated", cost_text="$30", min_price=30, begin_date="2027-01-10"), "")
+    record(db, s, found("Free, no dates", cost_text="Free", min_price=0), "")
+    record(db, s, found("Dated only", end_date="2027-03-01"), "")
+    record(db, s, found("Neither"), "")
+    record(db, s, found("Skipped but priced", kind="class", cost_text="$10"), "a class or workshop")
+    db.commit()
+    h = auth(admin_token)
+
+    def titles(**params):
+        r = client.get("/admin/discovery/items", params=params, headers=h).json()
+        return sorted(i["title"] for i in r["items"]), r["total"], r["counts"]
+
+    assert titles(price="listed")[:2] == (["Free, no dates", "Priced and dated"], 2)
+    assert titles(price="none")[0] == ["Dated only", "Neither"]
+    assert titles(dates="listed")[0] == ["Dated only", "Priced and dated"]
+    assert titles(dates="none", price="none")[0] == ["Neither"]
+    assert titles(price="listed")[2] == {"new": 2, "skipped": 1}  # counts per status under the same filters
+    assert titles(price="listed", limit=1)[1] == 2
+    assert client.get("/admin/discovery/items", params={"price": "maybe"}, headers=h).status_code == 422
+    rows = list(csv.reader(io.StringIO(client.get("/admin/discovery/items.csv", params={"dates": "none"}, headers=h).text)))
+    assert sorted(r[0] for r in rows[1:]) == ["Free, no dates", "Neither"]
