@@ -74,3 +74,40 @@ def test_admins_only_and_totals_only(client, user_token, admin_token):
     assert "@" not in r.text  # no emails, no names: totals only
     far = (TODAY - timedelta(days=30)).isoformat()  # an implausible "today" is ignored
     assert client.get("/admin/stats", params={"today": far}, headers=auth(admin_token)).json()["today"] == TODAY.isoformat()
+
+
+def test_event_interest_ranking(client, db, admin_token, make_event):
+    """CC-69: events ranked by members' interest + commitments; admins left out; totals only."""
+    from app.models import EventStatus
+    hamlet, bug, quiet, closed = make_event("Hamlet"), make_event("Bug"), make_event("Quiet"), \
+        make_event("Closed", begin=TODAY - timedelta(days=20), end=TODAY - timedelta(days=2))
+    hidden = make_event("Hidden", status=EventStatus.withdrawn)
+    a, b, c = (member(db, f"{n}@example.com", TODAY - timedelta(days=40)) for n in "abc")
+    boss = member(db, "boss@example.com", TODAY - timedelta(days=40), role=Role.admin)
+    old = at(TODAY - timedelta(days=45))
+    db.add_all([
+        Plan(user_id=a.id, event_id=hamlet.id, status=PlanStatus.interested, created_at=at(TODAY)),
+        Plan(user_id=b.id, event_id=hamlet.id, status=PlanStatus.going, going_on=TODAY, created_at=at(TODAY)),
+        Plan(user_id=c.id, event_id=bug.id, status=PlanStatus.going, going_on=TODAY, created_at=at(TODAY)),
+        Plan(user_id=a.id, event_id=bug.id, status=PlanStatus.interested, created_at=old),  # outside 30 days
+        Plan(user_id=boss.id, event_id=quiet.id, status=PlanStatus.going, going_on=TODAY, created_at=at(TODAY)),  # admin
+        Plan(user_id=a.id, event_id=closed.id, status=PlanStatus.interested, created_at=at(TODAY)),
+        Plan(user_id=b.id, event_id=hidden.id, status=PlanStatus.interested, created_at=at(TODAY)),
+        Attended(user_id=c.id, event_id=hamlet.id, created_at=at(TODAY)),
+    ])
+    db.commit()
+    h = auth(admin_token)
+
+    def ranked(**params):
+        r = client.get("/admin/stats/events", params=params, headers=h)
+        assert r.status_code == 200, r.text
+        return [(x["event"]["title"], x["interested"], x["going"], x["attended"]) for x in r.json()]
+
+    assert ranked() == [("Hamlet", 1, 1, 1), ("Bug", 0, 1, 0)]  # last 30 days, current events, members only
+    assert ranked(range="all") == [("Hamlet", 1, 1, 1), ("Bug", 1, 1, 0)]  # a tie: more committed, then more "I've been"
+    assert ("Closed", 1, 0, 0) in ranked(include_closed="true")
+    assert all(t != "Hidden" for t, *_ in ranked(range="all", include_closed="true"))  # withdrawn events never show
+    assert ranked(limit=1) == [("Hamlet", 1, 1, 1)]
+    r = client.get("/admin/stats/events", headers=h)
+    assert "@example.com" not in r.text  # never who
+    assert client.get("/admin/stats/events", headers=auth(register(client, email="z@example.com"))).status_code == 403

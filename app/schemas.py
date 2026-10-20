@@ -305,6 +305,14 @@ class StatsRetention(BaseModel):
     retained: int  # of those, how many used the site again 4 or more weeks after joining
 
 
+class EventInterestOut(BaseModel):
+    """CC-69: one event's counts on the admin Stats page."""
+    event: EventOut
+    interested: int
+    going: int
+    attended: int
+
+
 class StatsOut(BaseModel):
     today: date_
     weeks: list[StatsWeek]  # oldest first; the last is the current week so far

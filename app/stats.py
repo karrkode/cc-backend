@@ -6,10 +6,11 @@ members. Only totals leave this module; never who.
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 
 from .models import ActiveDay, Attended, Event, Plan, PlanStatus, Role, User
+from .visibility import live_condition
 
 CHICAGO = ZoneInfo("America/Chicago")
 RETURN_AFTER = timedelta(days=28)  # "still active 4 weeks after joining"
@@ -100,3 +101,32 @@ def weekly_stats(db, today: date, weeks: int = 12) -> dict:
         "members": len(members), "confirmed_members": sum(u.email_verified_at is not None for u in members.values()),
         "active_since": first_seen, "retention": {"eligible": eligible, "retained": retained},
     }
+
+
+def event_interest(db, today: date, since: date | None, include_closed: bool, limit: int) -> list[dict]:
+    """CC-69: live events ranked by members' interest and commitments, with "I've been" counts.
+    Counts plans and marks made on or after `since` (Chicago time; None = all time), by members only
+    (admins are left out). Current plans are counted: a plan changed from interested to going counts
+    as going. Totals only, never who."""
+    members = set(db.scalars(select(User.id).where(User.role == Role.user)))
+
+    def recent(ts) -> bool:
+        return since is None or chicago_day(ts) >= since
+
+    counts: dict[int, dict] = {}
+    for user_id, event_id, status, created in db.execute(select(Plan.user_id, Plan.event_id, Plan.status, Plan.created_at)):
+        if user_id in members and recent(created):
+            c = counts.setdefault(event_id, {"interested": 0, "going": 0, "attended": 0})
+            c["going" if status == PlanStatus.going else "interested"] += 1
+    for user_id, event_id, created in db.execute(select(Attended.user_id, Attended.event_id, Attended.created_at)):
+        if user_id in members and recent(created):
+            counts.setdefault(event_id, {"interested": 0, "going": 0, "attended": 0})["attended"] += 1
+    if not counts:
+        return []
+    conds = [live_condition(), Event.id.in_(counts)]
+    if not include_closed:
+        conds.append(or_(Event.end_date.is_(None), Event.end_date >= today))
+    events = db.scalars(select(Event).where(*conds)).all()
+    rows = [{"event": e, **counts[e.id]} for e in events]
+    rows.sort(key=lambda r: (-(r["interested"] + r["going"]), -r["going"], -r["attended"], r["event"].title.lower()))
+    return rows[:limit]
