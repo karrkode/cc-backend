@@ -327,6 +327,9 @@ class DiscoverySource(Base):
     last_status: Mapped[str] = mapped_column(String(20), default="")  # ok | unchanged | blocked | error
     last_error: Mapped[str] = mapped_column(Text, default="")
     venue_hours: Mapped[dict] = mapped_column(JSON, default=dict)  # what the venue's site says, for CC-78
+    # CC-81: "Check by hand only": a site that can't be read isn't tried automatically any more, but stays on
+    # the recap's "Check these by hand" list (unlike a source that's turned off)
+    manual: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     # CC-80: an admin pressed Check now; such checks still run when the monthly budget is used up
     check_requested: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     venue: Mapped["Venue | None"] = relationship(lazy="joined")

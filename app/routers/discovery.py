@@ -73,6 +73,10 @@ def update_source(source_id: int, body: DiscoverySourcePatch, db: DB, _: AdminUs
             source.next_check_on = source.last_checked_at.date() + timedelta(days=source.every_days)
     if changes.get("active") is not None:
         source.active = changes["active"]
+    if changes.get("manual") is not None:  # back to automatic: checked at the next hourly run
+        source.manual = changes["manual"]
+        if not source.manual:
+            source.next_check_on = None
     if changes.get("pages"):
         source.pages, source.page_state, source.next_check_on = changes["pages"], {}, None  # new pages: read them soon
     db.commit()
@@ -155,7 +159,8 @@ def items(db: DB, _: AdminUser, show: Show = "waiting", source: int | None = Non
     dups = possible_duplicates(db, rows)
     counted = _narrowed(select(DiscoveredItem.status, func.count()).group_by(DiscoveredItem.status), source, price, dates)
     counts = dict(db.execute(counted).all())
-    bad = db.scalars(select(DiscoverySource).where(DiscoverySource.active, DiscoverySource.last_status.in_(["blocked", "error"]))
+    bad = db.scalars(select(DiscoverySource).where(DiscoverySource.active, ~DiscoverySource.manual,
+                                                   DiscoverySource.last_status.in_(["blocked", "error"]))
                      .order_by(func.lower(DiscoverySource.name))).all()
     return DiscoveredPage(items=[_item_out(db, i, dups) for i in rows], total=total, counts=counts,
                           unreadable=[UnreadableSource(id=s.id, name=s.name, status=s.last_status, reason=s.last_error,

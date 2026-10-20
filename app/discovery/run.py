@@ -57,7 +57,9 @@ def due(db, today: date, only: int | None = None, force: bool = False) -> list[D
     if only is not None:
         q = q.where(DiscoverySource.id == only)
     sources = db.scalars(q).all()
-    return [s for s in sources if force or (s.active and (s.next_check_on is None or s.next_check_on <= today))]
+    # a source checked by hand only (CC-81) runs when an admin asks (Check now, or --now), never on its own
+    return [s for s in sources if force or s.check_requested or
+            (s.active and not s.manual and (s.next_check_on is None or s.next_check_on <= today))]
 
 
 def _store(db, source: DiscoverySource, events, out: Outcome) -> None:
