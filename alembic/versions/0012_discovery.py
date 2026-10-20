@@ -29,7 +29,7 @@ SOURCES = [
      "Goodman Theatre", "Loop"),  # the season page's address changes yearly; the home page links the next one
     ("Chicago Symphony Orchestra", "music", "claude", ["https://chicagosymphony.org/concerts-tickets/on-stage/"], 14, "Symphony Center", "Loop"),
     ("Lyric Opera of Chicago", "opera", "claude", ["https://www.lyricopera.org/shows/"], 30, "Lyric Opera House", "Loop"),
-    ("First Floor Theater", "theater", "claude", ["https://www.firstfloortheater.com/"], 30, "First Floor Theater", ""),
+    ("First Floor Theater", "theater", "claude", ["https://www.firstfloortheater.com/whats-on-stage"], 30, "First Floor Theater", ""),
     ("Field Museum", "museum", "claude", ["https://www.fieldmuseum.org/exhibitions", "https://www.fieldmuseum.org/events"], 30, "Field Museum", "South Loop"),
     ("Griffin Museum of Science and Industry", "museum", "claude", ["https://www.griffinmsi.org/exhibits", "https://www.griffinmsi.org/events"], 30,
      "Griffin Museum of Science and Industry", "Hyde Park"),

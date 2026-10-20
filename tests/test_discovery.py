@@ -4,7 +4,7 @@ from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.discovery import fetch as web
 from app.discovery import run as runner
@@ -227,3 +227,28 @@ def test_matches_the_same_venue_entered_twice(db, pages, make_event):
     runner.run(db, FakeClaude([SEASON[0].model_copy(update={"title": "Hamlet!"})]), TODAY)
     item = db.scalar(select(DiscoveredItem))
     assert item.status == "listed" and item.event_id == listed.id != other.id
+
+
+def test_same_event_with_and_without_a_link_is_one_item(db):
+    from app.discovery.store import record
+    s = make_source(db)
+    assert record(db, s, FoundEvent(title="Anne Frank: The Exhibition", kind="exhibition"), "") == "new"
+    assert record(db, s, FoundEvent(title="Anne Frank The Exhibition", url="https://goodman.example/anne-frank",
+                                    kind="exhibition"), "") == "seen"
+    assert record(db, s, FoundEvent(title="ANNE FRANK the exhibition", kind="exhibition"), "") == "seen"
+    items = db.scalars(select(DiscoveredItem)).all()
+    assert [(i.key, i.url) for i in items] == [("https://goodman.example/anne-frank", "https://goodman.example/anne-frank")]
+    # two seasons of the same show, each with its own page, stay two items
+    record(db, s, FoundEvent(title="The Magic Parlour", url="https://goodman.example/parlour-25", kind="production"), "")
+    record(db, s, FoundEvent(title="The Magic Parlour", url="https://goodman.example/parlour-26", kind="production"), "")
+    assert db.scalar(select(func.count()).select_from(DiscoveredItem)) == 3
+
+
+def test_a_closer_look_can_leave_out_a_new_item(db):
+    from app.discovery.store import record
+    s = make_source(db)
+    record(db, s, FoundEvent(title="Farmers Market", url="https://goodman.example/market", kind="program"), "")
+    assert record(db, s, FoundEvent(title="Farmers Market", url="https://goodman.example/market", kind="recurring"),
+                  "a recurring generic offering") == "skipped"
+    item = db.scalar(select(DiscoveredItem))
+    assert (item.status, item.skip_reason) == ("skipped", "a recurring generic offering")

@@ -78,12 +78,30 @@ def changes_against(event: Event, f: dict) -> dict:
     return out
 
 
+def _same_title(db, source: DiscoverySource, found: FoundEvent, key: str):
+    """The same event found once with a link and once without (a list page vs. a calendar): one item.
+    A linked item takes over an unlinked one's title key; two different links stay two items."""
+    title = norm_title(found.title)
+    for item in db.scalars(select(DiscoveredItem).where(DiscoveredItem.source_id == source.id)):
+        if norm_title(item.title) != title:
+            continue
+        if item.key.startswith("title:"):
+            item.key = key
+            return item
+        if key.startswith("title:"):
+            found.url = item.url  # keep the link we already have
+            return item
+    return None
+
+
 def record(db, source: DiscoverySource, found: FoundEvent, skip: str) -> str:
     """Store one found event. Returns what it was: new | update | skipped | seen."""
     now = datetime.now(UTC)
     f = fields_of(found)
     key = key_for(found)
-    item = db.scalar(select(DiscoveredItem).where(DiscoveredItem.source_id == source.id, DiscoveredItem.key == key))
+    item = db.scalar(select(DiscoveredItem).where(DiscoveredItem.source_id == source.id, DiscoveredItem.key == key)) \
+        or _same_title(db, source, found, key)
+    f = fields_of(found)
     if item is None:
         item = DiscoveredItem(source_id=source.id, key=key, first_seen_at=now, last_seen_at=now, changes={}, detail_checks=[], **f)
         db.add(item)
@@ -113,6 +131,9 @@ def record(db, source: DiscoverySource, found: FoundEvent, skip: str) -> str:
         return "seen"
     for k, v in f.items():
         setattr(item, k, v)
+    if skip and item.status == "new":  # a closer look (the event's own page) showed it's one to leave out
+        item.status, item.skip_reason = "skipped", skip[:200]
+        return "skipped"
     if item.status in ("listed", "update") and item.event_id:
         listed = db.get(Event, item.event_id)
         diff = changes_against(listed, f) if listed else {}
