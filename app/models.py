@@ -81,6 +81,34 @@ class ActiveDay(Base):
     day: Mapped[date] = mapped_column(Date, primary_key=True, index=True)
 
 
+class TrafficCount(Base):
+    """CC-68: daily totals of what visitors do: views of each part of the site, clicks out to an
+    event's ticket page, and outings planned. Counts only."""
+    __tablename__ = "traffic_counts"
+
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    kind: Mapped[str] = mapped_column(String(20), primary_key=True)  # view | ticket | outing
+    name: Mapped[str] = mapped_column(String(20), primary_key=True, default="")  # for views: which part
+    count: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class TrafficVisitor(Base):
+    """CC-68: a visitor, known only by a one-way hash of the random ID their browser keeps (see the
+    site's privacy note), and the first day it was seen, so later days can count them as returning."""
+    __tablename__ = "traffic_visitors"
+
+    visitor: Mapped[str] = mapped_column(String(40), primary_key=True)
+    first_day: Mapped[date] = mapped_column(Date)
+
+
+class TrafficVisitorDay(Base):
+    """CC-68: which (hashed) visitors came on which day: unique and returning visitors per day."""
+    __tablename__ = "traffic_visitor_days"
+
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    visitor: Mapped[str] = mapped_column(String(40), primary_key=True)
+
+
 class RefreshToken(Base):
     __tablename__ = "refresh_tokens"
 
