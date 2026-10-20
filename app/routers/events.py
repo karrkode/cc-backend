@@ -9,6 +9,7 @@ from ..areas import area_of, region_of
 from ..config import get_settings
 from ..deps import DB, AdminUser, CurrentUser, OptionalUser
 from ..models import Area, Event, EventStatus, Plan, PlanStatus, Region, Role, Venue
+from ..crewplans import attach_crew_plans, crew_plans_condition
 from ..picks import attach_picks, pick_condition
 from ..schemas import EventFacets, EventIn, EventOut, EventPage, EventPatch, VenueIn
 from ..visibility import live_condition, utcnow, visible_to
@@ -61,6 +62,7 @@ def list_events(
     include_past: bool = False,
     mine: Annotated[list[PlanStatus] | None, Query(description="Only events you're interested in or going to (needs sign-in)")] = None,
     picks: Annotated[list[PlanStatus] | None, Query(description="Only the owner's picks of these kinds (the dolphins)")] = None,
+    crews: Annotated[str | None, Query(pattern=r"^(all|\d+)$", description='Only events your crews have shared plans for: "all", or a crew id (needs sign-in)')] = None,
     user: OptionalUser = None,
     sort: Sort = "start",
     limit: Annotated[int, Query(ge=1, le=1000)] = 100,
@@ -72,7 +74,8 @@ def list_events(
     (with include_past=true), so a Chicago evening isn't already "tomorrow" on a UTC server.
     sort: start (TBD first, then by opening date), closing, opening, az, price.
     mine (CC-66): only your own plans of those kinds; it never shows anyone else's.
-    picks (CC-66): only the owner's public picks of those kinds (the dolphin filter buttons)."""
+    picks (CC-66): only the owner's public picks of those kinds (the dolphin filter buttons).
+    crews (CC-75): only events other members of your crews (all, or one) have shared plans for."""
     conds = [live_condition()]
     if mine:
         if user is None:
@@ -80,6 +83,10 @@ def list_events(
         conds.append(Event.id.in_(select(Plan.event_id).where(Plan.user_id == user.id, Plan.status.in_(mine))))
     if picks:
         conds.append(pick_condition(picks))
+    if crews:
+        if user is None:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sign in to filter by your crews' plans")
+        conds.append(crew_plans_condition(db, user, None if crews == "all" else int(crews)))
     if q:
         conds.append(or_(Event.title.icontains(q, autoescape=True), Venue.name.icontains(q, autoescape=True),
                          Venue.neighborhood.icontains(q, autoescape=True)))
@@ -106,7 +113,7 @@ def list_events(
     rows = db.scalars(select(Event).join(Venue).where(*conds)
                       .order_by(*_order(sort, date_from or date.today()))
                       .limit(limit).offset(offset)).all()
-    return EventPage(items=attach_picks(db, rows), total=total, limit=limit, offset=offset)
+    return EventPage(items=attach_crew_plans(db, attach_picks(db, rows), user), total=total, limit=limit, offset=offset)
 
 
 @router.get("/facets", response_model=EventFacets)
@@ -138,7 +145,7 @@ def get_event(event_id: int, db: DB, user: OptionalUser):
     event = db.get(Event, event_id)
     if event is None or not visible_to(event, user):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Event not found")
-    return attach_picks(db, [event])[0]
+    return attach_crew_plans(db, attach_picks(db, [event]), user)[0]
 
 
 @router.post("", response_model=EventOut, status_code=status.HTTP_201_CREATED)

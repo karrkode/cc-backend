@@ -161,6 +161,14 @@ class ScheduleOut(BaseModel):
     hours: dict = {}
 
 
+class CrewPlansOut(BaseModel):
+    """CC-75: on an event, who from one of your crews is going or interested (by name; never you)."""
+    crew_id: int
+    crew_name: str
+    going: list[str] = []
+    interested: list[str] = []
+
+
 class EventOut(ORM):
     id: int
     source_id: str | None  # id from the old Google Sheet site, so its share links keep working
@@ -180,6 +188,7 @@ class EventOut(ORM):
     submitted_by_name: str | None
     pick: PickOut | None = None  # CC-66: the owner's public pick (null when there isn't one)
     schedule: ScheduleOut = ScheduleOut()  # CC-79: for the planner; not shown on cards
+    crew_plans: list[CrewPlansOut] = []  # CC-75: signed in only: your crew-mates' shared plans
 
 
 class EventPage(BaseModel):
@@ -444,6 +453,12 @@ class PlanOut(ORM):
     status: PlanStatus
     date: date_ | None = Field(validation_alias="going_on")
     updated_at: datetime
+    crews: list[int] = []  # CC-75: the crews it's shared with
+
+
+class PlanCrewsIn(BaseModel):
+    """CC-75: share your plan with exactly these crews of yours ([] = nobody)."""
+    crews: list[int] = Field(default_factory=list, max_length=50)
 
 
 class AttendedOut(ORM):
@@ -563,6 +578,19 @@ class CrewInviteOut(BaseModel):
     uses: int
 
 
+class CrewPlanPerson(BaseModel):
+    name: str
+    status: PlanStatus
+    date: date_ | None
+    you: bool
+
+
+class CrewBoardItem(BaseModel):
+    """CC-75: one event on a crew's board, with who's interested or going."""
+    event: EventOut
+    people: list[CrewPlanPerson]
+
+
 class CrewOut(BaseModel):
     id: int
     name: str
@@ -571,6 +599,7 @@ class CrewOut(BaseModel):
     members: list[CrewMemberOut]
     invites: list[CrewInviteOut]  # live invite links
     max_members: int
+    plans: list[CrewBoardItem] = []  # CC-75: members' shared plans for upcoming events, soonest first
 
 
 class CrewInviteLink(BaseModel):
