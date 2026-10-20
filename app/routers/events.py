@@ -92,9 +92,13 @@ def list_events(
                          Venue.neighborhood.icontains(q, autoescape=True)))
     if area:
         conds.append(Venue.area.in_(area))
-    if region:
+    # CC-85: several places at once. Sides of town and neighborhoods together mean any of them
+    # ("Northside" and "Pilsen": everything on the Northside, plus Pilsen).
+    if region and hood:
+        conds.append(or_(Venue.region.in_(region), Venue.neighborhood.in_(hood)))
+    elif region:
         conds.append(Venue.region.in_(region))
-    if hood:
+    elif hood:
         conds.append(Venue.neighborhood.in_(hood))
     if category:
         conds.append(Event.category.in_(category))
