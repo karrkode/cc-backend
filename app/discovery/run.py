@@ -15,6 +15,7 @@ from sqlalchemy import select
 
 from ..models import DiscoveredItem, DiscoveryCheck, DiscoverySource
 from . import fetch as web
+from .hours import apply_open_hours, apply_show_times, link_venue
 from .pagetext import page_text, text_hash
 from .readers import read_aic, read_page
 from .rules import apply_rules, norm_title
@@ -110,6 +111,11 @@ def check_source(db, source: DiscoverySource, client, today: date) -> Outcome:
     source.page_state = state
     if out.status == "ok":
         source.unchanged_streak, source.last_changed_at = 0, now
+        link_venue(db, source)
+        if apply_open_hours(source):  # CC-78: the venue's hours, unless an admin set them
+            out.notes.append("venue opening hours filled in")
+        if apply_show_times(db, source, today):
+            out.notes.append("usual show times filled in")
     else:
         source.unchanged_streak += 1
     source.next_check_on = today + timedelta(days=next_gap(source))

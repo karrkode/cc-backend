@@ -157,6 +157,15 @@ class Venue(Base):
     # CC-73: worked out from the neighborhood (app/areas.py region_of); admins can change it. Null when
     # a city neighborhood isn't in the list yet: the Venues page lists those to fix.
     region: Mapped[Region | None] = mapped_column(_enum(Region, "venue_region"), nullable=True)
+    # CC-78: stored for the planner (CC-79), not shown on cards. Weekdays are mon..sun, times HH:MM (24-hour).
+    # open_hours: {"tue": ["10:00", "17:00"], "wed": null (closed)}; a day left out isn't known.
+    # show_times: usual performance start times, {"wed": ["19:30"], "sun": ["14:00", "19:30"]}; no key = no shows.
+    # *_by: who filled it in: "" (nobody), "discovery" (the venue's own site), or "admin". Discovery
+    # never replaces what an admin set.
+    open_hours: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
+    open_hours_by: Mapped[str] = mapped_column(String(20), default="", server_default="")
+    show_times: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
+    show_times_by: Mapped[str] = mapped_column(String(20), default="", server_default="")
 
 
 class Event(Base):
