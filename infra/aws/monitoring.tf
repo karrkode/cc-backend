@@ -4,7 +4,7 @@ resource "aws_cloudwatch_log_group" "api" {
 }
 
 resource "aws_cloudwatch_log_group" "sync" {
-  name              = "/${var.name}/sheet-sync" # output of each nightly sync run
+  name              = "/${var.name}/sheet-sync" # output of the retired nightly sheet sync (CC-72), kept as history
   retention_in_days = 90
 }
 
@@ -79,7 +79,7 @@ resource "aws_cloudwatch_metric_alarm" "db_storage" {
   alarm_actions       = [aws_sns_topic.alerts.arn]
 }
 
-# Any Run Command on the server that fails: the nightly sync, or a deploy.
+# Any Run Command on the server that fails: discovery, the weekly recap, or a deploy.
 resource "aws_cloudwatch_event_rule" "command_failed" {
   name        = "${var.name}-command-failed"
   description = "A sync or deploy command on the API server failed"

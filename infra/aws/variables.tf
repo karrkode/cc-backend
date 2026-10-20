@@ -78,12 +78,6 @@ variable "monthly_budget_usd" {
   default = 15
 }
 
-variable "sync_schedule" {
-  description = "When the Google Sheet sync runs (EventBridge cron, Chicago time)."
-  type        = string
-  default     = "cron(0 3 * * ? *)"
-}
-
 variable "api_image_tag" {
   description = "Which image tag the server runs."
   type        = string

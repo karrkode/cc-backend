@@ -169,7 +169,8 @@ class Event(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    source_id: Mapped[str | None] = mapped_column(String(40), unique=True)  # id from the old sheet, for re-seeding
+    # The event's id on the old Google Sheet (retired in CC-72): old share links use it, and seeding matches on it.
+    source_id: Mapped[str | None] = mapped_column(String(40), unique=True)
     title: Mapped[str] = mapped_column(String(300))
     sort_title: Mapped[str] = mapped_column(String(300), index=True)  # kept in step with title, see below
     venue_id: Mapped[int] = mapped_column(ForeignKey("venues.id", ondelete="RESTRICT"), index=True)
@@ -242,7 +243,8 @@ class Plan(Base):
 
 
 class SheetSync(Base):
-    """One run of the nightly Google Sheet sync, for checking what changed and when."""
+    """One run of the nightly Google Sheet sync. The sync was retired in October 2026 (CC-72); the table
+    keeps its history and nothing writes to it."""
     __tablename__ = "sheet_syncs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)

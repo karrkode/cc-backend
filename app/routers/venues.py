@@ -34,9 +34,6 @@ def create_venue(body: VenueIn, db: DB, _: AdminUser):
 
 
 # ---- managing venues (admins, CC-57) ---------------------------------------------------
-# The sheet sync matches venues by their exact name and neighborhood on the sheet, so a sheet
-# event's venue always follows the sheet: rename or merge a venue the sheet uses and the next
-# sync puts those events back on a venue with the sheet's name. The site says so.
 
 def _venue(db: DB, venue_id: int) -> Venue:
     venue = db.get(Venue, venue_id)
@@ -45,17 +42,16 @@ def _venue(db: DB, venue_id: int) -> Venue:
     return venue
 
 
-def _counts(db: DB, ids: list[int] | None = None) -> dict[int, tuple[int, int]]:
-    stmt = select(Event.venue_id, func.count(Event.id), func.count(Event.source_id)).group_by(Event.venue_id)
+def _counts(db: DB, ids: list[int] | None = None) -> dict[int, int]:
+    stmt = select(Event.venue_id, func.count(Event.id)).group_by(Event.venue_id)
     if ids is not None:
         stmt = stmt.where(Event.venue_id.in_(ids))
-    return {vid: (n, sheet) for vid, n, sheet in db.execute(stmt).all()}
+    return dict(db.execute(stmt).all())
 
 
-def _admin_out(venue: Venue, counts: dict[int, tuple[int, int]]) -> VenueAdminOut:
-    n, sheet = counts.get(venue.id, (0, 0))
+def _admin_out(venue: Venue, counts: dict[int, int]) -> VenueAdminOut:
     return VenueAdminOut(id=venue.id, name=venue.name, neighborhood=venue.neighborhood, area=venue.area,
-                         region=venue.region, events=n, sheet_events=sheet)
+                         region=venue.region, events=counts.get(venue.id, 0))
 
 
 @router.get("/manage", response_model=list[VenueAdminOut])

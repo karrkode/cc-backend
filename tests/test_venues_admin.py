@@ -13,16 +13,16 @@ def venue(db, name, hood="Loop"):
 def manage(client, token, **params):
     r = client.get("/venues/manage", params=params, headers=auth(token))
     assert r.status_code == 200, r.text
-    return {(v["name"], v["neighborhood"]): (v["events"], v["sheet_events"]) for v in r.json()}
+    return {(v["name"], v["neighborhood"]): v["events"] for v in r.json()}
 
 
-def test_list_counts_every_event_and_the_sheet_ones(client, admin_token, make_event, db):
+def test_list_counts_every_event(client, admin_token, make_event, db):
     from app.models import EventStatus
     make_event("Hamlet"); make_event("Pending one", status=EventStatus.pending)
     sheet = make_event("From the sheet", venue_name="Steppenwolf", neighborhood="Lincoln Park")
     sheet.source_id = "abc123"; db.add(Venue(name="Empty Hall", neighborhood="Pilsen")); db.commit()
-    assert manage(client, admin_token) == {("Empty Hall", "Pilsen"): (0, 0), ("Goodman Theatre", "Loop"): (2, 0),
-                                          ("Steppenwolf", "Lincoln Park"): (1, 1)}
+    assert manage(client, admin_token) == {("Empty Hall", "Pilsen"): 0, ("Goodman Theatre", "Loop"): 2,
+                                          ("Steppenwolf", "Lincoln Park"): 1}  # old sheet events count like any other
     assert list(manage(client, admin_token, q="lincoln")) == [("Steppenwolf", "Lincoln Park")]
 
 
@@ -86,18 +86,3 @@ def test_admins_only(client, user_token, make_event, db):
     assert client.post(f"/venues/{v.id}/merge-into/{v.id}", headers=h).status_code == 403
     assert client.delete(f"/venues/{v.id}", headers=h).status_code == 403
     assert client.get("/venues/manage").status_code == 401
-
-
-def test_sheet_sync_puts_sheet_events_back_on_the_sheets_venue(client, admin_token, db):
-    """The behaviour the site's note describes: a renamed sheet venue is re-created by the sync."""
-    from app.sync import apply_rows
-    row = dict(id="abc123", title="Bug", venue="Steppenwolf", hood="Lincoln Park", area="City", begin="2026-01-01",
-               end="2099-01-01", openRun=False, cost="", min=None, type="Theater", url="")
-    apply_rows(db, [row], withdraw_missing=False); db.commit()
-    v = venue(db, "Steppenwolf", "Lincoln Park")
-    assert client.patch(f"/venues/{v.id}", json={"name": "Steppenwolf Theatre"}, headers=auth(admin_token)).status_code == 200
-    db.expire_all()  # the rename happened in the API's session
-    apply_rows(db, [row], withdraw_missing=False); db.commit()
-    db.expire_all()
-    ev = db.scalar(select(Event).where(Event.source_id == "abc123"))
-    assert db.get(Venue, ev.venue_id).name == "Steppenwolf"
