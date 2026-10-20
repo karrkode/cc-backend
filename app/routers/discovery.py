@@ -8,11 +8,12 @@ from fastapi import APIRouter, HTTPException, Query, Response, status
 from sqlalchemy import func, select
 
 from ..deps import DB, AdminUser
+from ..discovery.budget import budget_state, set_monthly_budget
 from ..discovery.readers import cost_usd
 from ..discovery.rules import norm_title
 from ..discovery.store import matching_rule, possible_duplicates, rule_reason, sync_performances, venue_for
 from ..models import DiscoveredItem, DiscoveryCheck, DiscoverySource, Event, SkipRule
-from ..schemas import (DiscoveredItemOut, DiscoveredPage, DiscoveryOverview, DiscoverySourceOut, DiscoverySourcePatch,
+from ..schemas import (BudgetIn, DiscoveredItemOut, DiscoveredPage, DiscoveryOverview, DiscoverySourceOut, DiscoverySourcePatch,
                        EventIn, EventRef, FoundChange, RejectIn, RejectOut, SkipRuleOut, UnreadableSource)
 from .events import new_event
 
@@ -48,8 +49,17 @@ def sources(db: DB, _: AdminUser):
                                   func.coalesce(func.sum(DiscoveryCheck.output_tokens), 0))
                            .where(DiscoveryCheck.checked_at >= since)).one()
     listed = db.scalars(select(DiscoverySource).order_by(func.lower(DiscoverySource.name))).all()
+    state, spent, budget = budget_state(db)
     return DiscoveryOverview(sources=[_out(s, waiting, checks) for s in listed], tokens_in_30d=int(tin), tokens_out_30d=int(tout),
-                             cost_30d_usd=cost_usd(int(tin), int(tout)))
+                             cost_30d_usd=cost_usd(int(tin), int(tout)), spent_month_usd=spent, budget_usd=budget, budget_state=state)
+
+
+@router.put("/budget", response_model=DiscoveryOverview)
+def set_budget(body: BudgetIn, db: DB, admin: AdminUser):
+    """Change the monthly budget for reading pages with Claude (CC-80)."""
+    set_monthly_budget(db, round(body.usd, 2))
+    db.commit()
+    return sources(db, admin)
 
 
 @router.patch("/sources/{source_id}", response_model=DiscoverySourceOut)
@@ -73,7 +83,7 @@ def update_source(source_id: int, body: DiscoverySourcePatch, db: DB, _: AdminUs
 def check_now(source_id: int, db: DB, _: AdminUser):
     """Check this source at the next hourly run (e.g. after a season announcement)."""
     source = _source(db, source_id)
-    source.next_check_on, source.unchanged_streak = None, 0
+    source.next_check_on, source.unchanged_streak, source.check_requested = None, 0, True  # runs even past the budget
     db.commit()
     return _out(source, {}, {})
 

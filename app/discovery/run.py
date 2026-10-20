@@ -5,7 +5,10 @@ Reading as little as possible (agreed with the product owner):
   stretches by half, up to 60 days, and goes back to normal as soon as something changes
 - a page is only sent to the model when it has changed (304 Not Modified, or the same text as last time)
 - for each upcoming event, just its own page is read about 60 and 45 days before it opens, when
-  theaters usually fill in prices and dates
+  theaters usually fill in prices and dates (CC-80: not for events found today, opening within a week,
+  or whose price and showtimes are already known)
+- CC-80: a page's own structured event data (schema.org) is used instead of Claude when it's complete
+- CC-80: a monthly budget (budget.py): from 80% event pages wait; at 100% only Check now runs
 """
 import json
 from dataclasses import dataclass, field
@@ -14,8 +17,11 @@ from datetime import UTC, date, datetime, timedelta
 from sqlalchemy import select
 
 from ..models import DiscoveredItem, DiscoveryCheck, DiscoverySource
+from ..stats import chicago_day
 from . import fetch as web
+from .budget import budget_state
 from .hours import apply_open_hours, apply_show_times, link_venue
+from .jsonld import complete, events_in
 from .pagetext import page_text, text_hash
 from .readers import read_aic, read_page
 from .rules import apply_rules, norm_title
@@ -25,11 +31,13 @@ STRETCH_AFTER = 3
 MAX_GAP_DAYS = 60
 DETAIL_DAYS = (60, 45)
 DETAIL_LIMIT = 10  # event pages per run, at most
+DETAIL_SOON_DAYS = 7  # an event opening within a week isn't read again: there's no time for news to matter
+MIN_LISTED = 3  # a list page's structured data is trusted when it has at least this many complete events
 
 
 @dataclass
 class Outcome:
-    status: str = "unchanged"  # ok | unchanged | blocked | error
+    status: str = "unchanged"  # ok | unchanged | blocked | error | waiting (the budget's used up)
     new: int = 0
     updates: int = 0
     skipped: int = 0
@@ -85,6 +93,13 @@ def check_source(db, source: DiscoverySource, client, today: date) -> Outcome:
                 if digest == prev.get("hash"):
                     state[url] = {**prev, "etag": page.etag, "last_modified": page.last_modified}
                     continue
+                listed = events_in(page.text, page.url, source.kind.value)
+                if sum(complete(e) for e in listed) >= MIN_LISTED:  # the page's own event data: no AI needed
+                    _store(db, source, listed, out)
+                    out.notes.append(f"{url}: read from the page's event data")
+                    state[url] = {"etag": page.etag, "last_modified": page.last_modified, "hash": digest}
+                    out.status = "ok"
+                    continue
                 if client is None:
                     raise web.FetchError("no Anthropic API key is set on the server, so changed pages can't be read")
                 reading, tin, tout = read_page(client, source.name, source.kind.value, page.url, text, today)
@@ -138,13 +153,24 @@ def check_details(db, client, today: date) -> list[tuple[DiscoverySource, Outcom
         mark = next((d for d in DETAIL_DAYS if days <= d and d not in (item.detail_checks or [])), None)
         if mark is None:
             continue
+        found_today = item.first_seen_at and _day(item.first_seen_at) >= today  # its list page was just read
+        if found_today:
+            continue  # the next run looks again
+        if days < DETAIL_SOON_DAYS or (item.cost_text and item.performances):  # too soon, or nothing left to learn
+            item.detail_checks = sorted({*(item.detail_checks or []), *DETAIL_DAYS})
+            continue
         source, out = db.get(DiscoverySource, item.source_id), Outcome(status="ok")
         try:
             page = web.fetch(item.url)
-            text, _ = page_text(page.text, page.url)
-            reading, tin, tout = read_page(client, source.name, source.kind.value, page.url, text, today)
-            out.pages_read, out.tokens_in, out.tokens_out = 1, tin, tout
-            same = [e for e in reading.events if norm_title(e.title) == norm_title(item.title)] or reading.events[:1]
+            data = events_in(page.text, page.url, source.kind.value)
+            same = [e for e in data if norm_title(e.title) == norm_title(item.title)] or (data if len(data) == 1 else [])
+            if same and complete(same[0]):  # the page's own event data: no AI needed
+                out.notes.append("read from the page's event data")
+            else:
+                text, _ = page_text(page.text, page.url)
+                reading, tin, tout = read_page(client, source.name, source.kind.value, page.url, text, today)
+                out.pages_read, out.tokens_in, out.tokens_out = 1, tin, tout
+                same = [e for e in reading.events if norm_title(e.title) == norm_title(item.title)] or reading.events[:1]
             for e in same[:1]:
                 e.url = item.url  # the same item, whatever links the page has
                 _store(db, source, [e], out)
@@ -164,14 +190,31 @@ def log(db, source: DiscoverySource, out: Outcome, what: str = "source") -> None
                           output_tokens=out.tokens_out, note="; ".join(out.notes)[:2000]))
 
 
+def _day(ts: datetime) -> date:
+    return chicago_day(ts if ts.tzinfo else ts.replace(tzinfo=UTC))  # SQLite hands back naive UTC
+
+
 def run(db, client, today: date, only: int | None = None, force: bool = False) -> list[tuple[str, Outcome]]:
+    """Check what's due, within the monthly budget (CC-80). force (the command line's --now) and
+    Check now (source.check_requested) still run when the budget is used up."""
     results = []
     for source in due(db, today, only, force):
+        state, spent, budget = budget_state(db)
+        if state == "paused" and not (force or source.check_requested):
+            results.append((source.name, Outcome(status="waiting", notes=[
+                f"the monthly budget is used up (${spent:.2f} of ${budget:.2f}); it waits for next month, or Check now"])))
+            continue
         out = check_source(db, source, client, today)
+        source.check_requested = False
         log(db, source, out)
         db.commit()
         results.append((source.name, out))
     if only is None:
+        state, spent, budget = budget_state(db)
+        if state != "ok":
+            results.append(("Event pages", Outcome(status="waiting", notes=[
+                f"${spent:.2f} of the ${budget:.2f} monthly budget is spent, so event pages wait for next month"])))
+            return results
         for source, out in check_details(db, client, today):
             log(db, source, out, what="detail")
             db.commit()

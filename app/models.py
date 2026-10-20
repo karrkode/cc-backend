@@ -327,6 +327,8 @@ class DiscoverySource(Base):
     last_status: Mapped[str] = mapped_column(String(20), default="")  # ok | unchanged | blocked | error
     last_error: Mapped[str] = mapped_column(Text, default="")
     venue_hours: Mapped[dict] = mapped_column(JSON, default=dict)  # what the venue's site says, for CC-78
+    # CC-80: an admin pressed Check now; such checks still run when the monthly budget is used up
+    check_requested: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     venue: Mapped["Venue | None"] = relationship(lazy="joined")
 
 
@@ -359,6 +361,14 @@ class DiscoveredItem(Base):
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     source: Mapped[DiscoverySource] = relationship(lazy="joined")
+
+
+class AppSetting(Base):
+    """A site-wide setting an admin can change, by key (CC-80: discovery_budget_usd)."""
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(60), primary_key=True)
+    value: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
 class SkipRule(Base):
