@@ -21,7 +21,7 @@ from sqlalchemy import func, select
 
 from ..config import get_settings
 from ..mail import Email
-from ..models import DiscoveredItem, DiscoveryCheck, DiscoverySource
+from ..models import DiscoveredItem, DiscoveryCheck, DiscoverySource, IssueReport
 from ..stats import CHICAGO
 from .budget import budget_state
 from .readers import cost_usd
@@ -83,10 +83,12 @@ class Week:
     spent: float = 0
     budget: float = 10
     sources: list[tuple[str, str, str]] = field(default_factory=list)  # name, how often, next check
+    issues: list[tuple[str, str, str, str]] = field(default_factory=list)  # CC-84: reported this week: ticket, who, page, what happened
+    issues_open: int = 0  # new or being looked into, all time
 
     @property
     def quiet(self) -> bool:
-        return not (self.found_total or self.updates or self.by_rule or self.built_in or self.unreadable) and self.state == "ok"
+        return not (self.found_total or self.updates or self.by_rule or self.built_in or self.unreadable or self.issues) and self.state == "ok"
 
     def link(self, where: str) -> str:
         return f"{self.site}/#{where}"
@@ -139,6 +141,11 @@ def gather(db, now: datetime) -> Week:
                                           .where(DiscoveryCheck.checked_at >= since)).one()
     w.checks, w.pages, w.week_cost = checks, int(pages), cost_usd(int(tin), int(tout))
     w.state, w.spent, w.budget = budget_state(db, now)
+    for i in db.scalars(select(IssueReport).where(IssueReport.created_at >= since).order_by(IssueReport.created_at)):
+        who = (i.reporter.display_name.strip() if i.reporter else "") or ("A member" if i.reporter else "A deleted account")
+        what = i.what_happened if len(i.what_happened) <= 140 else i.what_happened[:137].rstrip() + "..."
+        w.issues.append((i.key, who, i.page or "-", what))
+    w.issues_open = db.scalar(select(func.count()).select_from(IssueReport).where(IssueReport.status.in_(["new", "looking"]))) or 0
     return w
 
 
@@ -146,7 +153,9 @@ def subject_of(w: Week) -> str:
     if w.quiet:
         return "Event discovery: nothing new this week"
     bits = [f"{w.found_total} new"] + ([f"{len(w.updates)} {'update' if len(w.updates) == 1 else 'updates'}"] if w.updates else []) \
-        + ([f"{len(w.unreadable)} to check by hand"] if w.unreadable else []) + (["budget used up"] if w.state == "paused" else [])
+        + ([f"{len(w.unreadable)} to check by hand"] if w.unreadable else []) \
+        + ([f"{len(w.issues)} {'issue' if len(w.issues) == 1 else 'issues'} reported"] if w.issues else []) \
+        + (["budget used up"] if w.state == "paused" else [])
     return "Event discovery: " + ", ".join(bits)
 
 
@@ -188,6 +197,9 @@ def as_text(w: Week) -> str:
     lines += ["  None. Every source could be read."] if not w.unreadable else []
     if w.by_hand:
         lines += ["", "CHECK THESE BY HAND:"] + [f"  - {name}: {page}" for name, page in w.by_hand]
+    lines += ["", f"ISSUES REPORTED THIS WEEK: {len(w.issues)} ({w.issues_open} open in all)"]
+    lines += [f"  - {key} {who} on {page}: {what}" for key, who, page, what in w.issues] or ["  None."]
+    lines += [f"  Review them: {w.link('issues')}"] if w.issues or w.issues_open else []
     lines += ["", f"CHECKS THIS WEEK: {_n(w.checks, 'check')}, {_n(w.pages, 'page')} read, about ${w.week_cost:.2f}",
               f"This month: ${w.spent:.2f} of the ${w.budget:.0f} budget." + (f" {budget_note(w)}" if budget_note(w) else "")]
     lines += _cols([("Source", "How often", "Next check")] + w.sources)
@@ -290,6 +302,14 @@ def as_html(w: Week) -> str:
         items = "".join(f'<li style="margin:0 0 4px">{_a(page or w.link("sources"), name)}</li>' for name, page in w.by_hand)
         parts.append(f'<p style="margin:12px 0 4px;font-size:14px;font-weight:600">Check these by hand</p>'
                      f'<ul style="margin:0;padding-left:18px;font-size:14px;line-height:1.45">{items}</ul>')
+
+    parts.append(_h("Issues reported this week", f' <span style="font-family:{FONT};font-weight:400;font-size:13px;color:{MUTED}">'
+                    f'&middot; {w.issues_open} open in all</span>'))
+    parts.append(_table(["Ticket", "Reported by", "Page", "What happened"],
+                        [[_a(w.link("issues/" + k), k), escape(a), escape(b), escape(c)] for k, a, b, c in w.issues])
+                 if w.issues else _none("None this week."))
+    if w.issues or w.issues_open:
+        parts.append(f'<p style="margin:8px 0 0;font-size:13px">{_a(w.link("issues"), "Review issues")}</p>')
 
     parts.append(_h("Checks this week"))
     note = budget_note(w)
