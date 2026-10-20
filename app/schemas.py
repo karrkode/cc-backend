@@ -287,6 +287,33 @@ class EventPatch(BaseModel):
         return self
 
 
+# ---- admin stats (CC-67) ---------------------------------------------------
+
+class StatsWeek(BaseModel):
+    start: date_  # the Monday the week starts (Chicago time)
+    registrations: int
+    confirmed: int  # of those registrations, how many have confirmed their email
+    active: int  # members who used the site while signed in that week
+    plans_interested: int
+    plans_going: int
+    attended: int  # "I've been" marks
+    submitted: int  # events members sent in
+
+
+class StatsRetention(BaseModel):
+    eligible: int  # members who joined at least 4 weeks ago (since tracking began)
+    retained: int  # of those, how many used the site again 4 or more weeks after joining
+
+
+class StatsOut(BaseModel):
+    today: date_
+    weeks: list[StatsWeek]  # oldest first; the last is the current week so far
+    members: int  # every member account (admins left out)
+    confirmed_members: int
+    active_since: date_ | None  # the first day activity was recorded
+    retention: StatsRetention
+
+
 # ---- sheet sync log --------------------------------------------------------
 
 class SheetSyncOut(ORM):

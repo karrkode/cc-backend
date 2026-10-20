@@ -72,6 +72,15 @@ class User(Base):
         return self.email_verified_at is not None
 
 
+class ActiveDay(Base):
+    """CC-67: one row for each day (Chicago time) a member used the site while signed in, for the
+    admin Stats page (weekly active members, retention). Written when a session starts or refreshes."""
+    __tablename__ = "user_active_days"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    day: Mapped[date] = mapped_column(Date, primary_key=True, index=True)
+
+
 class RefreshToken(Base):
     __tablename__ = "refresh_tokens"
 
