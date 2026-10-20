@@ -15,7 +15,7 @@ from .fetch import USER_AGENT, TIMEOUT
 
 MODEL = "claude-haiku-5-5"
 Kind = Literal["production", "exhibition", "concert", "comedy_show", "talk", "tour", "program", "class",
-               "rental", "members_only", "recurring", "other"]
+               "rental", "members_only", "recurring", "permanent", "other"]
 
 
 class Performance(BaseModel):
@@ -60,7 +60,8 @@ List each event once:
 - A museum exhibition is one event with its opening and closing dates. One-off talks, tours and
   programs are events too (kind talk, tour or program).
 Mark, rather than leave out, these kinds so they can be filtered: classes and workshops (kind class),
-private rentals (rental), members-only events (members_only), and generic offerings that repeat daily
+private rentals (rental), members-only events (members_only), a museum's permanent galleries and
+long-term displays with no closing date (permanent), and generic offerings that repeat daily
 or weekly without a specific experience, such as family days or daily highlights tours (recurring, and
 recurring true).
 Leave out past events, gift cards, memberships, subscriptions, donation drives and anything that isn't

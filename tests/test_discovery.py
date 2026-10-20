@@ -54,6 +54,17 @@ def test_rules_leave_out_classes_rentals_members_and_repeats():
     assert dict((e.title, w) for e, w in apply_rules(found[4:5], "theater"))["Highlights tour"] == ""  # only museums' programs
 
 
+def test_rules_leave_out_permanent_galleries():
+    found = [FoundEvent(title="U-505 Submarine", kind="exhibition", open_run=True),
+             FoundEvent(title="Coal Mine", kind="permanent"),
+             FoundEvent(title="Pokémon Fossil Museum", kind="exhibition", end_date="2027-04-11"),
+             FoundEvent(title="New Wing", kind="exhibition", open_run=True, begin_date="2026-12-01")]
+    reasons = {e.title: why for e, why in apply_rules(found, "museum")}
+    assert reasons == {"U-505 Submarine": "a permanent gallery", "Coal Mine": "a permanent gallery",
+                       "Pokémon Fossil Museum": "", "New Wing": ""}
+    assert {w for _, w in apply_rules(found[:1], "theater")} == {""}  # an open-run show isn't a gallery
+
+
 # ---- checking sources ---------------------------------------------------------------------
 
 class FakeClaude:
