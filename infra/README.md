@@ -117,6 +117,8 @@ Then open https://chiculturecrew.com.
 | Run the sync now | `aws ssm send-command ... commands=["/usr/local/bin/culture-crew-sync"]` |
 | Look at the database | run the `db_tunnel_command` output, then connect a GUI to `localhost:5433` (user `culture_admin`, password from Secrets Manager) |
 | Make an admin | on the server: `docker exec api python -m scripts.make_admin you@example.com` |
+| Run event discovery now | on the server: `docker exec api python -m scripts.discover --source <id> --now` (without the API key it can't read changed pages) |
+| Set the Anthropic API key for discovery | `aws ssm put-parameter --name /culture-crew/anthropic-api-key --type SecureString --overwrite --value '<key>'` |
 | Plan dolphins on an account | on the server: `docker exec api python -m scripts.dolphins you@example.com` (`--off` to remove) |
 
 ## How the domain moved (October 2026)

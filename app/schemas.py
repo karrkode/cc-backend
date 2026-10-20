@@ -290,6 +290,49 @@ class EventPatch(BaseModel):
         return self
 
 
+# ---- event discovery (CC-70) -------------------------------------------------
+
+class DiscoverySourceOut(ORM):
+    id: int
+    name: str
+    kind: str
+    pages: list[str]
+    reader: str  # claude | aic_api
+    venue_id: int | None
+    venue_name: str
+    every_days: int
+    active: bool
+    next_check_on: date_ | None  # due on or after this day (null: at the next hourly run)
+    unchanged_streak: int
+    last_checked_at: datetime | None
+    last_changed_at: datetime | None
+    last_status: str  # ok | unchanged | blocked | error ("" = never checked)
+    last_error: str
+    waiting: int = 0  # found items waiting for review
+    checks_30d: int = 0
+    pages_read_30d: int = 0
+
+
+class DiscoverySourcePatch(BaseModel):
+    every_days: int | None = Field(default=None, ge=1, le=120)
+    active: bool | None = None
+    pages: list[str] | None = Field(default=None, min_length=1, max_length=5)
+
+    @field_validator("pages")
+    @classmethod
+    def _http_only(cls, v):
+        if v is not None and any(not p.startswith(("https://", "http://")) or len(p) > 500 for p in v):
+            raise ValueError("Each page must be a web address starting with https://")
+        return v
+
+
+class DiscoveryOverview(BaseModel):
+    sources: list[DiscoverySourceOut]
+    tokens_in_30d: int
+    tokens_out_30d: int
+    cost_30d_usd: float  # at Claude Haiku 5.5's list price; the Anthropic Console has the exact bill
+
+
 # ---- admin stats (CC-67) ---------------------------------------------------
 
 class StatsWeek(BaseModel):

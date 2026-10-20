@@ -218,6 +218,8 @@ scripts/seed.py      import seed/events.json
 seed/events.json     the events from the old Google Sheet site
 scripts/make_admin.py
 scripts/dolphins.py  turn the plan dolphins on for an account (CC-61)
+scripts/discover.py  check event sources that are due (CC-70; hourly on the server)
+app/discovery/       event discovery: polite fetching, page text, readers (Art Institute API, Claude Haiku 5.5), rules, holding list
 scripts/dev_users.py the local test accounts (ENV=local only)
 tests/
 ```

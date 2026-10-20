@@ -36,13 +36,15 @@ resource "aws_iam_role_policy" "api" {
         Resource = aws_db_instance.main.master_user_secret[0].secret_arn
       },
       { Sid = "ReadJwtKey", Effect = "Allow", Action = "ssm:GetParameter", Resource = aws_ssm_parameter.jwt_secret.arn },
+      # Event discovery (CC-70): the hourly run reads the Anthropic API key and hands it to the job.
+      { Sid = "ReadAnthropicKey", Effect = "Allow", Action = "ssm:GetParameter", Resource = aws_ssm_parameter.anthropic_api_key.arn },
       # Account emails: the host assumes the send-only role and hands its short-lived
       # credentials to the API container (server/mail-creds.sh; the role is in ses.tf).
       { Sid = "AssumeEmailSender", Effect = "Allow", Action = "sts:AssumeRole", Resource = aws_iam_role.email_sender.arn },
       {
         Sid      = "WriteLogs", Effect = "Allow"
         Action   = ["logs:CreateLogStream", "logs:PutLogEvents", "logs:DescribeLogStreams"]
-        Resource = ["${aws_cloudwatch_log_group.api.arn}:*", "${aws_cloudwatch_log_group.sync.arn}:*"]
+        Resource = ["${aws_cloudwatch_log_group.api.arn}:*", "${aws_cloudwatch_log_group.sync.arn}:*", "${aws_cloudwatch_log_group.discovery.arn}:*"]
       },
     ]
   })
