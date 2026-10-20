@@ -33,6 +33,16 @@ class Area(str, enum.Enum):
     out_of_town = "out_of_town"
 
 
+class Region(str, enum.Enum):
+    """CC-73: the side of town a venue is in, for Plan an outing and the catalog."""
+    downtown = "downtown"  # Downtown/Loop
+    north = "north"
+    west = "west"
+    south = "south"
+    suburbs = "suburbs"
+    out_of_town = "out_of_town"
+
+
 class EventStatus(str, enum.Enum):
     pending = "pending"
     approved = "approved"
@@ -144,6 +154,9 @@ class Venue(Base):
     name: Mapped[str] = mapped_column(String(200))
     neighborhood: Mapped[str] = mapped_column(String(120), default="")
     area: Mapped[Area] = mapped_column(_enum(Area, "venue_area"), default=Area.city)
+    # CC-73: worked out from the neighborhood (app/areas.py region_of); admins can change it. Null when
+    # a city neighborhood isn't in the list yet: the Venues page lists those to fix.
+    region: Mapped[Region | None] = mapped_column(_enum(Region, "venue_region"), nullable=True)
 
 
 class Event(Base):

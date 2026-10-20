@@ -5,10 +5,10 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import case, func, or_, select
 
-from ..areas import area_of
+from ..areas import area_of, region_of
 from ..config import get_settings
 from ..deps import DB, AdminUser, CurrentUser, OptionalUser
-from ..models import Area, Event, EventStatus, Plan, PlanStatus, Role, Venue
+from ..models import Area, Event, EventStatus, Plan, PlanStatus, Region, Role, Venue
 from ..picks import attach_picks, pick_condition
 from ..schemas import EventFacets, EventIn, EventOut, EventPage, EventPatch, VenueIn
 from ..visibility import live_condition, utcnow, visible_to
@@ -21,7 +21,8 @@ def get_or_create_venue(db: DB, v: VenueIn) -> Venue:
     venue = db.scalar(select(Venue).where(func.lower(Venue.name) == name.lower(),
                                           func.lower(Venue.neighborhood) == hood.lower()))
     if venue is None:
-        venue = Venue(name=name, neighborhood=hood, area=v.area or area_of(hood))
+        area = v.area or area_of(hood)
+        venue = Venue(name=name, neighborhood=hood, area=area, region=region_of(hood, area))
         db.add(venue)
         db.flush()
     return venue
@@ -50,6 +51,7 @@ def list_events(
     db: DB,
     q: Annotated[str | None, Query(max_length=100, description="Search titles, venues and neighborhoods")] = None,
     area: Annotated[list[Area] | None, Query()] = None,
+    region: Annotated[list[Region] | None, Query(description="Only these sides of town (CC-73)")] = None,
     hood: Annotated[list[str] | None, Query(description="Only these neighborhoods (exact names)")] = None,
     category: Annotated[list[str] | None, Query()] = None,
     date_from: Annotated[date | None, Query(alias="from", description="Running on or after this date")] = None,
@@ -83,6 +85,8 @@ def list_events(
                          Venue.neighborhood.icontains(q, autoescape=True)))
     if area:
         conds.append(Venue.area.in_(area))
+    if region:
+        conds.append(Venue.region.in_(region))
     if hood:
         conds.append(Venue.neighborhood.in_(hood))
     if category:
@@ -113,10 +117,10 @@ def facets(db: DB, today: Annotated[date | None, Query(description="The caller's
     live = live_condition()
     categories = db.scalars(select(Event.category).where(live).group_by(Event.category)
                             .order_by(func.count(Event.id).desc(), Event.category)).all()
-    hoods = db.execute(select(Venue.neighborhood, Venue.area).join(Event).where(live, Venue.neighborhood != "")
-                       .group_by(Venue.neighborhood, Venue.area).order_by(Venue.neighborhood)).all()
+    hoods = db.execute(select(Venue.neighborhood, Venue.area, Venue.region).join(Event).where(live, Venue.neighborhood != "")
+                       .group_by(Venue.neighborhood, Venue.area, Venue.region).order_by(Venue.neighborhood)).all()
     current = db.scalar(select(func.count(Event.id)).where(live, or_(Event.end_date.is_(None), Event.end_date >= today)))
-    return EventFacets(categories=categories, neighborhoods=[{"name": n, "area": a} for n, a in hoods],
+    return EventFacets(categories=categories, neighborhoods=[{"name": n, "area": a, "region": r} for n, a, r in hoods],
                        current=current, total=db.scalar(select(func.count(Event.id)).where(live)))
 
 
