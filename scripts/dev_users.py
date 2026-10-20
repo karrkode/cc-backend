@@ -19,7 +19,9 @@ member's view can be tried; the test user is in none, so joining from an invite 
 | The Visual Gaze  | Priya Patel | Local Admin, Lena Fischer, Rosa Alvarez          |
 | Laughin Times    | Sam Okafor  | Local Admin, Jordan Reyes, Marcus Bell, Rosa Alvarez |
 
-The members are maya@, jordan@, priya@, sam@, lena@, marcus@ and rosa@example.com. Each crew is made if
+The members are maya@, jordan@, priya@, sam@, lena@, marcus@ and rosa@example.com. Sam has also invited
+the test user to Laughin Times by email (CC-59), so the invite notice on sign-in can be tried; it's put
+back until the test user joins. Each crew is made if
 it's missing, and anyone listed who isn't in it is put back; members you add yourself are left alone.
 
 The values are set for the local stack in docker-compose.yml (and listed in the README). Each
@@ -34,7 +36,7 @@ from sqlalchemy import select
 
 from app.config import get_settings
 from app.db import SessionLocal
-from app.models import Crew, CrewMember, Role, User
+from app.models import Crew, CrewEmailInvite, CrewMember, Role, User
 from app.security import hash_password, verify_password
 
 
@@ -71,6 +73,26 @@ CREW_MEMBERS = {"maya": "Maya Chen", "jordan": "Jordan Reyes", "priya": "Priya P
 CREWS = [("Thursday Theater", "Plays on Thursday nights, then a drink after", "admin", ["maya", "jordan", "priya", "marcus"]),
          ("The Visual Gaze", "Gallery openings and museum late nights", "priya", ["admin", "lena", "rosa"]),
          ("Laughin Times", "Improv, sketch and stand-up", "sam", ["admin", "jordan", "marcus", "rosa"])]
+
+
+def ensure_dev_invite(db, user_email: str) -> str:
+    """CC-59: Sam has invited the test user to Laughin Times by email, so the sign-in notice can be tried.
+    Put back unless the test user has joined (then it's done its job until the next database wipe)."""
+    from datetime import timedelta
+    crew = db.scalar(select(Crew).where(Crew.name == "Laughin Times"))
+    user = db.scalar(select(User).where(User.email == user_email))
+    sam = db.scalar(select(User).where(User.email == "sam@example.com"))
+    if crew is None or sam is None or (user and any(m.user_id == user.id for m in crew.members)):
+        return "Invite for the test user: not needed."
+    invite = db.scalar(select(CrewEmailInvite).where(CrewEmailInvite.crew_id == crew.id, CrewEmailInvite.email == user_email))
+    if invite is not None and (invite.expires_at if invite.expires_at.tzinfo else invite.expires_at.replace(tzinfo=UTC)) > datetime.now(UTC):
+        return "Invite for the test user: unchanged."
+    if invite is not None:
+        db.delete(invite)
+        db.flush()
+    db.add(CrewEmailInvite(crew_id=crew.id, email=user_email, invited_by=sam.id, expires_at=datetime.now(UTC) + timedelta(days=14)))
+    db.commit()
+    return "Invite for the test user: created."
 
 
 def ensure_dev_crews(db, admin_email: str, password: str) -> list[str]:
@@ -124,6 +146,8 @@ def main():
         if s.dev_admin_email and s.dev_user_password:  # the crews need the admin, and a password for their members
             for line in ensure_dev_crews(db, s.dev_admin_email.strip().lower(), s.dev_user_password):
                 print(line)
+            if s.dev_user_email:
+                print(ensure_dev_invite(db, s.dev_user_email.strip().lower()))
 
 
 if __name__ == "__main__":

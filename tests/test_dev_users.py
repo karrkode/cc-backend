@@ -42,7 +42,7 @@ def test_running_again_changes_nothing(monkeypatch, Session, db, capsys):
     run(monkeypatch, Session, local(), capsys)
     before = {u.email: u.password_hash for u in db.scalars(select(User))}
     out = run(monkeypatch, Session, local(), capsys)
-    assert out.count(": unchanged.") == 5  # the two accounts and the three crews
+    assert out.count(": unchanged.") == 6  # the two accounts, the three crews and the test user's invite
     db.expire_all()
     assert {u.email: u.password_hash for u in db.scalars(select(User))} == before
 
@@ -108,3 +108,14 @@ def test_ready_made_crews(client, monkeypatch, Session, db, capsys):
     assert "Crew Laughin Times: 1 put back." in out
     db.expire_all()
     assert db.scalar(select(func.count()).select_from(Crew)) == 3
+
+
+def test_the_test_user_has_an_invite_waiting(client, monkeypatch, Session, capsys):
+    """CC-59: Sam has invited the test user to Laughin Times, so the sign-in notice can be tried."""
+    out = run(monkeypatch, Session, local(), capsys)
+    assert "Invite for the test user: created." in out
+    user = auth(client.post("/auth/login", json={"email": USER[0], "password": USER[1]}).json()["access_token"])
+    pending = client.get("/crews/pending", headers=user).json()
+    assert [(p["crew_name"], p["invited_by"]) for p in pending] == [("Laughin Times", "Sam Okafor")]
+    client.post(f"/crews/pending/{pending[0]['id']}/accept", headers=user)
+    assert "Invite for the test user: not needed." in run(monkeypatch, Session, local(), capsys)

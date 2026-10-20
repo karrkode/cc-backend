@@ -82,7 +82,8 @@ invite link can be tried too.
 
 The members' logins are `maya@`, `jordan@`, `priya@`, `sam@`, `lena@`, `marcus@` and `rosa@example.com`.
 A missing crew is made again, and anyone listed who left is put back, on the next start; members you add
-yourself are left alone.
+yourself are left alone. Sam has also invited the test user to Laughin Times by email (CC-59), so signing in
+as the test user shows the invite notice; it comes back on each start until the test user joins.
 
 **Email locally.** Signing up, changing your email, and "Forgot password?" send emails with
 single-use links. The local stack never really sends them: each one is written to the API log,
