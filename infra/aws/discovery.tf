@@ -55,3 +55,32 @@ resource "aws_scheduler_schedule" "discovery" {
     retry_policy { maximum_retry_attempts = 0 } # the next hour tries again
   }
 }
+
+# The weekly recap (CC-77): Tuesdays at 10 AM Chicago time, an email to info@ about what discovery
+# found, what's waiting and which sources couldn't be read. If it can't be sent, the command fails
+# and the "command failed" alert fires (monitoring.tf), so a missing recap never goes unnoticed.
+resource "aws_scheduler_schedule" "discovery_recap" {
+  name                         = "${var.name}-discovery-recap"
+  description                  = "Email the weekly event-discovery recap"
+  schedule_expression          = "cron(0 10 ? * TUE *)"
+  schedule_expression_timezone = "America/Chicago"
+
+  flexible_time_window { mode = "OFF" }
+
+  target {
+    arn      = "arn:aws:scheduler:::aws-sdk:ssm:sendCommand"
+    role_arn = aws_iam_role.scheduler.arn
+    input = jsonencode({
+      DocumentName   = "AWS-RunShellScript"
+      InstanceIds    = [aws_instance.api.id]
+      Comment        = "Event discovery: weekly recap email"
+      TimeoutSeconds = 600
+      Parameters     = { commands = ["docker exec api python -m scripts.recap"], executionTimeout = ["300"] }
+      CloudWatchOutputConfig = {
+        CloudWatchOutputEnabled = true
+        CloudWatchLogGroupName  = aws_cloudwatch_log_group.discovery.name
+      }
+    })
+    retry_policy { maximum_retry_attempts = 0 }
+  }
+}

@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Query, Response, status
 from sqlalchemy import func, select
 
 from ..deps import DB, AdminUser
+from ..discovery.readers import cost_usd
 from ..discovery.rules import norm_title
 from ..discovery.store import matching_rule, possible_duplicates, rule_reason, venue_for
 from ..models import DiscoveredItem, DiscoveryCheck, DiscoverySource, Event, SkipRule
@@ -16,9 +17,6 @@ from ..schemas import (DiscoveredItemOut, DiscoveredPage, DiscoveryOverview, Dis
 from .events import new_event
 
 router = APIRouter(prefix="/admin/discovery", tags=["discovery"])
-
-# Claude Haiku 5.5 list price per million tokens (prompts up to 100K tokens), for an estimate only.
-HAIKU_IN, HAIKU_OUT = 0.10, 0.50
 
 
 def _source(db: DB, source_id: int) -> DiscoverySource:
@@ -51,7 +49,7 @@ def sources(db: DB, _: AdminUser):
                            .where(DiscoveryCheck.checked_at >= since)).one()
     listed = db.scalars(select(DiscoverySource).order_by(func.lower(DiscoverySource.name))).all()
     return DiscoveryOverview(sources=[_out(s, waiting, checks) for s in listed], tokens_in_30d=int(tin), tokens_out_30d=int(tout),
-                             cost_30d_usd=round(int(tin) / 1e6 * HAIKU_IN + int(tout) / 1e6 * HAIKU_OUT, 4))
+                             cost_30d_usd=cost_usd(int(tin), int(tout)))
 
 
 @router.patch("/sources/{source_id}", response_model=DiscoverySourceOut)

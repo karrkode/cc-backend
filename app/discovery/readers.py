@@ -14,6 +14,13 @@ from pydantic import BaseModel, Field
 from .fetch import USER_AGENT, TIMEOUT
 
 MODEL = "claude-haiku-5-5"
+# Claude Haiku 5.5 list price per million tokens (prompts up to 100K tokens), for estimates only; the
+# Anthropic Console has the exact bill.
+PRICE_IN, PRICE_OUT = 0.10, 0.50
+
+
+def cost_usd(tokens_in: int, tokens_out: int) -> float:
+    return round(tokens_in / 1e6 * PRICE_IN + tokens_out / 1e6 * PRICE_OUT, 4)
 Kind = Literal["production", "exhibition", "concert", "comedy_show", "talk", "tour", "program", "class",
                "rental", "members_only", "recurring", "permanent", "other"]
 
