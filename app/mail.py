@@ -35,6 +35,7 @@ class Email:
     to: str
     subject: str
     text: str
+    html: str = ""  # optional; sent alongside the text, which stays the fallback
 
 
 OUTBOX: list[Email] = []  # the "memory" mode's sent mail, for tests
@@ -61,7 +62,8 @@ def send(email: Email, strict: bool = False) -> None:
                 Destination={"ToAddresses": [email.to]},
                 ReplyToAddresses=[s.mail_reply_to] if s.mail_reply_to else [],
                 Content={"Simple": {"Subject": {"Data": email.subject, "Charset": "UTF-8"},
-                                    "Body": {"Text": {"Data": email.text, "Charset": "UTF-8"}}}},
+                                    "Body": {"Text": {"Data": email.text, "Charset": "UTF-8"},
+                                             **({"Html": {"Data": email.html, "Charset": "UTF-8"}} if email.html else {})}}},
             )
         else:
             log.warning("Email to %s skipped: no email backend is set up (%r)", email.to, email.subject)

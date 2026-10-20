@@ -328,6 +328,7 @@ class DiscoverySourceOut(ORM):
     venue_name: str
     every_days: int
     active: bool
+    manual: bool = False  # CC-81: checked by hand only, never automatically
     next_check_on: date_ | None  # due on or after this day (null: at the next hourly run)
     unchanged_streak: int
     last_checked_at: datetime | None
@@ -342,6 +343,7 @@ class DiscoverySourceOut(ORM):
 class DiscoverySourcePatch(BaseModel):
     every_days: int | None = Field(default=None, ge=1, le=120)
     active: bool | None = None
+    manual: bool | None = None  # CC-81: true = check by hand only
     pages: list[str] | None = Field(default=None, min_length=1, max_length=5)
 
     @field_validator("pages")
