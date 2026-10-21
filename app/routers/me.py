@@ -11,7 +11,7 @@ from ..deps import DB, CurrentUser
 from ..models import Attended, Event, Plan, PlanStatus, WentPhoto
 from ..crewplans import attach_crew_plans, my_crew_ids, share_been, share_plan, shared_with, unshare
 from ..picks import attach_picks
-from ..schemas import AttendedOut, EventOut, PhotoOut, PlanCrewsIn, PlanIn, PlanOut
+from ..schemas import AttendedOut, EventOut, JournalIn, JournalOut, PhotoOut, PlanCrewsIn, PlanIn, PlanOut
 from ..visibility import is_live, live_condition
 
 router = APIRouter(prefix="/me", tags=["me"])
@@ -99,6 +99,18 @@ def mark_attended(event_id: int, db: DB, user: CurrentUser, response: Response):
     db.commit()
     db.refresh(mark)
     attach_crew_plans(db, [mark.event], user)
+    return mark
+
+
+@router.put("/attended/{event_id}/journal", response_model=JournalOut)
+def save_journal(event_id: int, body: JournalIn, db: DB, user: CurrentUser):
+    """CC-98: your Cultural Journal entry for an event you've been to: up to three words, a review, and
+    whether you'd recommend it. Private: only /me/attended ever returns it. Un-marking deletes it."""
+    mark = db.get(Attended, (user.id, event_id))
+    if mark is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Mark it \u201cI've been\u201d first")
+    mark.words, mark.review, mark.recommend = body.words, body.review, body.recommend
+    db.commit()
     return mark
 
 
