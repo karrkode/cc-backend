@@ -75,3 +75,22 @@ def test_approved_first_and_closed_events_stay_two_weeks(client, make_event, db)
     event.end_date = T - timedelta(days=15)  # past the two weeks: gone
     db.commit()
     assert list(board(client, p["Ana"], crew["id"])) == ["Macbeth"]
+
+
+def test_your_crews_catalog_counts_been_marks(client, make_event):
+    """CC-94: Your Crews Catalog lists events a crew-mate is interested in, committed to, or has been to."""
+    p, crew, _, hamlet, sue = setup(client, make_event)
+    globe = make_event("The Globe")
+    titles = lambda h: sorted(e["title"] for e in client.get("/events?crews=all", headers=h).json()["items"])
+    plan(client, p["Ben"], hamlet, status="going", date=(today_in_chicago() + timedelta(days=2)).isoformat())
+    share(client, p["Ben"], hamlet, [crew["id"]])
+    plan(client, p["Ben"], sue)
+    share(client, p["Ben"], sue, [crew["id"]])
+    been(client, p["Ben"], sue)  # the plan ends; the mark keeps it in
+    plan(client, p["Ben"], globe)
+    been(client, p["Ben"], globe)  # never shared: doesn't count
+    assert titles(p["Ana"]) == ["Hamlet", "Sue the T. rex"]
+    assert titles(p["Ben"]) == []  # never your own
+    assert titles(p["Cy"]) == []  # not in the crew
+    assert client.post(f"/crews/{crew['id']}/leave", headers=p["Ben"]).status_code == 204
+    assert titles(p["Ana"]) == []
