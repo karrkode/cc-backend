@@ -23,7 +23,7 @@ def test_an_existing_member_sees_it_on_sign_in_and_accepts(client):
     ana, crew = start(client)
     ben = auth(register(client, email="ben@example.com", name="Ben Kim"))
     r = send(client, ana, crew, "  BEN@example.com ")
-    assert r.status_code == 202 and r.json() == {"message": "Invite sent. They'll see it when they sign in."}
+    assert r.status_code == 202 and r.json() == {"message": "Invite sent. We've emailed them, and they'll see it when they sign in."}
     pending = client.get("/crews/pending", headers=ben).json()
     assert [(p["crew_name"], p["invited_by"], p["members"], p["full"]) for p in pending] == [("Thursday Theater", "Ana Cruz", 1, False)]
     waiting = client.get("/crews", headers=ana).json()[0]["email_invites"]
@@ -93,3 +93,50 @@ def test_with_confirmed_emails_required_only_a_confirmed_address_sees_it(client,
     send(client, ana, crew, "ben@example.com")
     monkeypatch.setattr(get_settings(), "require_verified_email", True)
     assert client.get("/crews/pending", headers=ben).json() == []
+
+
+# ---- the email itself (CC-83) ------------------------------------------------------------
+
+def test_the_invite_is_emailed_once_per_crew_while_it_waits(client, db):
+    from app.mail import OUTBOX
+    ana, crew = start(client)
+    register(client, email="ben@example.com", name="Ben Kim")
+    OUTBOX.clear()
+    send(client, ana, crew, "ben@example.com")
+    send(client, ana, crew, "nobody@example.com")
+    send(client, ana, crew, "ana@example.com")  # already in: no email
+    send(client, ana, crew, "BEN@example.com")  # already waiting: no second email
+    assert [e.to for e in OUTBOX] == ["ben@example.com", "nobody@example.com"]
+    a, b = OUTBOX
+    assert a.subject == "Ana C. wants you to be part of their crew!" and '"Thursday Theater"' in a.text
+    assert a.text.replace("ben@", "x@") == b.text.replace("nobody@", "x@")  # the same whether or not there's an account
+    assert "Cruz" not in a.text and "/#account" in a.text and "14 days" in a.text
+
+    # once it's gone (declined, cancelled, run out), a new invite emails again
+    for i in db.query(CrewEmailInvite).all():
+        i.expires_at = datetime.now(UTC) - timedelta(minutes=1)
+    db.commit()
+    OUTBOX.clear()
+    send(client, ana, crew, "ben@example.com")
+    assert [e.to for e in OUTBOX] == ["ben@example.com"]
+
+
+def test_one_address_gets_at_most_three_invite_emails_a_day(client):
+    from app.mail import OUTBOX
+    ana, _ = start(client)
+    crews = [client.post("/crews", json={"name": f"Crew {n}"}, headers=ana).json() for n in range(4)]
+    OUTBOX.clear()
+    for c in crews:
+        assert send(client, ana, c, "cy@example.com").status_code == 202
+    assert len(OUTBOX) == crews_router.INVITE_EMAILS_PER_ADDRESS_PER_DAY
+    assert len(client.get("/crews", headers=ana).json()) == 5  # the fourth invite still waits, just without an email
+
+
+def test_an_unconfirmed_inviter_emails_nobody_when_confirmation_is_required(client, monkeypatch):
+    from app.config import get_settings
+    from app.mail import OUTBOX
+    ana, crew = start(client)
+    monkeypatch.setattr(get_settings(), "require_verified_email", True)
+    OUTBOX.clear()
+    assert send(client, ana, crew, "cy@example.com").status_code == 202
+    assert OUTBOX == []

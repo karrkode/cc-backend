@@ -95,8 +95,8 @@ production photos go to the private S3 bucket `chiculturecrew-went-photos` (`inf
 checked first (`PHOTO_BACKEND`, `PHOTO_CHECKER`, `PHOTO_BUCKET`, `PHOTO_REGION` and `PHOTO_DIR` override
 this; production needs none of them set).
 
-**Email locally.** Signing up, changing your email, and "Forgot password?" send emails with
-single-use links. The local stack never really sends them: each one is written to the API log,
+**Email locally.** Signing up, changing your email, "Forgot password?" and inviting to a crew by email send emails,
+some with single-use links. The local stack never really sends them: each one is written to the API log,
 link included. To open one, copy its link from:
 
 ```
