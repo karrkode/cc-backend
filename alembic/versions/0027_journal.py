@@ -15,7 +15,7 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column('attended', sa.Column('words', sa.String(60), server_default='', nullable=False))
+    op.add_column('attended', sa.Column('words', sa.String(62), server_default='', nullable=False))
     op.add_column('attended', sa.Column('review', sa.String(1000), server_default='', nullable=False))
     op.add_column('attended', sa.Column('recommend', sa.Boolean(), server_default=sa.false(), nullable=False))
 

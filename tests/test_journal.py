@@ -32,6 +32,8 @@ def test_limits(client, make_event, user_token):
     been(client, h, hamlet)
     r = journal(client, h, hamlet, words="one two three four")
     assert r.status_code == 422 and "three words" in r.text
+    assert journal(client, h, hamlet, words="x" * 21).status_code == 422  # a box holds up to 20 characters
+    assert journal(client, h, hamlet, words=" ".join(["heart-felt" + "x" * 10] * 3)).status_code == 200
     assert journal(client, h, hamlet, review="x" * 1001).status_code == 422
     assert journal(client, h, hamlet, review="x" * 1000).status_code == 200
 

@@ -273,7 +273,7 @@ class Attended(Base):
     event_id: Mapped[int] = mapped_column(ForeignKey("events.id", ondelete="CASCADE"), primary_key=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     # CC-98: the member's Cultural Journal entry for it, all optional and private to them; it goes with the mark.
-    words: Mapped[str] = mapped_column(String(60), default="", server_default="")
+    words: Mapped[str] = mapped_column(String(62), default="", server_default="")
     review: Mapped[str] = mapped_column(String(1000), default="", server_default="")
     recommend: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
 
