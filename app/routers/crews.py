@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException, Response, status
 from sqlalchemy import func, select
 
 from ..config import get_settings
-from ..crewplans import crew_board, unshare
+from ..crewplans import crew_board, unshare, unshare_been
 from ..deps import DB, CurrentUser, OptionalUser
 from ..models import Crew, CrewEmailInvite, CrewInvite, CrewMember, User
 from ..ratelimit import SlidingWindowLimiter
@@ -70,7 +70,7 @@ def _out(db: DB, crew: Crew, user: User, board: dict | None = None) -> CrewOut:
                  for m in sorted(crew.members, key=lambda m: (m.user_id != crew.owner_id, _aware(m.joined_at), name_of(m.user)))],
         invites=[CrewInviteOut(id=i.id, made_by=name_of(i.creator), yours=i.created_by == user.id, created_at=i.created_at,
                                expires_at=i.expires_at, uses=i.uses) for i in invites if _live(i)],
-        plans=[CrewBoardItem(event=row["event"], people=row["people"]) for row in board.get(crew.id, [])],
+        plans=[CrewBoardItem(event=row["event"], people=row["people"], been=row["been"]) for row in board.get(crew.id, [])],
         email_invites=[CrewEmailInviteOut(id=i.id, made_by=name_of(i.inviter), yours=i.invited_by == user.id,
                                           email=i.email if i.invited_by == user.id else None, expires_at=i.expires_at)
                        for i in db.scalars(select(CrewEmailInvite).where(CrewEmailInvite.crew_id == crew.id)
@@ -188,6 +188,7 @@ def leave(crew_id: int, db: DB, user: CurrentUser):
         raise HTTPException(status.HTTP_409_CONFLICT, "You own this crew. Hand it to another member first, or delete it.")
     crew.members = [m for m in crew.members if m.user_id != user.id]
     unshare(db, user.id, crew_id=crew.id)  # CC-75: your plans leave with you
+    unshare_been(db, user.id, crew_id=crew.id)  # CC-93: and your "I've been" marks
     db.commit()
 
 
@@ -200,6 +201,7 @@ def remove_member(crew_id: int, user_id: uuid.UUID, db: DB, user: CurrentUser):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not a member of this crew")
     crew.members = [m for m in crew.members if m.user_id != user_id]
     unshare(db, user_id, crew_id=crew.id)
+    unshare_been(db, user_id, crew_id=crew.id)
     db.commit()
     return _out(db, crew, user)
 
