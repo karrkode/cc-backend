@@ -188,7 +188,7 @@ def test_skipped_email_never_logs_the_link(monkeypatch, caplog):
     assert "skipped" in caplog.text and "SECRET-TOKEN" not in caplog.text
 
 
-# ---- requiring a confirmed address to submit (off until SES production access) ---------
+# ---- requiring a confirmed address to submit (on in production, CC-46) -----------------
 
 EVENT = {"title": "Fresh pick", "category": "Comedy", "venue": {"name": "Annoyance", "neighborhood": "Lakeview"}}
 
@@ -202,6 +202,14 @@ def test_submitting_needs_a_confirmed_address_only_when_switched_on(client, admi
     client.post("/auth/verify-email", json={"token": link_token("verify", to="ana@example.com")})
     assert client.post("/events", headers=auth(token), json=EVENT).status_code == 201
     assert client.post("/events", headers=auth(admin_token), json=EVENT).status_code == 201  # admins aren't held up
+
+
+def test_confirmed_addresses_are_required_in_production_only(monkeypatch):
+    from app.config import Settings
+    prod = {"env": "prod", "jwt_secret": "x" * 32}
+    assert Settings(**prod).require_verified_email is True
+    assert Settings(env="local").require_verified_email is False
+    assert Settings(**prod, require_verified_email=False).require_verified_email is False  # can still be switched off
 
 
 def test_dev_users_count_as_confirmed(db):

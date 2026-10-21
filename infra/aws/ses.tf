@@ -58,22 +58,11 @@ resource "aws_sesv2_email_identity" "domain" {
   configuration_set_name = aws_sesv2_configuration_set.default.configuration_set_name
 }
 
-# A verified inbox: while SES is still in its sandbox it can only send to verified addresses,
-# so this is where test emails go.
+# A verified inbox, from when SES was in its sandbox and could only send to verified addresses.
+# Production access was granted (CC-46), so any inbox gets mail now.
 resource "aws_sesv2_email_identity" "alert_inbox" {
   provider               = aws.us_east_1
   email_identity         = var.alert_email
-  configuration_set_name = aws_sesv2_configuration_set.default.configuration_set_name
-}
-
-# CC-58: extra outside inboxes (e.g. a Gmail) for testing confirm and reset emails while SES is in
-# its sandbox. Set in terraform.tfvars, which isn't committed, so no address lands in this public
-# repo. Each one gets a "please verify" email from AWS; click it. Empty this list (CC-46) once
-# production access is granted.
-resource "aws_sesv2_email_identity" "test_inbox" {
-  for_each               = toset(var.ses_test_inboxes)
-  provider               = aws.us_east_1
-  email_identity         = each.value
   configuration_set_name = aws_sesv2_configuration_set.default.configuration_set_name
 }
 
@@ -130,14 +119,13 @@ resource "aws_iam_role_policy" "email_sender" {
     Version = "2012-10-17"
     Statement = [{
       Sid = "SendAccountEmail", Effect = "Allow", Action = "ses:SendEmail"
-      # The sending identity and the configuration set every email from it uses. While SES is in
-      # its sandbox it also checks the recipient's identity, so the verified inbox is listed too;
-      # once production access is granted that check stops and nothing here needs to change.
-      Resource = concat([
+      # The sending identity and the configuration set every email from it uses (plus the
+      # verified inbox, which the sandbox checked as a recipient before production access).
+      Resource = [
         aws_sesv2_email_identity.domain.arn,
         aws_sesv2_configuration_set.default.arn,
         aws_sesv2_email_identity.alert_inbox.arn,
-      ], [for inbox in aws_sesv2_email_identity.test_inbox : inbox.arn])
+      ]
     }]
   })
 }

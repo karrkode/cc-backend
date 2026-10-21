@@ -6,7 +6,7 @@ lives in the image or the repo.
 from functools import lru_cache
 from typing import Annotated, Literal
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -40,9 +40,9 @@ class Settings(BaseSettings):
     recap_name: str = "Andrew"  # its greeting, "Hello, Andrew!" (CC-81)
     verify_link_hours: int = 24
     reset_link_minutes: int = 60
-    # Turn on once real users can receive the email (SES production access): until then an
-    # unverified account could never be verified, so it would be locked out of submitting.
-    require_verified_email: bool = False
+    # CC-46: sending in events and seeing crew invites by email need a confirmed address.
+    # Unset: on in production (SES can reach every inbox), off elsewhere.
+    require_verified_email: bool | None = None
     # CC-76: "I've been" photos. The production bucket is set up in infra/aws/photos.tf.
     photo_backend: str = ""  # "" works it out (photo_storage): s3 | local
     photo_bucket: str = "chiculturecrew-went-photos"
@@ -70,6 +70,11 @@ class Settings(BaseSettings):
             raise ValueError("JWT_SECRET must be set to a random value of 32+ characters in prod")
         return v
 
+    @model_validator(mode="after")
+    def _confirmed_email_in_prod(self):
+        if self.require_verified_email is None:
+            self.require_verified_email = self.env == "prod"
+        return self
 
     @property
     def email_mode(self) -> str:
