@@ -404,6 +404,17 @@ class PlanShare(Base):
     crew_id: Mapped[int] = mapped_column(ForeignKey("crews.id", ondelete="CASCADE"), primary_key=True, index=True)
 
 
+class AttendedShare(Base):
+    """CC-93: an "I've been" mark seen by one of its owner's crews: the crews the plan was shared with when
+    they marked it. Goes with the mark, when the crew does, and when its owner leaves the crew."""
+    __tablename__ = "attended_shares"
+    __table_args__ = (ForeignKeyConstraint(["user_id", "event_id"], ["attended.user_id", "attended.event_id"], ondelete="CASCADE"),)
+
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    event_id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    crew_id: Mapped[int] = mapped_column(ForeignKey("crews.id", ondelete="CASCADE"), primary_key=True, index=True)
+
+
 class IssueReport(Base):
     """CC-84: a signed-in member's report of a problem with the site. Admins set its status and can add a
     note the member sees beside it on Your account."""

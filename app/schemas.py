@@ -621,10 +621,17 @@ class CrewPlanPerson(BaseModel):
     you: bool
 
 
+class CrewBeenPerson(BaseModel):
+    """CC-93: a crew-mate who's been, and whether their photo from it is approved."""
+    name: str
+    approved: bool
+
+
 class CrewBoardItem(BaseModel):
-    """CC-75: one event on a crew's board, with who's interested or going."""
+    """CC-75: one event on a crew's board, with who's interested or going (and, CC-93, who's been)."""
     event: EventOut
     people: list[CrewPlanPerson]
+    been: list[CrewBeenPerson] = []
 
 
 class CrewEmailInviteOut(BaseModel):

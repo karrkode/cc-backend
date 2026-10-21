@@ -9,7 +9,7 @@ from starlette.concurrency import run_in_threadpool
 from .. import photos
 from ..deps import DB, CurrentUser
 from ..models import Attended, Event, Plan, PlanStatus, WentPhoto
-from ..crewplans import attach_crew_plans, my_crew_ids, share_plan, shared_with, unshare
+from ..crewplans import attach_crew_plans, my_crew_ids, share_been, share_plan, shared_with, unshare
 from ..picks import attach_picks
 from ..schemas import AttendedOut, EventOut, PhotoOut, PlanCrewsIn, PlanIn, PlanOut
 from ..visibility import is_live, live_condition
@@ -92,6 +92,8 @@ def mark_attended(event_id: int, db: DB, user: CurrentUser, response: Response):
         mark = Attended(user_id=user.id, event_id=event_id)
         db.add(mark)
         response.status_code = status.HTTP_201_CREATED
+    db.flush()
+    share_been(db, user.id, event_id)  # CC-93: the crews that saw the plan see you've been
     unshare(db, user.id, event_id=event_id)  # CC-75: the plan's gone, so it's no longer shared
     db.execute(delete(Plan).where(Plan.user_id == user.id, Plan.event_id == event_id))
     db.commit()
