@@ -1,7 +1,8 @@
 # Culture Crew API
 
 FastAPI + PostgreSQL backend for chiculturecrew.com: events, venues, accounts, event
-submissions with admin review, and each user's "I've been" list.
+submissions with admin review, event discovery, culture crews, each user's plans and "I've been"
+list with optional photos (checked by Amazon Rekognition, then approved by people), and issue reports.
 
 The site itself (a static page) is a separate repo, **cc-site**
 (github.com/karrkode/cultures-crew-app). The two only meet at this API: the page calls
@@ -85,6 +86,15 @@ A missing crew is made again, and anyone listed who left is put back, on the nex
 yourself are left alone. Sam has also invited the test user to Laughin Times by email (CC-59), so signing in
 as the test user shows the invite notice; it comes back on each start until the test user joins.
 
+**Photos and approvers locally (CC-76, CC-91).** "I've been" photos are stored in a folder inside the API
+container (`/tmp/culture-crew-photos`; a rebuild empties it), and nothing is sent to Amazon Rekognition, so
+no photo is ever refused or blurred locally. The local admin can approve photos (admins always can) on
+Review → Photo approvals; to try the approver offer, use Review → Members and sign in as the member. You
+can't approve your own photo, so add one as the test user or a crew member and approve it as the admin. In
+production photos go to the private S3 bucket `chiculturecrew-went-photos` (`infra/aws/photos.tf`) and are
+checked first (`PHOTO_BACKEND`, `PHOTO_CHECKER`, `PHOTO_BUCKET`, `PHOTO_REGION` and `PHOTO_DIR` override
+this; production needs none of them set).
+
 **Email locally.** Signing up, changing your email, and "Forgot password?" send emails with
 single-use links. The local stack never really sends them: each one is written to the API log,
 link included. To open one, copy its link from:
@@ -144,13 +154,20 @@ applies new migrations when it starts.
 
 | | Endpoint | Who |
 |---|---|---|
-| Auth | `POST /auth/register`, `/auth/login`, `/auth/refresh`, `/auth/logout`; `GET /auth/me` | anyone / signed in |
-| Events | `GET /events` (filters: `q`, `area`, `category`, `from`, `to`, `max_price`, `include_past`, `limit`, `offset`), `GET /events/{id}` | anyone |
-| | `POST /events` (always pending for users; admins choose `publish`: `now`, `later` with `publish_at`, or `review`) | signed in |
-| | `PATCH /events/{id}`, `DELETE /events/{id}` | admin |
+| Auth | `POST /auth/register`, `/auth/login`, `/auth/refresh`, `/auth/logout`; `GET`/`PATCH /auth/me` (includes `can_approve`, `approver_offered`) | anyone / signed in |
+| Events | `GET /events` (filters: `q`, `area`, `region`, `hood`, `category`, `from`, `to`, `max_price` (uses a venue's standard cost when the event has no price), `include_past`, `sort`, `limit`, `offset`), `GET /events/{id}`, `/events/facets`, `/events/lookup` | anyone |
+| | `POST /events` (always pending for users; admins choose `publish`: `now`, `later` with `publish_at`, or `review`; optional `weekly` show days and `weeks` of the month) | signed in |
+| | `PATCH /events/{id}`, `DELETE /events/{id}` (deletes its photos too) | admin |
 | Review | `GET /admin/events?status=pending`, `GET /admin/events/scheduled`, `POST /admin/events/{id}/approve` (publishes now), `/reject` | admin |
-| Venues | `GET /venues`, `POST /venues` | anyone / admin |
-| Me | `GET /me/attended`, `PUT`/`DELETE /me/attended/{event_id}`, `GET /me/submissions` | signed in |
+| Discovery | `/admin/discovery/sources`, `/items` (`show=needs` for events missing a date or show days), `/items/{id}/approve`, `/reject`, `/accept`, `/dismiss`, `/rules`, `/budget` | admin |
+| Venues | `GET /venues`, `POST /venues`; `GET /venues/manage`, `PATCH /venues/{id}` (hours, show times, standard cost), merge, delete | anyone / admin |
+| Me | `GET /me/attended`, `PUT`/`DELETE /me/attended/{event_id}`, `PUT`/`DELETE /me/attended/{event_id}/photo` (the body is the photo), `/me/plans`, `GET /me/submissions`, `/me/issues`, `POST /me/approver` (answer the approver offer) | signed in |
+| Crews | `/crews` (your crews with their shared plans and who's been), invites by link and by email, join, leave, members | signed in |
+| Photos | `GET /photos/{id}?exp&sig` (a link signed for 15 minutes) | anyone with the link |
+| Approvals | `GET /approvals?show=waiting\|approved\|rejected`, `POST /approvals/{id}` (approve, or reject with a reason) | approvers and admins |
+| Members | `GET /admin/members`, `POST`/`DELETE /admin/members/{id}/approver` (offer, withdraw or remove) | admin |
+| Issues | `POST /issues`; `GET`/`PATCH /admin/issues` | signed in / admin |
+| Stats | `GET /admin/stats` (includes photo checks and their cost this month), `/admin/stats/events`, `/admin/stats/traffic`; `POST /traffic` | admin / anyone |
 | Ops | `GET /health` (API and database) | anyone |
 
 ## How sign-in works
@@ -180,18 +197,22 @@ app/config.py        settings from environment variables
 app/models.py        tables (SQLAlchemy)
 app/schemas.py       request/response shapes (Pydantic)
 app/security.py      bcrypt, JWTs, refresh tokens
-app/deps.py          database session, current user, admin check
-app/routers/         auth, events, venues, me, admin, traffic, discovery (sources; found events to review, CC-71), crews (CC-74)
+app/deps.py          database session, current user, admin and approver checks
+app/routers/         auth, events, venues, me, admin, traffic, discovery (sources; found events to review, CC-71), crews (CC-74),
+                     issues (CC-84), photos (signed links, CC-76), approvals (approvers and the photo queue, CC-91)
+app/crewplans.py     plans shared with crews, and who's been (CC-75, CC-93)
+app/photos.py        "I've been" photos: Rekognition checks, private storage, signed links, the hourly sweep (CC-76)
 alembic/             migrations
 app/seeding.py       loads seed/events.json into a database (local development and tests)
 scripts/seed.py      import seed/events.json
 seed/events.json     the events from the old Google Sheet site
 scripts/make_admin.py
 scripts/dolphins.py  turn the plan dolphins on for an account (CC-61)
-scripts/discover.py  check event sources that are due (CC-70; hourly on the server)
+scripts/discover.py  check event sources that are due (CC-70; hourly on the server), then sweep away photos left behind (CC-76)
 scripts/recap.py     the weekly discovery recap email (CC-77; Tuesdays 10 AM; --print to preview)
 scripts/fill_venue_hours.py  fill venue hours and show times from what discovery found (CC-78)
-app/discovery/       event discovery: polite fetching, page text, readers (Art Institute API, Claude Haiku 5.5), rules, holding list and skip rules
+app/discovery/       event discovery: polite fetching, page text, readers (Art Institute API, Claude Haiku 5.5), rules, holding list and skip rules,
+                     what a found event still needs (needs.py: a date, show days; CC-88)
 scripts/dev_users.py the local test accounts (ENV=local only)
 tests/
 ```

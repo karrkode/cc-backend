@@ -13,6 +13,7 @@ Browser ─► Route 53 ─┬─► CloudFront (HTTPS, ACM cert from us-east-1,
                                          private subnets ◄────────────────┘ port 5432 only from the API's SG
                                          RDS Postgres 16, db.t4g.micro, encrypted, no public address
 
+API container ─► S3 ("I've been" photos, private) · Rekognition (checks each photo first) · SES (email)
 EventBridge Scheduler (hourly discovery, Tuesday recap) ─► SSM Run Command ─► scripts on the server
 Secrets Manager (DB password, managed by RDS) + Parameter Store (JWT key) ─► read by the server at start
 CloudWatch logs + alarms ─► SNS ─► email · AWS Budget ─► email
@@ -30,6 +31,8 @@ GitHub Actions ─► OIDC roles (no stored keys) ─► push image / upload pag
 | `aws/dns.tf` | the Route 53 zone, site and API records |
 | `aws/dns_mail.tf` | email and Microsoft 365 records, copied from GoDaddy; change only when the mail provider asks |
 | `aws/scheduler.tf` | the scheduler's role for running commands on the server |
+| `aws/ses.tf` | SES: the sending domain, its DKIM records, the email-sender role the API container uses, bounce and complaint alerts |
+| `aws/photos.tf` | the private, encrypted bucket for "I've been" photos, and the container's permission to store them and check them with Rekognition (CC-76) |
 | `aws/discovery.tf` | event discovery: the API key's slot, the hourly checks, the Tuesday recap email |
 | `aws/monitoring.tf` | log groups, alarms, failed-command alerts, monthly budget |
 | `aws/github.tf` | OIDC deploy roles for both repos |
@@ -37,7 +40,8 @@ GitHub Actions ─► OIDC roles (no stored keys) ─► push image / upload pag
 Rough cost while free-tier eligible: about $1–2/month out of pocket (Route 53 zone $0.50,
 a Parameter Store/Secrets Manager secret $0.40; the server, database and public IPv4
 address are covered). After the free tier: about $25/month, mostly RDS, EC2 and the
-public IPv4 address ($3.60).
+public IPv4 address ($3.60). Photos add Rekognition's $0.001 a photo (about $10 for 10,000) and a few
+cents a month of S3 storage.
 
 ## First deployment
 
