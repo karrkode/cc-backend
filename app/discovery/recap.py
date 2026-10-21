@@ -106,7 +106,7 @@ class Week:
     spent: float = 0
     budget: float = 10
     sources: list[tuple[str, str, str]] = field(default_factory=list)  # name, how often, next check
-    issues: list[tuple[str, str, str, str]] = field(default_factory=list)  # CC-84: reported this week: ticket, who, page, what happened
+    issues: list[tuple[str, str, str, str]] = field(default_factory=list)  # CC-84: reported this week: ticket, who, page, what happened (CC-95: feature requests too)
     issues_open: int = 0  # new or being looked into, all time
     photos_waiting: int = 0  # CC-91: "I've been" photos waiting for an approver
     needs: int = 0  # CC-88: new events still missing a date or show days
@@ -180,9 +180,12 @@ def gather(db, now: datetime) -> Week:
 def subject_of(w: Week) -> str:
     if w.quiet:
         return "Event discovery: nothing new this week"
+    fr = sum(1 for key, *_ in w.issues if key.startswith("FR-"))  # CC-95: feature requests, told apart from issues
+    iss = len(w.issues) - fr
     bits = [f"{w.found_total} new"] + ([f"{len(w.updates)} {'update' if len(w.updates) == 1 else 'updates'}"] if w.updates else []) \
         + ([f"{len(w.unreadable)} to check by hand"] if w.unreadable else []) \
-        + ([f"{len(w.issues)} {'issue' if len(w.issues) == 1 else 'issues'} reported"] if w.issues else []) \
+        + ([f"{iss} {'issue' if iss == 1 else 'issues'} reported"] if iss else []) \
+        + ([f"{fr} {'feature' if fr == 1 else 'features'} requested"] if fr else []) \
         + (["budget used up"] if w.state == "paused" else [])
     return "Event discovery: " + ", ".join(bits)
 
@@ -228,7 +231,7 @@ def as_text(w: Week) -> str:
     lines += ["  None. Every source could be read."] if not w.unreadable else []
     if w.by_hand:
         lines += ["", "CHECK THESE BY HAND:"] + [f"  - {name}: {page}" for name, page in w.by_hand]
-    lines += ["", f"ISSUES REPORTED THIS WEEK: {len(w.issues)} ({w.issues_open} open in all)"]
+    lines += ["", f"ISSUES AND FEATURE REQUESTS THIS WEEK: {len(w.issues)} ({w.issues_open} open in all)"]
     lines += [f"  - {key} {who} on {page}: {what}" for key, who, page, what in w.issues] or ["  None."]
     lines += [f"  Review them: {w.link('issues')}"] if w.issues or w.issues_open else []
     lines += ["", f"PHOTOS WAITING FOR APPROVAL: {w.photos_waiting}"] + ([f"  Approve them: {w.link('approvals')}"] if w.photos_waiting else [])
@@ -339,9 +342,9 @@ def as_html(w: Week) -> str:
         parts.append(f'<p style="margin:12px 0 4px;font-size:14px;font-weight:600">Check these by hand</p>'
                      f'<ul style="margin:0;padding-left:18px;font-size:14px;line-height:1.45">{items}</ul>')
 
-    parts.append(_h("Issues reported this week", f' <span style="font-family:{FONT};font-weight:400;font-size:13px;color:{MUTED}">'
+    parts.append(_h("Issues and feature requests this week", f' <span style="font-family:{FONT};font-weight:400;font-size:13px;color:{MUTED}">'
                     f'&middot; {w.issues_open} open in all</span>'))
-    parts.append(_table(["Ticket", "Reported by", "Page", "What happened"],
+    parts.append(_table(["Ticket", "Sent by", "Page", "What they wrote"],
                         [[_a(w.link("issues/" + k), k), escape(a), escape(b), escape(c)] for k, a, b, c in w.issues])
                  if w.issues else _none("None this week."))
     if w.issues or w.issues_open:

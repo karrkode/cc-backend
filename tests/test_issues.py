@@ -54,7 +54,7 @@ def test_new_reports_are_in_the_recap(client, user_token, db):
     client.post("/issues", json=REPORT, headers=auth(user_token))
     email = build_recap(db)
     assert "1 issue reported" in email.subject
-    assert "ISSUES REPORTED THIS WEEK: 1 (1 open in all)" in email.text and "ISS-0001 Ana on Plan an outing: The Tonight list was empty" in email.text
+    assert "ISSUES AND FEATURE REQUESTS THIS WEEK: 1 (1 open in all)" in email.text and "ISS-0001 Ana on Plan an outing: The Tonight list was empty" in email.text
     assert "/#issues/ISS-0001" in email.html
     assert "/#issues" in email.html and "The Tonight list was empty" in email.html
 
@@ -71,3 +71,35 @@ def test_every_report_has_a_ticket_number_admins_can_search(client, user_token, 
     assert find("dolphin") == [second["key"]]  # words in the report
     assert find("ana@example") == [second["key"], first["key"]]  # the sender's email, newest first
     assert find("ISS-9999") == []
+
+
+def test_feature_requests_are_numbered_apart_and_filtered(client, user_token, admin_token, db):
+    """CC-95: a report can be a feature request: FR- numbers of its own, a kind filter, and in the recap."""
+    issues_router.report_limiter.reset()
+    h, admin = auth(user_token), auth(admin_token)
+    bug = client.post("/issues", json=REPORT, headers=h).json()
+    idea = client.post("/issues", json={"kind": "feature", "what_happened": "A map of the venues", "expected": "To plan by area"}, headers=h).json()
+    bug2 = client.post("/issues", json={**REPORT, "what_happened": "The dolphin overlaps"}, headers=h).json()
+    assert [(r["key"], r["kind"]) for r in (bug, idea, bug2)] == [("ISS-0001", "issue"), ("FR-0001", "feature"), ("ISS-0002", "issue")]
+    assert client.post("/issues", json={**REPORT, "kind": "praise"}, headers=h).status_code == 422
+    assert [m["key"] for m in client.get("/me/issues", headers=h).json()] == ["ISS-0002", "FR-0001", "ISS-0001"]
+    keys = lambda **p: [i["key"] for i in client.get("/admin/issues", params=p, headers=admin).json()["items"]]
+    assert keys(kind="feature") == ["FR-0001"] and keys(kind="issue") == ["ISS-0002", "ISS-0001"]
+    assert keys(q="FR-1") == ["FR-0001"] and keys(q="fr 0001") == ["FR-0001"] and keys(q="ISS-1") == ["ISS-0001"]
+    assert keys(q="1") == ["FR-0001", "ISS-0001"]  # a bare number finds it in either kind
+    client.patch(f"/admin/issues/{bug['id']}", json={"status": "fixed"}, headers=admin)
+    page = client.get("/admin/issues", headers=admin).json()
+    assert page["counts"] == {"new": 2, "fixed": 1} and page["kinds"] == {"issue": 1, "feature": 1}  # kinds: open ones
+    assert client.get("/admin/issues", params={"kind": "feature"}, headers=admin).json()["counts"] == {"new": 1}
+    email = build_recap(db)
+    assert "2 issues reported, 1 feature requested" in email.subject
+    assert "FR-0001 Ana on -: A map of the venues" in email.text and "/#issues/FR-0001" in email.html
+
+
+def test_old_reports_keep_their_numbers(client, user_token, db):
+    """Reports from before CC-95 are issues numbered by their id (the migration sets number = id); new ones follow."""
+    from app.models import IssueReport
+    db.add(IssueReport(kind="issue", number=7, what_happened="From before", user_id=None))
+    db.commit()
+    issues_router.report_limiter.reset()
+    assert client.post("/issues", json=REPORT, headers=auth(user_token)).json()["key"] == "ISS-0008"

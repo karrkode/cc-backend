@@ -421,10 +421,14 @@ class AttendedShare(Base):
 
 class IssueReport(Base):
     """CC-84: a signed-in member's report of a problem with the site. Admins set its status and can add a
-    note the member sees beside it on Your account."""
+    note the member sees beside it on Your account. CC-95: or a feature request (kind "feature"); each kind
+    is numbered on its own (ISS-0007, FR-0002)."""
     __tablename__ = "issue_reports"
+    __table_args__ = (UniqueConstraint("kind", "number", name="uq_issue_reports_kind_number"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    kind: Mapped[str] = mapped_column(String(10), default="issue", server_default="issue", index=True)  # issue | feature
+    number: Mapped[int] = mapped_column(Integer)  # within its kind; reports from before CC-95 kept their ISS- numbers
     user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
     what_happened: Mapped[str] = mapped_column(Text)
     expected: Mapped[str] = mapped_column(Text, default="")
@@ -441,8 +445,8 @@ class IssueReport(Base):
 
     @property
     def key(self) -> str:
-        """Its ticket number, e.g. ISS-0007: told to the member, and searchable on the Issues page."""
-        return f"ISS-{self.id:04d}"
+        """Its ticket number, e.g. ISS-0007 or FR-0002: told to the member, and searchable on the Issues page."""
+        return f"{'FR' if self.kind == 'feature' else 'ISS'}-{self.number:04d}"
 
 
 class SheetSync(Base):

@@ -733,10 +733,12 @@ class PendingInviteOut(BaseModel):
 
 # ---- issue reports (CC-84) --------------------------------------------------------------
 
-IssueStatus = Literal["new", "looking", "fixed", "wont_fix"]
+IssueStatus = Literal["new", "looking", "fixed", "wont_fix"]  # a feature request shows them as New, Considering, Done, Not planned (CC-95)
+IssueKind = Literal["issue", "feature"]
 
 
 class IssueIn(BaseModel):
+    kind: IssueKind = "issue"  # CC-95: or a feature request (what_happened is then the idea, expected why it'd help)
     what_happened: str = Field(min_length=3, max_length=2000)
     expected: str = Field(default="", max_length=1000)
     page: str = Field(default="", max_length=200)
@@ -753,7 +755,8 @@ class IssueIn(BaseModel):
 class IssueOut(ORM):
     """A report as its member sees it: its ticket number, what they wrote, its status, and an admin's note."""
     id: int
-    key: str  # the ticket number, ISS-0007
+    key: str  # the ticket number, ISS-0007 or FR-0002
+    kind: IssueKind
     what_happened: str
     expected: str
     page: str
@@ -777,7 +780,8 @@ class IssueAdminOut(IssueOut):
 
 class IssuePage(BaseModel):
     items: list[IssueAdminOut]
-    counts: dict[str, int]
+    counts: dict[str, int]  # by status, of the kind shown (every kind when there's no filter)
+    kinds: dict[str, int] = {}  # CC-95: how many of each kind, open (new or looking) ones only
 
 
 class IssuePatch(BaseModel):
