@@ -1,4 +1,4 @@
-"""The site's own emails: confirming an address, resetting a password, and the weekly discovery recap.
+"""The site's own emails: confirming an address, resetting a password, crew invites, and the weekly discovery recap.
 
 How an email goes out depends on settings.email_mode:
 - ses: Amazon SES (production). The SES identity lives in us-east-1 (infra/aws/ses.tf).
@@ -148,6 +148,33 @@ To choose a new one, open this link:
 
 The link works once and expires in {s.reset_link_minutes} minutes. Resetting your password signs
 you out everywhere. If you didn't ask for this, ignore this email; your password stays the same.
+
+Culture Crew
+{s.site_url}
+""")
+
+
+def _one_line(text: str) -> str:
+    return " ".join(text.split())  # a crew or member name never breaks the subject or a line
+
+
+def crew_invite(to: str, inviter: str, crew: str, days: int) -> Email:
+    """CC-83: someone was invited to a crew by email. Says who and which crew, never who else is in it,
+    and reads the same whether or not the address has an account."""
+    s = get_settings()
+    inviter, crew = _one_line(inviter), _one_line(crew)
+    confirm = " (a new account confirms its email address first)" if s.require_verified_email else ""
+    return Email(to, f"{inviter} wants you to be part of their crew!", f"""Hi,
+
+{inviter} invited you to their crew "{crew}" on Culture Crew, to find and plan Chicago
+culture outings together.
+
+To join, sign in or create an account with this email address{confirm}, then accept
+the invite under "Waiting for you":
+
+{s.site_url}/#account
+
+The invite waits for {days} days. If you don't know {inviter}, you can ignore this email.
 
 Culture Crew
 {s.site_url}
