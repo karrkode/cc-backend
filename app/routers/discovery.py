@@ -269,6 +269,8 @@ def accept(item_id: int, db: DB, _: AdminUser):
             event.cost_text = found or ""
         elif field == "weekly":
             event.weekly = found or {}
+        elif field == "weeks":
+            event.weeks = found or {}
     if event.end_date:
         event.open_run = False
     if event.begin_date and event.end_date and event.end_date < event.begin_date:

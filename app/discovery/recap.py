@@ -29,7 +29,7 @@ from .readers import cost_usd
 from .store import venue_for
 
 DAYS = 7
-CHANGE_NAMES = {"cost_text": "Price", "min_price": "Lowest price", "begin_date": "Opens", "end_date": "Closes", "weekly": "Show days"}
+CHANGE_NAMES = {"cost_text": "Price", "min_price": "Lowest price", "begin_date": "Opens", "end_date": "Closes", "weekly": "Show days", "weeks": "Weeks of the month"}
 EVERY = {7: "Every week", 14: "Every 2 weeks", 30: "Every month", 60: "Every 2 months"}
 MAX_UPDATES = 20
 # the site's daytime ("Paper and signal") colors
@@ -52,6 +52,8 @@ def _change(field_name: str, v) -> str:
         return "free" if v == 0 else f"${v:g}"
     if field_name == "weekly":
         return show_days_text(v)
+    if field_name == "weeks":
+        return "; ".join(f"{d.capitalize()}: " + " and ".join(ORDINALS[w] for w in ws) for d, ws in v.items()) or "every week"
     return str(v)
 
 
@@ -60,9 +62,16 @@ def _clock(t: str) -> str:
     return f"{(h % 12) or 12}{f':{m:02d}' if m else ''} {'AM' if h < 12 else 'PM'}"
 
 
-def show_days_text(weekly: dict) -> str:
-    """{"thu": ["20:00"], "fri": ["20:00", "22:30"]} -> "Thu 8 PM; Fri 8 PM and 10:30 PM" (CC-88)."""
-    return "; ".join(f"{d.capitalize()} " + " and ".join(map(_clock, ts)) for d, ts in weekly.items() if ts) or "none"
+ORDINALS = {1: "1st", 2: "2nd", 3: "3rd", 4: "4th", 5: "last"}
+
+
+def show_days_text(weekly: dict, weeks: dict | None = None) -> str:
+    """{"thu": ["20:00"], "fri": ["20:00", "22:30"]} -> "Thu 8 PM; Fri 8 PM and 10:30 PM" (CC-88); with weeks
+    {"thu": [1, 3]}, "1st and 3rd Thu 8 PM; ..."."""
+    def day(d: str) -> str:
+        on = (weeks or {}).get(d)
+        return (" and ".join(ORDINALS[w] for w in on) + " " if on else "") + d.capitalize()
+    return "; ".join(f"{day(d)} " + " and ".join(map(_clock, ts)) for d, ts in weekly.items() if ts) or "none"
 
 
 def _n(n: int, word: str) -> str:

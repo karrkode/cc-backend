@@ -33,6 +33,8 @@ class Performance(BaseModel):
 class ShowDay(BaseModel):
     weekday: Literal["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
     times: list[str] = Field(description="24-hour HH:MM start times on that day")
+    weeks: list[int] = Field(default_factory=list, description="Only if it's on some weeks of the month: 1-4 for the "
+                             "first to fourth, 5 for the last. Empty means every week")
 
 
 class FoundEvent(BaseModel):
@@ -72,7 +74,8 @@ List each event once:
   (a weekly comedy show, an open mic, a jazz night) is one event; with no end date it has open_run true.
   List the dates shown in `performances`.
 - When the page gives a regular weekly schedule ("Thursdays to Saturdays at 8 PM, Sundays at 3 PM",
-  "every Monday at 7:30"), put it in `show_days`: each weekday with its start times.
+  "every Monday at 7:30"), put it in `show_days`: each weekday with its start times. A day that's only on
+  some weeks of the month ("first and third Thursdays", "the last Sunday of the month") gives those weeks.
 - A museum exhibition is one event with its opening and closing dates. One-off talks, tours and
   programs are events too (kind talk, tour or program).
 Mark, rather than leave out, these kinds so they can be filtered: classes and workshops (kind class),

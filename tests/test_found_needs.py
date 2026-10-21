@@ -163,3 +163,45 @@ def test_the_recap_counts_events_waiting_for_a_date(db):
     email = build_recap(db)
     assert "2 events need a date or show days. We read their pages again each week for up to 4 weeks:" in email.text
     assert "found/needs" in email.text and "2 events need" in email.html
+
+
+def test_show_days_on_some_weeks_of_the_month(client, admin_token, user_token, db, make_event):
+    s = make_source(db)
+    no_show_times(s)
+    record(db, s, found("First and Third", "https://goodman.example/ft", kind="comedy_show", category="Comedy", open_run=True,
+                        show_days=[ShowDay(weekday="thu", times=["20:00"], weeks=[3, 1, 9]), ShowDay(weekday="sun", times=["19:00"])]), "")
+    db.commit()
+    item = item_named(db, "First and Third")
+    assert item.weekly == {"thu": ["20:00"], "sun": ["19:00"]} and item.weeks == {"thu": [1, 3]}  # Sunday: every week
+    assert show_days_text(item.weekly, {"thu": [1, 3], "sun": [5]}) == "1st and 3rd Thu 8 PM; last Sun 7 PM"
+
+    h = auth(admin_token)
+    body = {"title": "First and Third", "category": "Comedy", "venue_id": s.venue_id, "open_run": True, "publish": "now",
+            "weekly": {"thu": ["20:00"]}, "weeks": {"thu": [3, 1], "fri": [2]}}  # Friday isn't a show day, so it's dropped
+    r = client.post(f"/admin/discovery/items/{item.id}/approve", json=body, headers=h)
+    event = db.get(Event, r.json()["event"]["id"])
+    assert r.status_code == 200 and event.weeks == {"thu": [1, 3]}
+    assert client.get(f"/events/{event.id}").json()["schedule"]["weeks"] == {"thu": [1, 3]}
+
+    # editing: weeks for a day that's no longer a show day go; {} is every week again
+    assert client.patch(f"/events/{event.id}", json={"weekly": {"sun": ["19:00"]}}, headers=h).status_code == 200
+    db.expire_all()
+    assert db.get(Event, event.id).weeks == {}
+    assert client.patch(f"/events/{event.id}", json={"weekly": {"sun": ["19:00"]}, "weeks": {"sun": [5]}}, headers=h).json()["schedule"]["weeks"] == {"sun": [5]}
+    assert client.patch(f"/events/{event.id}", json={"weeks": {"sun": [6]}}, headers=h).status_code == 422
+
+    # members can send them too
+    sub = {"title": "Monthly Play", "category": "Theater", "begin_date": "2030-01-10", "venue": {"name": "Tiny Stage"},
+           "weekly": {"sat": ["14:00"]}, "weeks": {"sat": [2]}}
+    r = client.post("/events", json=sub, headers=auth(user_token))
+    assert r.status_code == 201 and db.get(Event, r.json()["id"]).weeks == {"sat": [2]}
+
+    # found for an event already listed without show days: both are proposed, and Accept applies both
+    listed = make_event("Monthly Jam", venue_name="Goodman Theatre", neighborhood="Loop")
+    record(db, s, found("Monthly Jam", show_days=[ShowDay(weekday="tue", times=["21:00"], weeks=[5])]), "")
+    db.commit()
+    jam = item_named(db, "Monthly Jam")
+    assert jam.changes == {"weekly": [None, {"tue": ["21:00"]}], "weeks": [None, {"tue": [5]}]}
+    client.post(f"/admin/discovery/items/{jam.id}/accept", headers=h)
+    db.expire_all()
+    assert (db.get(Event, listed.id).weekly, db.get(Event, listed.id).weeks) == ({"tue": ["21:00"]}, {"tue": [5]})

@@ -45,7 +45,7 @@ def fields_of(e: FoundEvent) -> dict:
     return {"title": e.title.strip()[:300], "url": (e.url or "")[:2000], "kind": e.kind, "category": e.category,
             "venue_name": (e.venue_name or "")[:200], "begin_date": _date(e.begin_date), "end_date": _date(e.end_date),
             "open_run": e.open_run, "cost_text": (e.cost_text or "")[:120], "min_price": _price(e.min_price),
-            "performances": [p.model_dump() for p in e.performances][:400], "weekly": weekly_of(e)}
+            "performances": [p.model_dump() for p in e.performances][:400], "weekly": weekly_of(e), "weeks": weeks_of(e)}
 
 
 DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
@@ -70,6 +70,13 @@ def weekly_of(e: FoundEvent) -> dict:
     return {d: got[d] for d in DAYS if d in got}
 
 
+def weeks_of(e: FoundEvent) -> dict:
+    """CC-88: the show days that are on some weeks of the month only, {"thu": [1, 3]}; every week is left out."""
+    weekly = weekly_of(e)
+    got = {d.weekday: sorted({w for w in d.weeks if 1 <= w <= 5}) for d in e.show_days if d.weekday in weekly and d.weeks}
+    return {d: got[d] for d in DAYS if got.get(d)}
+
+
 KEEP_IF_MISSING = ("begin_date", "end_date", "cost_text", "min_price", "performances", "weekly")
 
 
@@ -78,6 +85,8 @@ def _refresh(item: DiscoveredItem, f: dict) -> None:
     without the price the list gave) doesn't erase what was already found (CC-88)."""
     for k, v in f.items():
         if k in KEEP_IF_MISSING and v in (None, "", [], {}) and getattr(item, k) not in (None, "", [], {}):
+            continue
+        if k == "weeks" and not f["weekly"] and item.weekly:  # the show days were kept, so their weeks are too
             continue
         setattr(item, k, v)
 
@@ -167,6 +176,8 @@ def changes_against(event: Event, f: dict) -> dict:
             out[k] = [None if getattr(event, k) is None else getattr(event, k).isoformat(), f[k].isoformat()]
     if f.get("weekly") and not event.weekly:  # CC-88: show days for an event that has none; an admin's are kept
         out["weekly"] = [None, f["weekly"]]
+        if f.get("weeks"):
+            out["weeks"] = [None, f["weeks"]]
     return out
 
 
