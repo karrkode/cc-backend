@@ -1,4 +1,4 @@
-"""CC-98: the Cultural Journal: three words, a review and "Would you recommend?" on an "I've been" mark,
+"""CC-98: the Cultural Journal: three words (required), a review and "Would you recommend?" on an "I've been" mark,
 private to its owner, and gone with the mark."""
 from datetime import timedelta
 
@@ -16,7 +16,7 @@ def journal(client, h, ev, **body):
 
 def test_save_and_reload_an_entry(client, make_event, user_token):
     h, hamlet = auth(user_token), make_event("Hamlet")
-    assert journal(client, h, hamlet, words="Moody").status_code == 404  # not been yet
+    assert journal(client, h, hamlet, words="moody dark grand").status_code == 404  # not been yet
     been(client, h, hamlet)
     row = client.get("/me/attended", headers=h).json()[0]
     assert (row["words"], row["review"], row["recommend"]) == ("", "", False)  # an empty entry is fine
@@ -24,18 +24,20 @@ def test_save_and_reload_an_entry(client, make_event, user_token):
     assert r.status_code == 200 and r.json() == {"words": "dark and stormy", "review": "Loved the ghost.", "recommend": True}
     row = client.get("/me/attended", headers=h).json()[0]
     assert (row["words"], row["review"], row["recommend"]) == ("dark and stormy", "Loved the ghost.", True)
-    assert journal(client, h, hamlet).json() == {"words": "", "review": "", "recommend": False}  # cleared
+    assert journal(client, h, hamlet, words="dark and stormy").json() == {"words": "dark and stormy", "review": "", "recommend": False}  # review and recommend are optional
 
 
 def test_limits(client, make_event, user_token):
     h, hamlet = auth(user_token), make_event("Hamlet")
     been(client, h, hamlet)
-    r = journal(client, h, hamlet, words="one two three four")
-    assert r.status_code == 422 and "three words" in r.text
-    assert journal(client, h, hamlet, words="x" * 21).status_code == 422  # a box holds up to 20 characters
+    for words in ("one two three four", "one two", ""):
+        r = journal(client, h, hamlet, words=words)
+        assert r.status_code == 422 and "three words" in r.text, words  # the three words are required
+    assert journal(client, h, hamlet, review="Just a review").status_code == 422
+    assert journal(client, h, hamlet, words="x" * 21 + " b c").status_code == 422  # a box holds up to 20 characters
     assert journal(client, h, hamlet, words=" ".join(["heart-felt" + "x" * 10] * 3)).status_code == 200
-    assert journal(client, h, hamlet, review="x" * 1001).status_code == 422
-    assert journal(client, h, hamlet, review="x" * 1000).status_code == 200
+    assert journal(client, h, hamlet, words="a b c", review="x" * 1001).status_code == 422
+    assert journal(client, h, hamlet, words="a b c", review="x" * 1000).status_code == 200
 
 
 def test_newest_first_and_gone_with_the_mark(client, make_event, user_token, db):
@@ -48,7 +50,7 @@ def test_newest_first_and_gone_with_the_mark(client, make_event, user_token, db)
         mark.created_at = mark.created_at - timedelta(days=10 - i)
     db.commit()
     assert [r["event"]["title"] for r in client.get("/me/attended", headers=h).json()][:5] == [f"Show {i}" for i in (5, 4, 3, 2, 1)]
-    journal(client, h, events[5], words="gone soon")
+    journal(client, h, events[5], words="gone too soon")
     assert client.delete(f"/me/attended/{events[5].id}", headers=h).status_code == 204
     been(client, h, events[5])
     row = next(r for r in client.get("/me/attended", headers=h).json() if r["event"]["id"] == events[5].id)
@@ -60,8 +62,8 @@ def test_nobody_else_sees_it(client, make_event, admin_token):
     plan(client, p["Ben"], hamlet)
     share(client, p["Ben"], hamlet, [crew["id"]])
     been(client, p["Ben"], hamlet)  # Ana's crew sees Ben's been (CC-93), but never his journal
-    assert journal(client, p["Ben"], hamlet, words="Secretword", review="Privatereview", recommend=True).status_code == 200
-    assert journal(client, p["Ana"], hamlet, words="mine").status_code == 404  # Ana can't write to Ben's mark
+    assert journal(client, p["Ben"], hamlet, words="Secretword big bold", review="Privatereview", recommend=True).status_code == 200
+    assert journal(client, p["Ana"], hamlet, words="mine all mine").status_code == 404  # Ana can't write to Ben's mark
     admin = auth(admin_token)
     seen = [client.get("/crews", headers=p["Ana"]), client.get(f"/events/{hamlet.id}", headers=p["Ana"]),
             client.get("/me/attended", headers=p["Ana"]), client.get(f"/events/{hamlet.id}", headers=admin),

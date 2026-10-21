@@ -104,7 +104,7 @@ def mark_attended(event_id: int, db: DB, user: CurrentUser, response: Response):
 
 @router.put("/attended/{event_id}/journal", response_model=JournalOut)
 def save_journal(event_id: int, body: JournalIn, db: DB, user: CurrentUser):
-    """CC-98: your Cultural Journal entry for an event you've been to: up to three words, a review, and
+    """CC-98: your Cultural Journal entry for an event you've been to: three words (required), a review, and
     whether you'd recommend it. Private: only /me/attended ever returns it. Un-marking deletes it."""
     mark = db.get(Attended, (user.id, event_id))
     if mark is None:

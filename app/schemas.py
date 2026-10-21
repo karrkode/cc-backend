@@ -491,8 +491,9 @@ class PhotoOut(ORM):
 
 
 class JournalIn(BaseModel):
-    """CC-98: your Cultural Journal entry for an event you've been to. Every field is optional."""
-    words: str = Field(default="", max_length=62)  # up to three words to describe it, each up to 20 characters
+    """CC-98: your Cultural Journal entry for an event you've been to: three words (required), then a review
+    and whether you'd recommend it (both optional)."""
+    words: str = Field(max_length=62)  # exactly three words to describe it, each up to 20 characters
     review: str = Field(default="", max_length=1000)
     recommend: bool = False
 
@@ -504,8 +505,8 @@ class JournalIn(BaseModel):
     @field_validator("words")
     @classmethod
     def _three_words(cls, v: str) -> str:
-        if len(v.split()) > 3:
-            raise ValueError("Use up to three words")
+        if len(v.split()) != 3:
+            raise ValueError("Give three words")
         if any(len(w) > 20 for w in v.split()):
             raise ValueError("Keep each word to 20 characters")
         return " ".join(v.split())
