@@ -490,10 +490,41 @@ class PhotoOut(ORM):
     url: str = ""
 
 
+class JournalIn(BaseModel):
+    """CC-98: your Cultural Journal entry for an event you've been to: three words (required), then a review
+    and whether you'd recommend it (both optional)."""
+    words: str = Field(max_length=62)  # exactly three words to describe it, each up to 20 characters
+    review: str = Field(default="", max_length=1000)
+    recommend: bool = False
+
+    @field_validator("words", "review")
+    @classmethod
+    def _trimmed(cls, v: str) -> str:
+        return v.strip()
+
+    @field_validator("words")
+    @classmethod
+    def _three_words(cls, v: str) -> str:
+        if len(v.split()) != 3:
+            raise ValueError("Give three words")
+        if any(len(w) > 20 for w in v.split()):
+            raise ValueError("Keep each word to 20 characters")
+        return " ".join(v.split())
+
+
+class JournalOut(ORM):
+    words: str
+    review: str
+    recommend: bool
+
+
 class AttendedOut(ORM):
     event: EventOut
     created_at: datetime
     photo: PhotoOut | None = None  # CC-76: your photo from it, if you added one
+    words: str = ""  # CC-98: your journal entry for it (only ever sent to you)
+    review: str = ""
+    recommend: bool = False
 
 
 class FoundChange(BaseModel):
