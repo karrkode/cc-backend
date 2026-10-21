@@ -32,6 +32,11 @@ def get_or_create_venue(db: DB, v: VenueIn) -> Venue:
 Sort = Literal["start", "closing", "opening", "az", "price"]
 
 
+def price_or_usual():
+    """CC-89: the event's own lowest price, else its venue's standard one (the query joins Venue)."""
+    return func.coalesce(Event.min_price, Venue.standard_min_price)
+
+
 def _order(sort: Sort, today: date):
     """ORDER BY for each sort the site offers; every one ends in a stable tie-break."""
     closing = (Event.end_date.asc().nulls_last(), Event.sort_title, Event.id)
@@ -42,8 +47,8 @@ def _order(sort: Sort, today: date):
         return (upcoming.asc().nulls_last(), *closing)
     if sort == "az":
         return (Event.sort_title, Event.id)
-    if sort == "price":  # cheapest first; "price not posted" last
-        return (Event.min_price.asc().nulls_last(), *closing)
+    if sort == "price":  # cheapest first, the venue's standard cost standing in (CC-89); "price not posted" last
+        return (price_or_usual().asc().nulls_last(), *closing)
     return (Event.begin_date.asc().nulls_first(), Event.title, Event.id)  # start: TBD first, as the old site
 
 
@@ -111,7 +116,7 @@ def list_events(
     if date_to:  # already started by date_to
         conds.append(or_(Event.begin_date.is_(None), Event.begin_date <= date_to))
     if max_price is not None:
-        conds.append(Event.min_price <= max_price)  # "price not posted" (NULL) drops out
+        conds.append(price_or_usual() <= max_price)  # "price not posted" anywhere (NULL) drops out
 
     total = db.scalar(select(func.count(Event.id)).join(Venue).where(*conds))
     rows = db.scalars(select(Event).join(Venue).where(*conds)

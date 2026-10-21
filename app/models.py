@@ -151,7 +151,9 @@ class EmailToken(Base):
 class Venue(Base):
     __tablename__ = "venues"
     # Same name, different neighborhood = different location (e.g. The Second City runs two).
-    __table_args__ = (UniqueConstraint("name", "neighborhood", name="uq_venues_name_neighborhood"),)
+    __table_args__ = (UniqueConstraint("name", "neighborhood", name="uq_venues_name_neighborhood"),
+                      CheckConstraint("standard_min_price IS NULL OR standard_min_price >= 0",
+                                      name="ck_venues_standard_min_price_not_negative"))
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(200))
@@ -169,6 +171,10 @@ class Venue(Base):
     open_hours_by: Mapped[str] = mapped_column(String(20), default="", server_default="")
     show_times: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
     show_times_by: Mapped[str] = mapped_column(String(20), default="", server_default="")
+    # CC-89: what it usually costs ("Free", "$25 general admission"), shown on its events that don't post a price,
+    # and used by the price filters and sort; never copied into events. standard_min_price: 0 = free, NULL = none set
+    standard_cost: Mapped[str] = mapped_column(String(120), default="", server_default="")
+    standard_min_price: Mapped[Decimal | None] = mapped_column(Numeric(8, 2))
 
 
 class Event(Base):
