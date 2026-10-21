@@ -58,7 +58,7 @@ def _member_crew(db: DB, crew_id: int, user: User) -> Crew:
 def _owned_crew(db: DB, crew_id: int, user: User) -> Crew:
     crew = _member_crew(db, crew_id, user)
     if crew.owner_id != user.id:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only the crew's owner can do that")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only the crew leader can do that")
     return crew
 
 
@@ -92,7 +92,7 @@ def my_crews(db: DB, user: CurrentUser):
 def start_crew(body: CrewIn, db: DB, user: CurrentUser):
     owned = db.scalar(select(func.count()).select_from(Crew).where(Crew.owner_id == user.id))
     if owned >= MAX_OWNED:
-        raise HTTPException(status.HTTP_409_CONFLICT, f"You can start up to {MAX_OWNED} crews. Hand one over or delete one first.")
+        raise HTTPException(status.HTTP_409_CONFLICT, f"You can start up to {MAX_OWNED} crews. Hand one over or dissolve one first.")
     crew = Crew(name=body.name, description=body.description, owner_id=user.id)
     crew.members.append(CrewMember(user_id=user.id))
     db.add(crew)
@@ -145,7 +145,7 @@ def revoke_invite(crew_id: int, invite_id: int, db: DB, user: CurrentUser):
     if invite is None or invite.crew_id != crew.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Invite not found")
     if invite.created_by != user.id and crew.owner_id != user.id:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only whoever made this link, or the owner, can revoke it")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only whoever made this link, or the crew leader, can revoke it")
     invite.revoked_at = invite.revoked_at or datetime.now(UTC)
     db.commit()
 
@@ -188,7 +188,7 @@ def leave(crew_id: int, db: DB, user: CurrentUser):
     """Leave a crew. The owner hands it to someone first; an owner who's the only member deletes it instead."""
     crew = _member_crew(db, crew_id, user)
     if crew.owner_id == user.id:
-        raise HTTPException(status.HTTP_409_CONFLICT, "You own this crew. Hand it to another member first, or delete it.")
+        raise HTTPException(status.HTTP_409_CONFLICT, "You lead this crew. Hand it to another member first, or dissolve it.")
     crew.members = [m for m in crew.members if m.user_id != user.id]
     unshare(db, user.id, crew_id=crew.id)  # CC-75: your plans leave with you
     unshare_been(db, user.id, crew_id=crew.id)  # CC-93: and your "I've been" marks
@@ -199,7 +199,7 @@ def leave(crew_id: int, db: DB, user: CurrentUser):
 def remove_member(crew_id: int, user_id: uuid.UUID, db: DB, user: CurrentUser):
     crew = _owned_crew(db, crew_id, user)
     if user_id == user.id:
-        raise HTTPException(status.HTTP_409_CONFLICT, "You can't remove yourself. Hand the crew over, or delete it.")
+        raise HTTPException(status.HTTP_409_CONFLICT, "You can't remove yourself. Hand the crew over, or dissolve it.")
     if not any(m.user_id == user_id for m in crew.members):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not a member of this crew")
     crew.members = [m for m in crew.members if m.user_id != user_id]
@@ -268,7 +268,7 @@ def cancel_email_invite(crew_id: int, invite_id: int, db: DB, user: CurrentUser)
     if invite is None or invite.crew_id != crew.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Invite not found")
     if invite.invited_by != user.id and crew.owner_id != user.id:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only whoever sent this invite, or the owner, can cancel it")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only whoever sent this invite, or the crew leader, can cancel it")
     db.delete(invite)
     db.commit()
 
