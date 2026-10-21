@@ -224,7 +224,7 @@ SENT = "Invite sent. They'll see it when they sign in."
 
 
 def _sees_invites(user: User) -> bool:
-    """With require_verified_email on (once SES can reach everyone, CC-46), only a confirmed address sees them."""
+    """With require_verified_email on (in production, CC-46), only a confirmed address sees them."""
     return user.email_verified or not get_settings().require_verified_email
 
 

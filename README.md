@@ -105,8 +105,8 @@ docker compose logs api | grep -A12 "Email to"
 
 In production the API sends through Amazon SES (`EMAIL_BACKEND=ses`; the SES setup is in
 `infra/aws/ses.tf`). With no `EMAIL_BACKEND` set, production skips emails rather than logging
-their links. `REQUIRE_VERIFIED_EMAIL=true` makes people confirm their address before submitting
-events; it stays off until SES can reach every inbox (production access).
+their links. People must confirm their address before submitting events or seeing crew invites by email
+(`REQUIRE_VERIFIED_EMAIL`): on in production by default, off locally. Admins are never held up.
 
 To make your own account an admin instead, register through `/docs` (POST /auth/register), then:
 
