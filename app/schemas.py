@@ -100,6 +100,8 @@ class VenueOut(ORM):
     neighborhood: str
     area: Area
     region: Region | None  # CC-73: side of town; null if the neighborhood isn't placed yet
+    standard_cost: str = ""  # CC-89: what it usually costs, for its events that don't post a price ("" = none)
+    standard_min_price: float | None = None  # its lowest price in dollars (0 = free)
 
 
 class VenueIn(BaseModel):
@@ -128,6 +130,9 @@ class VenuePatch(BaseModel):
     # CC-78: set by an admin, discovery leaves them alone from then on; {} clears them (discovery may fill them again)
     open_hours: OpenHours | None = None
     show_times: ShowTimes | None = None
+    # CC-89: what it usually costs, as written, with its lowest price (0 = free); "" clears both
+    standard_cost: str | None = Field(default=None, max_length=120)
+    standard_min_price: Decimal | None = Field(default=None, ge=0, max_digits=8, decimal_places=2)
 
 
 class VenueAdminOut(VenueOut):

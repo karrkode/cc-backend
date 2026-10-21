@@ -53,7 +53,8 @@ def _admin_out(venue: Venue, counts: dict[int, int]) -> VenueAdminOut:
     return VenueAdminOut(id=venue.id, name=venue.name, neighborhood=venue.neighborhood, area=venue.area,
                          region=venue.region, events=counts.get(venue.id, 0), open_hours=venue.open_hours or {},
                          open_hours_by=venue.open_hours_by or "", show_times=venue.show_times or {},
-                         show_times_by=venue.show_times_by or "")
+                         show_times_by=venue.show_times_by or "", standard_cost=venue.standard_cost or "",
+                         standard_min_price=None if venue.standard_min_price is None else float(venue.standard_min_price))
 
 
 @router.get("/manage", response_model=list[VenueAdminOut])
@@ -96,6 +97,9 @@ def update_venue(venue_id: int, body: VenuePatch, db: DB, _: AdminUser):
             value = {day: (list(v) if isinstance(v, tuple) else v) for day, v in changes[field].items()}
             setattr(venue, field, value)
             setattr(venue, field + "_by", "admin" if value else "")
+    if changes.get("standard_cost") is not None:  # CC-89: set together; the price goes with the words
+        venue.standard_cost = changes["standard_cost"].strip()
+        venue.standard_min_price = changes.get("standard_min_price") if venue.standard_cost else None
     db.commit()
     return _admin_out(venue, _counts(db, [venue.id]))
 
@@ -111,6 +115,8 @@ def merge_venue(venue_id: int, other_id: int, db: DB, _: AdminUser):
         if not getattr(into, field) and getattr(venue, field):
             setattr(into, field, getattr(venue, field))
             setattr(into, field + "_by", getattr(venue, field + "_by"))
+    if not into.standard_cost and venue.standard_cost:  # CC-89: and its standard cost
+        into.standard_cost, into.standard_min_price = venue.standard_cost, venue.standard_min_price
     db.delete(venue)
     db.commit()
     return VenueMergeOut(moved=moved, into=into)
