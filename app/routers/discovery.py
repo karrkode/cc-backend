@@ -2,6 +2,7 @@ import csv
 import io
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
@@ -9,10 +10,11 @@ from sqlalchemy import func, select
 
 from ..deps import DB, AdminUser
 from ..discovery.budget import budget_state, set_monthly_budget
+from ..discovery.needs import needs
 from ..discovery.readers import cost_usd
 from ..discovery.rules import norm_title
 from ..discovery.store import matching_rule, possible_duplicates, rule_reason, sync_performances, venue_for
-from ..models import DiscoveredItem, DiscoveryCheck, DiscoverySource, Event, SkipRule
+from ..models import DiscoveredItem, DiscoveryCheck, DiscoverySource, Event, SkipRule, Venue
 from ..schemas import (BudgetIn, DiscoveredItemOut, DiscoveredPage, DiscoveryOverview, DiscoverySourceOut, DiscoverySourcePatch,
                        EventIn, EventRef, FoundChange, RejectIn, RejectOut, SkipRuleOut, UnreadableSource)
 from .events import new_event
@@ -94,8 +96,8 @@ def check_now(source_id: int, db: DB, _: AdminUser):
 
 # ---- review (CC-71) ---------------------------------------------------------------
 
-Show = Literal["waiting", "new", "update", "approved", "rejected", "skipped", "listed", "all"]
-SHOWS = {"waiting": ["new", "update"], "all": None}
+Show = Literal["waiting", "needs", "new", "update", "approved", "rejected", "skipped", "listed", "all"]
+SHOWS = {"waiting": ["new", "update"], "needs": ["new"], "all": None}  # needs: new ones missing a date or show days (CC-88)
 Has = Literal["any", "listed", "none"]  # CC-82: has a price (or "Free") / has an opening or closing date
 
 
@@ -138,6 +140,9 @@ def _item_out(db: DB, item: DiscoveredItem, dups: dict | None = None) -> Discove
         if not item.venue_name or norm_title(item.venue_name) == norm_title(item.source.venue_name):
             out.neighborhood = item.source.neighborhood
     out.dates_listed = len(item.performances or [])
+    out.dates_timed = any(p.get("time") for p in item.performances or [])
+    out.venue_show_times = venue.show_times if venue is not None else {}
+    out.needs = needs(item, venue) if item.status == "new" else ""
     out.proposed = [FoundChange(field=k, listed=v[0], found=v[1]) for k, v in (item.changes or {}).items()] \
         if item.status == "update" else []
     event = db.get(Event, item.event_id) if item.event_id else None
@@ -153,12 +158,19 @@ def items(db: DB, _: AdminUser, show: Show = "waiting", source: int | None = Non
     """Found events for review, newest first: new events and proposed updates ("waiting"), or one
     status; optionally only those with (or without) a price, or dates. Also the count per status
     under the same filters, and the sources that couldn't be read, for a manual look."""
-    q = _filtered(show, source, price, dates)
-    total = db.scalar(select(func.count()).select_from(q.subquery()))
-    rows = db.scalars(q.order_by(DiscoveredItem.first_seen_at.desc(), DiscoveredItem.id.desc()).limit(limit).offset(offset)).all()
+    q = _filtered(show, source, price, dates).order_by(DiscoveredItem.first_seen_at.desc(), DiscoveredItem.id.desc())
+    missing = [i for i in db.scalars(_filtered("needs", source, price, dates)) if needs(i, venue_for(db, i.source, i))]
+    if show == "needs":  # worked out here, not in SQL: it depends on the venue's usual show times
+        ids = {i.id for i in missing}
+        matching = [i for i in db.scalars(q) if i.id in ids]
+        total, rows = len(matching), matching[offset:offset + limit]
+    else:
+        total = db.scalar(select(func.count()).select_from(q.subquery()))
+        rows = db.scalars(q.limit(limit).offset(offset)).all()
     dups = possible_duplicates(db, rows)
     counted = _narrowed(select(DiscoveredItem.status, func.count()).group_by(DiscoveredItem.status), source, price, dates)
     counts = dict(db.execute(counted).all())
+    counts["needs"] = len(missing)
     bad = db.scalars(select(DiscoverySource).where(DiscoverySource.active, ~DiscoverySource.manual,
                                                    DiscoverySource.last_status.in_(["blocked", "error"]))
                      .order_by(func.lower(DiscoverySource.name))).all()
@@ -183,12 +195,23 @@ def items_csv(db: DB, _: AdminUser, show: Show = "waiting", source: int | None =
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
+def still_needs(db: DB, item: DiscoveredItem, body: EventIn) -> str:
+    """What the event as it would be approved is missing (CC-88): the item, with what the admin gave."""
+    as_approved = SimpleNamespace(kind=item.kind, category=body.category, begin_date=body.begin_date, end_date=body.end_date,
+                                  open_run=body.open_run, performances=item.performances, weekly=body.weekly)
+    return needs(as_approved, db.get(Venue, body.venue_id) if body.venue_id is not None else None)
+
+
 @router.post("/items/{item_id}/approve", response_model=DiscoveredItemOut)
 def approve(item_id: int, body: EventIn, db: DB, user: AdminUser):
     """Add a found event to the catalog, as edited: live now, at a set time, or waiting for review."""
     item = _item(db, item_id)
     if item.status not in ("new", "rejected", "skipped"):
         raise HTTPException(status.HTTP_409_CONFLICT, "This one is already in the catalog")
+    missing = still_needs(db, item, body)
+    if missing:  # CC-88: the approve form asks for these
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
+                            "Add the date it opens." if missing == "date" else "Choose the days it's on, with a start time for each.")
     event = new_event(db, body, user)
     event.found_by_id = item.source_id
     db.add(event)
@@ -244,6 +267,8 @@ def accept(item_id: int, db: DB, _: AdminUser):
             event.min_price = None if found is None else Decimal(str(found))
         elif field == "cost_text":
             event.cost_text = found or ""
+        elif field == "weekly":
+            event.weekly = found or {}
     if event.end_date:
         event.open_run = False
     if event.begin_date and event.end_date and event.end_date < event.begin_date:

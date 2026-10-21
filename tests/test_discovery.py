@@ -97,7 +97,7 @@ def pages(monkeypatch):
 
 
 def make_source(db, **kw):
-    venue = Venue(name="Goodman Theatre", neighborhood="Loop")
+    venue = Venue(name="Goodman Theatre", neighborhood="Loop", show_times={"thu": ["19:30"]})  # so its shows aren't missing times (CC-88)
     db.add(venue); db.flush()
     s = DiscoverySource(name="Goodman", kind=SourceKind.theater, pages=["https://goodman.example/season"], reader="claude",
                         venue_id=venue.id, venue_name="Goodman Theatre", neighborhood="Loop", every_days=30, page_state={},

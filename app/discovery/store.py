@@ -45,7 +45,41 @@ def fields_of(e: FoundEvent) -> dict:
     return {"title": e.title.strip()[:300], "url": (e.url or "")[:2000], "kind": e.kind, "category": e.category,
             "venue_name": (e.venue_name or "")[:200], "begin_date": _date(e.begin_date), "end_date": _date(e.end_date),
             "open_run": e.open_run, "cost_text": (e.cost_text or "")[:120], "min_price": _price(e.min_price),
-            "performances": [p.model_dump() for p in e.performances][:400]}
+            "performances": [p.model_dump() for p in e.performances][:400], "weekly": weekly_of(e)}
+
+
+DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+
+def _hhmm(t: str | None) -> str | None:
+    try:
+        h, m = (t or "").strip().split(":")[:2]
+        h, m = int(h), int(m)
+    except ValueError:
+        return None
+    return f"{h:02d}:{m:02d}" if 0 <= h < 24 and 0 <= m < 60 else None
+
+
+def weekly_of(e: FoundEvent) -> dict:
+    """CC-88: the show days the reader gave, as an event's weekly pattern: {"thu": ["20:00"]}, days in order."""
+    got = {}
+    for d in e.show_days:
+        times = sorted({t for t in map(_hhmm, d.times) if t})[:6]
+        if times:
+            got[d.weekday] = sorted(set(got.get(d.weekday, [])) | set(times))[:6]
+    return {d: got[d] for d in DAYS if d in got}
+
+
+KEEP_IF_MISSING = ("begin_date", "end_date", "cost_text", "min_price", "performances", "weekly")
+
+
+def _refresh(item: DiscoveredItem, f: dict) -> None:
+    """Take the source's latest details, but a reading that leaves something out (an event's own page
+    without the price the list gave) doesn't erase what was already found (CC-88)."""
+    for k, v in f.items():
+        if k in KEEP_IF_MISSING and v in (None, "", [], {}) and getattr(item, k) not in (None, "", [], {}):
+            continue
+        setattr(item, k, v)
 
 
 def find_listed(db, source: DiscoverySource, f: dict) -> Event | None:
@@ -131,6 +165,8 @@ def changes_against(event: Event, f: dict) -> dict:
     for k in ("begin_date", "end_date"):
         if f[k] and f[k] != getattr(event, k):
             out[k] = [None if getattr(event, k) is None else getattr(event, k).isoformat(), f[k].isoformat()]
+    if f.get("weekly") and not event.weekly:  # CC-88: show days for an event that has none; an admin's are kept
+        out["weekly"] = [None, f["weekly"]]
     return out
 
 
@@ -209,8 +245,7 @@ def _record(db, source: DiscoverySource, found: FoundEvent, skip: str) -> str:
                     setattr(item, k, v)
                 return "update"
         return "seen"
-    for k, v in f.items():
-        setattr(item, k, v)
+    _refresh(item, f)
     if skip and item.status == "new":  # a closer look (the event's own page) showed it's one to leave out
         item.status, item.skip_reason = "skipped", skip[:200]
         return "skipped"

@@ -24,10 +24,12 @@ from ..mail import Email
 from ..models import DiscoveredItem, DiscoveryCheck, DiscoverySource, IssueReport
 from ..stats import CHICAGO
 from .budget import budget_state
+from .needs import needs
 from .readers import cost_usd
+from .store import venue_for
 
 DAYS = 7
-CHANGE_NAMES = {"cost_text": "Price", "min_price": "Lowest price", "begin_date": "Opens", "end_date": "Closes"}
+CHANGE_NAMES = {"cost_text": "Price", "min_price": "Lowest price", "begin_date": "Opens", "end_date": "Closes", "weekly": "Show days"}
 EVERY = {7: "Every week", 14: "Every 2 weeks", 30: "Every month", 60: "Every 2 months"}
 MAX_UPDATES = 20
 # the site's daytime ("Paper and signal") colors
@@ -48,7 +50,19 @@ def _change(field_name: str, v) -> str:
         return _md(datetime.fromisoformat(v))
     if field_name == "min_price":
         return "free" if v == 0 else f"${v:g}"
+    if field_name == "weekly":
+        return show_days_text(v)
     return str(v)
+
+
+def _clock(t: str) -> str:
+    h, m = map(int, t.split(":"))
+    return f"{(h % 12) or 12}{f':{m:02d}' if m else ''} {'AM' if h < 12 else 'PM'}"
+
+
+def show_days_text(weekly: dict) -> str:
+    """{"thu": ["20:00"], "fri": ["20:00", "22:30"]} -> "Thu 8 PM; Fri 8 PM and 10:30 PM" (CC-88)."""
+    return "; ".join(f"{d.capitalize()} " + " and ".join(map(_clock, ts)) for d, ts in weekly.items() if ts) or "none"
 
 
 def _n(n: int, word: str) -> str:
@@ -85,6 +99,7 @@ class Week:
     sources: list[tuple[str, str, str]] = field(default_factory=list)  # name, how often, next check
     issues: list[tuple[str, str, str, str]] = field(default_factory=list)  # CC-84: reported this week: ticket, who, page, what happened
     issues_open: int = 0  # new or being looked into, all time
+    needs: int = 0  # CC-88: new events still missing a date or show days
 
     @property
     def quiet(self) -> bool:
@@ -120,6 +135,8 @@ def gather(db, now: datetime) -> Week:
     waiting = dict(db.execute(select(DiscoveredItem.status, func.count()).where(DiscoveredItem.status.in_(["new", "update"]))
                               .group_by(DiscoveredItem.status)).all())
     w.new_waiting, w.updates_waiting = waiting.get("new", 0), waiting.get("update", 0)
+    w.needs = sum(1 for i in db.scalars(select(DiscoveredItem).where(DiscoveredItem.status == "new"))
+                  if needs(i, venue_for(db, i.source, i)))
 
     for src in sources:
         if not src.active:
@@ -179,6 +196,9 @@ def as_text(w: Week) -> str:
     lines = [f"{hello} Here's what's changed in the last week ({_md(w.first)} to {_md(w.last)}).", "",
              f"Waiting for review: {w.new_waiting + w.updates_waiting} ({w.new_waiting} new, {w.updates_waiting} proposed updates)",
              f"Review found events: {w.link('found')}", ""]
+    if w.needs:
+        lines[-1:-1] = [f"{_n(w.needs, 'event')} {'needs' if w.needs == 1 else 'need'} a date or show days. "
+                        f"We read their pages again each week for up to 4 weeks: {w.link('found/needs')}"]
     if w.quiet:
         lines += ["Nothing new this week: no events found, nothing left out, and every source could be read.", ""]
     lines += [f"NEW EVENTS FOUND THIS WEEK: {w.found_total}"] + (_cols(w.found_by_source) or ["  None."]) + [""]
@@ -265,6 +285,10 @@ def as_html(w: Week) -> str:
         f'<p style="margin:12px 0 0"><a href="{escape(w.link("found"))}" style="display:inline-block;background:{LEAD};color:#FFFFFF;'
         f'text-decoration:none;font-weight:600;font-size:14px;padding:10px 18px;border-radius:8px">Review found events</a></p>',
     ]
+    if w.needs:
+        parts.append(f'<p style="margin:12px 0 0;font-size:14px"><b>{_n(w.needs, "event")} {"needs" if w.needs == 1 else "need"} '
+                     f'a date or show days.</b> We read their pages again each week for up to 4 weeks. '
+                     f'{_a(w.link("found/needs"), "Review them")}</p>')
     if w.quiet:
         parts.append(f'<p style="margin:16px 0 0;font-size:14px">Nothing new this week: no events found, nothing left out, '
                      f'and every source could be read.</p>')

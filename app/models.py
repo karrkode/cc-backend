@@ -462,6 +462,10 @@ class DiscoveredItem(Base):
     changes: Mapped[dict] = mapped_column(JSON, default=dict)  # for "update": {field: [listed, found]}
     event_id: Mapped[int | None] = mapped_column(ForeignKey("events.id", ondelete="SET NULL"), index=True)
     detail_checks: Mapped[list] = mapped_column(JSON, default=list)  # pre-opening checks done: [60, 45]
+    # CC-88: the show days and times the page gives ({"thu": ["20:00"]}), and the days its own page was read
+    # again because a date or show days were missing (once after it's found, then weekly for 4 weeks)
+    weekly: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
+    looked_on: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

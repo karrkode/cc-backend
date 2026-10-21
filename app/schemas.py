@@ -269,6 +269,7 @@ class EventIn(_EventFields):
     # Opt in to a public "Suggested by <display name>" on this event. Who submitted it
     # always comes from the sign-in, never from the request.
     credit_me: bool = False
+    weekly: ShowTimes = {}  # CC-88: the days it's on, with start times, for performances; {} = the venue's usual times
 
     @model_validator(mode="after")
     def _one_venue(self):
@@ -467,9 +468,9 @@ class AttendedOut(ORM):
 
 
 class FoundChange(BaseModel):
-    field: str  # cost_text | min_price | begin_date | end_date
-    listed: str | float | None  # what the catalog says
-    found: str | float | None  # what the source says now
+    field: str  # cost_text | min_price | begin_date | end_date | weekly
+    listed: str | float | dict | None  # what the catalog says
+    found: str | float | dict | None  # what the source says now (weekly: show days, {"thu": ["20:00"]})
 
 
 class EventRef(BaseModel):
@@ -498,6 +499,11 @@ class DiscoveredItemOut(ORM):
     cost_text: str
     min_price: Decimal | None
     dates_listed: int = 0  # how many performance dates and times the source listed
+    dates_timed: bool = False  # CC-88: some of those dates have start times
+    weekly: dict = {}  # CC-88: the show days and times the source gave
+    venue_show_times: dict = {}  # the venue's usual show times, to start the form with
+    needs: str = ""  # CC-88: "date" or "show_days" while it's missing them; "" when it can be approved as it is
+    looked_on: list[str] = []  # the days its own page was read again for what's missing
     proposed: list[FoundChange] = []  # for "update": what would change
     event: EventRef | None = None  # the catalog event, once listed or approved
     possible_duplicate: EventRef | None = None
