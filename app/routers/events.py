@@ -199,6 +199,8 @@ def update_event(event_id: int, body: EventPatch, db: DB, _: AdminUser):
         changes["publish_at"] = changes["publish_at"].astimezone(UTC)
     for field, value in changes.items():
         setattr(event, field, value)
+    if "weekly" in changes or "weeks" in changes:  # CC-88: weeks of the month only for days it's still on
+        event.weeks = {d: sorted(set(w)) for d, w in (event.weeks or {}).items() if d in (event.weekly or {})}
     if event.begin_date and event.end_date and event.end_date < event.begin_date:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "end_date is before begin_date")
     db.commit()

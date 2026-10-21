@@ -204,6 +204,9 @@ class Event(Base):
     # sets, {"thu": ["19:30"]}, which overrides the venue's show times. Neither is shown on cards.
     performances: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
     weekly: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
+    # CC-88: weekly days that are only on some weeks of the month, {"thu": [1, 3]} (1-4: first to fourth, 5: the last);
+    # a day left out is every week
+    weeks: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
     # CC-71: the event source it was found on, when it was approved from discovery
     found_by_id: Mapped[int | None] = mapped_column(ForeignKey("discovery_sources.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -240,6 +243,7 @@ class Event(Base):
         own = bool(self.weekly)
         venue = self.venue
         return {"dates": dates, "weekly": self.weekly if own else (venue.show_times if venue else {}) or {},
+                "weeks": (self.weeks or {}) if own else {},
                 "weekly_from": "event" if own else ("venue" if venue and venue.show_times else ""),
                 "hours": (venue.open_hours if venue else {}) or {}}
 
@@ -462,6 +466,11 @@ class DiscoveredItem(Base):
     changes: Mapped[dict] = mapped_column(JSON, default=dict)  # for "update": {field: [listed, found]}
     event_id: Mapped[int | None] = mapped_column(ForeignKey("events.id", ondelete="SET NULL"), index=True)
     detail_checks: Mapped[list] = mapped_column(JSON, default=list)  # pre-opening checks done: [60, 45]
+    # CC-88: the show days and times the page gives ({"thu": ["20:00"]}), and the days its own page was read
+    # again because a date or show days were missing (once after it's found, then weekly for 4 weeks)
+    weekly: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
+    looked_on: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
+    weeks: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")  # some weeks of the month only, as on events
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

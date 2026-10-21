@@ -23,7 +23,8 @@ def test_the_schedule_comes_from_the_event_then_its_venue(client, admin_token, d
     ev.performances = [{"date": past, "time": "19:30"}, {"date": soon, "time": "14:00"}]
     db.commit()
     s = schedule_of(client, ev.id)
-    assert s == {"dates": [{"date": soon, "time": "14:00"}], "weekly": {"thu": ["19:30"]}, "weekly_from": "venue", "hours": {"mon": None}}
+    assert s == {"dates": [{"date": soon, "time": "14:00"}], "weekly": {"thu": ["19:30"]}, "weekly_from": "venue", "weeks": {},
+                 "hours": {"mon": None}}
     h = auth(admin_token)
     assert client.patch(f"/events/{ev.id}", json={"weekly": {"sat": ["20:00"]}}, headers=h).status_code == 200
     s = schedule_of(client, ev.id)

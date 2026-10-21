@@ -114,6 +114,8 @@ Weekday = Literal["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 Clock = Annotated[str, Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")]
 OpenHours = dict[Weekday, tuple[Clock, Clock] | None]  # null: closed that day; a day left out isn't known
 ShowTimes = dict[Weekday, Annotated[list[Clock], Field(max_length=6)]]
+# CC-88: show days on some weeks of the month only: 1-4 the first to fourth, 5 the last; a day left out is every week
+Weeks = dict[Weekday, Annotated[list[Annotated[int, Field(ge=1, le=5)]], Field(min_length=1, max_length=5)]]
 
 
 class VenuePatch(BaseModel):
@@ -158,6 +160,7 @@ class ScheduleOut(BaseModel):
     dates: list[dict] = []
     weekly: dict = {}
     weekly_from: str = ""
+    weeks: dict = {}  # CC-88: days of the weekly pattern on some weeks of the month only, {"thu": [1, 3]}
     hours: dict = {}
 
 
@@ -269,6 +272,13 @@ class EventIn(_EventFields):
     # Opt in to a public "Suggested by <display name>" on this event. Who submitted it
     # always comes from the sign-in, never from the request.
     credit_me: bool = False
+    weekly: ShowTimes = {}  # CC-88: the days it's on, with start times, for performances; {} = the venue's usual times
+    weeks: Weeks = {}  # CC-88: of those days, any on some weeks of the month only
+
+    @model_validator(mode="after")
+    def _weeks_of_show_days(self):
+        self.weeks = {d: sorted(set(w)) for d, w in self.weeks.items() if d in self.weekly}
+        return self
 
     @model_validator(mode="after")
     def _one_venue(self):
@@ -301,6 +311,7 @@ class EventPatch(BaseModel):
     status: EventStatus | None = None
     publish_at: datetime | None = None  # null publishes as soon as the event is approved
     weekly: ShowTimes | None = None  # CC-79: its usual show times, over the venue's; {} goes back to the venue's
+    weeks: Weeks | None = None  # CC-88: days of those on some weeks of the month only; {} = every week
 
     @field_validator("publish_at")
     @classmethod
@@ -319,7 +330,7 @@ class EventPatch(BaseModel):
     @model_validator(mode="after")
     def _no_nulls_where_required(self):
         # Leaving a field out keeps it; only dates, price and publish time can be cleared with null.
-        for name in ("title", "venue_id", "open_run", "cost_text", "category", "url", "status", "weekly"):
+        for name in ("title", "venue_id", "open_run", "cost_text", "category", "url", "status", "weekly", "weeks"):
             if name in self.model_fields_set and getattr(self, name) is None:
                 raise ValueError(f"{name} can't be empty")
         return self
@@ -467,9 +478,9 @@ class AttendedOut(ORM):
 
 
 class FoundChange(BaseModel):
-    field: str  # cost_text | min_price | begin_date | end_date
-    listed: str | float | None  # what the catalog says
-    found: str | float | None  # what the source says now
+    field: str  # cost_text | min_price | begin_date | end_date | weekly
+    listed: str | float | dict | None  # what the catalog says
+    found: str | float | dict | None  # what the source says now (weekly: show days, {"thu": ["20:00"]})
 
 
 class EventRef(BaseModel):
@@ -498,6 +509,12 @@ class DiscoveredItemOut(ORM):
     cost_text: str
     min_price: Decimal | None
     dates_listed: int = 0  # how many performance dates and times the source listed
+    dates_timed: bool = False  # CC-88: some of those dates have start times
+    weekly: dict = {}  # CC-88: the show days and times the source gave
+    weeks: dict = {}  # and which of those days are on some weeks of the month only
+    venue_show_times: dict = {}  # the venue's usual show times, to start the form with
+    needs: str = ""  # CC-88: "date" or "show_days" while it's missing them; "" when it can be approved as it is
+    looked_on: list[str] = []  # the days its own page was read again for what's missing
     proposed: list[FoundChange] = []  # for "update": what would change
     event: EventRef | None = None  # the catalog event, once listed or approved
     possible_duplicate: EventRef | None = None

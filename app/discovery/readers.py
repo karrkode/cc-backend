@@ -30,6 +30,13 @@ class Performance(BaseModel):
     time: str | None = Field(default=None, description="24-hour HH:MM, if given")
 
 
+class ShowDay(BaseModel):
+    weekday: Literal["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+    times: list[str] = Field(description="24-hour HH:MM start times on that day")
+    weeks: list[int] = Field(default_factory=list, description="Only if it's on some weeks of the month: 1-4 for the "
+                             "first to fourth, 5 for the last. Empty means every week")
+
+
 class FoundEvent(BaseModel):
     title: str
     url: str | None = Field(default=None, description="The event's own page, if the text links to it")
@@ -42,6 +49,7 @@ class FoundEvent(BaseModel):
     cost_text: str | None = Field(default=None, description="Prices as written, e.g. '$35–$90' or 'Free'")
     min_price: float | None = Field(default=None, description="The lowest price in dollars; 0 if free")
     performances: list[Performance] = Field(default_factory=list, description="Specific dates and times, if listed")
+    show_days: list[ShowDay] = Field(default_factory=list, description="The regular weekly schedule, if the page gives one")
     recurring: bool = Field(default=False, description="Repeats daily or weekly as a generic offering")
 
 
@@ -62,15 +70,19 @@ curated listings site. Today is {today}. The source is {source} ({kind}). The pa
 List each event once:
 - A theater or opera production is one event covering its whole run, with its first and last dates.
   If the page lists individual performance dates and times, put them in `performances`.
-- A concert or a comedy show is one event per show or night. A comedy show that runs weekly with no
-  end date is one event with open_run true; list the dates shown in `performances`.
+- A concert or a comedy show is one event per show or night. A show that repeats under the same title
+  (a weekly comedy show, an open mic, a jazz night) is one event; with no end date it has open_run true.
+  List the dates shown in `performances`.
+- When the page gives a regular weekly schedule ("Thursdays to Saturdays at 8 PM, Sundays at 3 PM",
+  "every Monday at 7:30"), put it in `show_days`: each weekday with its start times. A day that's only on
+  some weeks of the month ("first and third Thursdays", "the last Sunday of the month") gives those weeks.
 - A museum exhibition is one event with its opening and closing dates. One-off talks, tours and
   programs are events too (kind talk, tour or program).
 Mark, rather than leave out, these kinds so they can be filtered: classes and workshops (kind class),
 private rentals (rental), members-only events (members_only), a museum's permanent galleries and
 long-term displays with no closing date (permanent), and generic offerings that repeat daily
 or weekly without a specific experience, such as family days or daily highlights tours (recurring, and
-recurring true).
+recurring true). A repeating performance (a weekly comedy show, an open mic) isn't one of these.
 Leave out past events, gift cards, memberships, subscriptions, donation drives and anything that isn't
 an event. Use only what the page says: never guess dates or prices; leave a field empty when unknown.
 Use full YYYY-MM-DD dates, working out the year from today's date when the page leaves it out.

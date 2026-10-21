@@ -9,6 +9,7 @@ from app.discovery.jsonld import complete, events_in
 from app.discovery.readers import FoundEvent, Performance
 from app.discovery.recap import build_recap
 from app.models import DiscoveredItem, DiscoveryCheck
+from app.stats import today_in_chicago
 
 from .conftest import auth
 from .test_discovery import FakeClaude, TODAY, make_source, pages  # noqa: F401 - pages is a fixture
@@ -87,7 +88,7 @@ def test_event_pages_are_skipped_when_theres_nothing_to_learn(db, pages):  # noq
     served, calls = pages
     served["https://goodman.example/season"] = {"html": "<p>season</p>"}
     s = make_source(db)
-    today = date.today()
+    today = today_in_chicago()  # discovery's "found today" is the Chicago day, not the machine's (UTC on CI)
     soon = FoundEvent(title="Soon", url="https://goodman.example/soon", kind="production", category="Theater",
                       begin_date=(today + timedelta(days=5)).isoformat())
     known = FoundEvent(title="Known", url="https://goodman.example/known", kind="production", category="Theater",

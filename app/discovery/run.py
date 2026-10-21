@@ -9,6 +9,8 @@ Reading as little as possible (agreed with the product owner):
   or whose price and showtimes are already known)
 - CC-80: a page's own structured event data (schema.org) is used instead of Claude when it's complete
 - CC-80: a monthly budget (budget.py): from 80% event pages wait; at 100% only Check now runs
+- CC-88: a found event missing a date or show days has its own page read the day after it's found,
+  then weekly for 4 weeks (needs.py); these come first within the 10 event pages per run
 """
 import json
 from dataclasses import dataclass, field
@@ -22,10 +24,11 @@ from . import fetch as web
 from .budget import budget_state
 from .hours import apply_open_hours, apply_show_times, link_venue
 from .jsonld import complete, events_in
+from .needs import look_again, needs
 from .pagetext import page_text, text_hash
 from .readers import read_aic, read_page
 from .rules import apply_rules, norm_title
-from .store import record
+from .store import record, venue_for
 
 STRETCH_AFTER = 3
 MAX_GAP_DAYS = 60
@@ -139,9 +142,55 @@ def check_source(db, source: DiscoverySource, client, today: date) -> Outcome:
     return out
 
 
-def check_details(db, client, today: date) -> list[tuple[DiscoverySource, Outcome]]:
-    """Read upcoming events' own pages about 60 and 45 days before they open."""
+def read_event_page(db, client, item: DiscoveredItem, today: date, mark: str) -> tuple[DiscoverySource, Outcome]:
+    """Read one found event's own page (its schema.org data first, Claude only when that's incomplete) and store what it says."""
+    source, out = db.get(DiscoverySource, item.source_id), Outcome(status="ok")
+    try:
+        page = web.fetch(item.url)
+        data = events_in(page.text, page.url, source.kind.value)
+        same = [e for e in data if norm_title(e.title) == norm_title(item.title)] or (data if len(data) == 1 else [])
+        if same and complete(same[0]):  # the page's own event data: no AI needed
+            out.notes.append("read from the page's event data")
+        else:
+            text, _ = page_text(page.text, page.url)
+            reading, tin, tout = read_page(client, source.name, source.kind.value, page.url, text, today)
+            out.pages_read, out.tokens_in, out.tokens_out = 1, tin, tout
+            same = [e for e in reading.events if norm_title(e.title) == norm_title(item.title)] or reading.events[:1]
+        for e in same[:1]:
+            e.url = item.url  # the same item, whatever links the page has
+            _store(db, source, [e], out)
+    except web.Blocked as e:
+        out.status, out.notes = "blocked", [str(e)]
+    except Exception as e:  # noqa: BLE001 - one event page must not stop the rest
+        out.status, out.notes = "error", [f"{type(e).__name__}: {e}"[:500]]
+    out.notes.insert(0, f"{item.title}: {mark}")
+    return source, out
+
+
+
+def check_missing(db, client, today: date) -> list[tuple[DiscoverySource, Outcome]]:
+    """CC-88: read the own page of found events missing a date or show days: the day after they're
+    found, then weekly for 4 weeks (needs.look_again)."""
     if client is None:
+        return []
+    items = db.scalars(select(DiscoveredItem).join(DiscoverySource)
+                       .where(DiscoveredItem.status == "new", DiscoveredItem.url != "", DiscoverySource.active,
+                              DiscoverySource.reader == "claude").order_by(DiscoveredItem.first_seen_at)).all()
+    done = []
+    for item in items:
+        if len(done) >= DETAIL_LIMIT:
+            break
+        missing = needs(item, venue_for(db, item.source, item))
+        if not missing or not look_again(item, _day(item.first_seen_at), today):
+            continue
+        item.looked_on = [*(item.looked_on or []), today.isoformat()]
+        done.append(read_event_page(db, client, item, today, "missing " + ("a date" if missing == "date" else "show days")))
+    return done
+
+
+def check_details(db, client, today: date, limit: int = DETAIL_LIMIT) -> list[tuple[DiscoverySource, Outcome]]:
+    """Read upcoming events' own pages about 60 and 45 days before they open."""
+    if client is None or limit <= 0:
         return []
     items = db.scalars(select(DiscoveredItem).join(DiscoverySource)
                        .where(DiscoveredItem.status.in_(["new", "listed", "update", "approved"]), DiscoveredItem.url != "",
@@ -149,7 +198,7 @@ def check_details(db, client, today: date) -> list[tuple[DiscoverySource, Outcom
                        .order_by(DiscoveredItem.begin_date)).all()
     done = []
     for item in items:
-        if len(done) >= DETAIL_LIMIT:
+        if len(done) >= limit:
             break
         days = (item.begin_date - today).days
         mark = next((d for d in DETAIL_DAYS if days <= d and d not in (item.detail_checks or [])), None)
@@ -161,27 +210,8 @@ def check_details(db, client, today: date) -> list[tuple[DiscoverySource, Outcom
         if days < DETAIL_SOON_DAYS or (item.cost_text and item.performances):  # too soon, or nothing left to learn
             item.detail_checks = sorted({*(item.detail_checks or []), *DETAIL_DAYS})
             continue
-        source, out = db.get(DiscoverySource, item.source_id), Outcome(status="ok")
-        try:
-            page = web.fetch(item.url)
-            data = events_in(page.text, page.url, source.kind.value)
-            same = [e for e in data if norm_title(e.title) == norm_title(item.title)] or (data if len(data) == 1 else [])
-            if same and complete(same[0]):  # the page's own event data: no AI needed
-                out.notes.append("read from the page's event data")
-            else:
-                text, _ = page_text(page.text, page.url)
-                reading, tin, tout = read_page(client, source.name, source.kind.value, page.url, text, today)
-                out.pages_read, out.tokens_in, out.tokens_out = 1, tin, tout
-                same = [e for e in reading.events if norm_title(e.title) == norm_title(item.title)] or reading.events[:1]
-            for e in same[:1]:
-                e.url = item.url  # the same item, whatever links the page has
-                _store(db, source, [e], out)
-        except web.Blocked as e:
-            out.status, out.notes = "blocked", [str(e)]
-        except Exception as e:  # noqa: BLE001 - one event page must not stop the rest
-            out.status, out.notes = "error", [f"{type(e).__name__}: {e}"[:500]]
+        source, out = read_event_page(db, client, item, today, f"{mark} days before opening")
         item.detail_checks = sorted({*(item.detail_checks or []), *[d for d in DETAIL_DAYS if days <= d]})
-        out.notes.insert(0, f"{item.title}: {mark} days before opening")
         done.append((source, out))
     return done
 
@@ -217,7 +247,8 @@ def run(db, client, today: date, only: int | None = None, force: bool = False) -
             results.append(("Event pages", Outcome(status="waiting", notes=[
                 f"${spent:.2f} of the ${budget:.2f} monthly budget is spent, so event pages wait for next month"])))
             return results
-        for source, out in check_details(db, client, today):
+        missing = check_missing(db, client, today)
+        for source, out in missing + check_details(db, client, today, DETAIL_LIMIT - len(missing)):
             log(db, source, out, what="detail")
             db.commit()
             results.append((source.name + " (event page)", out))

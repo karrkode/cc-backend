@@ -31,7 +31,7 @@ def test_the_list_shows_whats_waiting_with_venue_duplicates_and_unreadable_sourc
     db.commit()
     h = auth(admin_token)
     r = client.get("/admin/discovery/items", headers=h).json()
-    assert r["total"] == 2 and r["counts"] == {"new": 2, "skipped": 1}
+    assert r["total"] == 2 and r["counts"] == {"new": 2, "skipped": 1, "needs": 1}  # the concert has no date (CC-88)
     by = {i["title"]: i for i in r["items"]}
     hamlet = by["Hamlet"]
     assert hamlet["source_name"] == "Goodman" and hamlet["venue_name"] == "Goodman Theatre" and hamlet["neighborhood"] == "Loop"
@@ -59,7 +59,7 @@ def test_approve_adds_it_to_the_catalog_and_remembers_the_source(client, admin_t
     record(db, s, found("Gala", "https://goodman.example/gala"), ""); db.commit()
     gala = item_named(db, "Gala")
     body = {**body, "title": "Gala", "url": gala.url, "venue_id": None, "venue": {"name": "Wheaton Hall", "neighborhood": "Wheaton"},
-            "publish": "review"}
+            "publish": "review", "weekly": {"sat": ["19:30"]}}  # a new venue has no usual show times, so they're given (CC-88)
     r = client.post(f"/admin/discovery/items/{gala.id}/approve", json=body, headers=auth(admin_token))
     assert r.status_code == 200 and db.get(Event, r.json()["event"]["id"]).status == EventStatus.pending
     assert db.scalar(select(Venue).where(Venue.name == "Wheaton Hall")) is not None
@@ -149,7 +149,7 @@ def test_filter_by_price_and_dates(client, admin_token, db):
     assert titles(price="none")[0] == ["Dated only", "Neither"]
     assert titles(dates="listed")[0] == ["Dated only", "Priced and dated"]
     assert titles(dates="none", price="none")[0] == ["Neither"]
-    assert titles(price="listed")[2] == {"new": 2, "skipped": 1}  # counts per status under the same filters
+    assert titles(price="listed")[2] == {"new": 2, "skipped": 1, "needs": 1}  # counts per status under the same filters
     assert titles(price="listed", limit=1)[1] == 2
     assert client.get("/admin/discovery/items", params={"price": "maybe"}, headers=h).status_code == 422
     rows = list(csv.reader(io.StringIO(client.get("/admin/discovery/items.csv", params={"dates": "none"}, headers=h).text)))
