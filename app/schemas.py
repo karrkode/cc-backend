@@ -198,6 +198,7 @@ class EventOut(ORM):
     submitted_by_name: str | None
     pick: PickOut | None = None  # CC-66: the owner's public pick (null when there isn't one)
     schedule: ScheduleOut = ScheduleOut()  # CC-79: for the planner; not shown on cards
+    run_dates: list[RunDate] = []  # CC-96: a fixed run's dates, every one (the site shows the upcoming ones)
     crew_plans: list[CrewPlansOut] = []  # CC-75: signed in only: your crew-mates' shared plans
 
 
@@ -241,6 +242,25 @@ class EventAdminPage(BaseModel):
     offset: int
 
 
+class RunDate(BaseModel):
+    """CC-96: one date of a fixed run: its start time, and its end time if known."""
+    model_config = ConfigDict(from_attributes=True)
+    date: date_
+    time: Clock
+    end_time: Clock | Literal[""] = ""
+
+
+RUN_DATES_MAX = 30  # CC-96: the product owner's limit; beyond that a weekly schedule fits better
+RunDates = Annotated[list[RunDate], Field(max_length=RUN_DATES_MAX)]
+
+
+def _one_time_a_day(v: list[RunDate]) -> list[RunDate]:
+    days = [r.date for r in v]
+    if len(set(days)) != len(days):
+        raise ValueError("Each date can only be chosen once")
+    return sorted(v, key=lambda r: r.date)
+
+
 class _EventFields(BaseModel):
     title: str = Field(min_length=1, max_length=300)
     begin_date: date | None = None
@@ -281,6 +301,18 @@ class EventIn(_EventFields):
     credit_me: bool = False
     weekly: ShowTimes = {}  # CC-88: the days it's on, with start times, for performances; {} = the venue's usual times
     weeks: Weeks = {}  # CC-88: of those days, any on some weeks of the month only
+    # CC-96: a fixed run: on these dates only, a time each. Its opening and closing dates are then the first and last
+    # of them (begin_date and end_date are set from them), and it has no weekly pattern.
+    run_dates: RunDates = []
+
+    _run_dates_once = field_validator("run_dates")(_one_time_a_day)
+
+    @model_validator(mode="after")
+    def _fixed_run(self):
+        if self.run_dates:
+            self.begin_date, self.end_date = self.run_dates[0].date, self.run_dates[-1].date
+            self.open_run, self.weekly, self.weeks = False, {}, {}
+        return self
 
     @model_validator(mode="after")
     def _weeks_of_show_days(self):
@@ -319,6 +351,9 @@ class EventPatch(BaseModel):
     publish_at: datetime | None = None  # null publishes as soon as the event is approved
     weekly: ShowTimes | None = None  # CC-79: its usual show times, over the venue's; {} goes back to the venue's
     weeks: Weeks | None = None  # CC-88: days of those on some weeks of the month only; {} = every week
+    run_dates: RunDates | None = None  # CC-96: a fixed run's dates (sets the opening and closing dates); [] ends the fixed run
+
+    _run_dates_once = field_validator("run_dates")(lambda v: v if v is None else _one_time_a_day(v))
 
     @field_validator("publish_at")
     @classmethod
@@ -337,7 +372,7 @@ class EventPatch(BaseModel):
     @model_validator(mode="after")
     def _no_nulls_where_required(self):
         # Leaving a field out keeps it; only dates, price and publish time can be cleared with null.
-        for name in ("title", "venue_id", "open_run", "cost_text", "category", "url", "status", "weekly", "weeks"):
+        for name in ("title", "venue_id", "open_run", "cost_text", "category", "url", "status", "weekly", "weeks", "run_dates"):
             if name in self.model_fields_set and getattr(self, name) is None:
                 raise ValueError(f"{name} can't be empty")
         return self

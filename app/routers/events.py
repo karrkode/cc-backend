@@ -3,16 +3,17 @@ from decimal import Decimal
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import case, func, or_, select
+from sqlalchemy import and_, case, func, or_, select, true
 
 from ..areas import area_of, region_of
 from ..config import get_settings
 from ..deps import DB, AdminUser, CurrentUser, OptionalUser
 from .. import photos
-from ..models import Area, Event, EventStatus, Plan, PlanStatus, Region, Role, Venue, WentPhoto
+from ..models import Area, Event, EventRunDate, EventStatus, Plan, PlanStatus, Region, Role, Venue, WentPhoto
 from ..crewplans import attach_crew_plans, crew_plans_condition
 from ..picks import attach_picks, pick_condition
-from ..schemas import EventFacets, EventIn, EventOut, EventPage, EventPatch, VenueIn
+from ..schemas import EventFacets, EventIn, EventOut, EventPage, EventPatch, RunDate, VenueIn
+from ..stats import today_in_chicago
 from ..visibility import live_condition, utcnow, visible_to
 
 router = APIRouter(prefix="/events", tags=["events"])
@@ -28,6 +29,23 @@ def get_or_create_venue(db: DB, v: VenueIn) -> Venue:
         db.add(venue)
         db.flush()
     return venue
+
+
+def _no_past_run_dates(dates: list[RunDate], kept: set[date] = frozenset()) -> None:
+    """CC-96: a fixed run's dates can't be in the past (in Chicago), except ones the event already had."""
+    today = today_in_chicago()
+    if any(r.date < today and r.date not in kept for r in dates):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "A fixed run's dates can't be in the past")
+
+
+def _run_dates_of(dates: list[RunDate]) -> list[EventRunDate]:
+    return [EventRunDate(date=r.date, time=r.time, end_time=r.end_time) for r in dates]
+
+
+def _on_between(date_from: date | None, date_to: date | None):
+    """CC-96: an event with a fixed run is only on its chosen dates, not the days between them."""
+    window = and_(EventRunDate.date >= date_from if date_from else true(), EventRunDate.date <= date_to if date_to else true())
+    return or_(~Event.run_dates.any(), Event.run_dates.any(window))
 
 
 Sort = Literal["start", "closing", "opening", "az", "price"]
@@ -117,6 +135,8 @@ def list_events(
         conds.append(or_(Event.end_date.is_(None), Event.end_date >= date_from))
     if date_to:  # already started by date_to
         conds.append(or_(Event.begin_date.is_(None), Event.begin_date <= date_to))
+    if date_from or date_to:
+        conds.append(_on_between(date_from, date_to))
     if max_price is not None:
         conds.append(price_or_usual() <= max_price)  # "price not posted" anywhere (NULL) drops out
 
@@ -166,6 +186,7 @@ def create_event(body: EventIn, db: DB, user: CurrentUser):
     if get_settings().require_verified_email and user.role != Role.admin and not user.email_verified:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Confirm your email address before sending in events. "
                             "Use the link we emailed you, or send a new one from your account page.")
+    _no_past_run_dates(body.run_dates)
     event = new_event(db, body, user)
     db.add(event)
     db.commit()
@@ -190,8 +211,8 @@ def new_event(db: DB, body: EventIn, user) -> Event:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "No venue with that venue_id")
     else:
         venue = get_or_create_venue(db, body.venue)
-    return Event(**body.model_dump(exclude={"venue_id", "venue", "publish", "publish_at"}), venue_id=venue.id,
-                 submitted_by=user.id, status=status_, publish_at=publish_at)
+    return Event(**body.model_dump(exclude={"venue_id", "venue", "publish", "publish_at", "run_dates"}), venue_id=venue.id,
+                 submitted_by=user.id, status=status_, publish_at=publish_at, run_dates=_run_dates_of(body.run_dates))
 
 
 @router.patch("/{event_id}", response_model=EventOut)
@@ -204,6 +225,14 @@ def update_event(event_id: int, body: EventPatch, db: DB, _: AdminUser):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "No venue with that venue_id")
     if changes.get("publish_at") is not None:
         changes["publish_at"] = changes["publish_at"].astimezone(UTC)
+    if "run_dates" in changes:  # CC-96: the run sets the dates; new dates can't be in the past (ones it had can stay)
+        _no_past_run_dates(body.run_dates, {r.date for r in event.run_dates})
+        event.run_dates.clear()
+        db.flush()  # the old dates go first, so a date kept in the new run doesn't clash with itself
+        event.run_dates = _run_dates_of(body.run_dates)
+        del changes["run_dates"]
+        if body.run_dates:
+            changes.update(begin_date=body.run_dates[0].date, end_date=body.run_dates[-1].date, open_run=False, weekly={}, weeks={})
     for field, value in changes.items():
         setattr(event, field, value)
     if "weekly" in changes or "weeks" in changes:  # CC-88: weeks of the month only for days it's still on
