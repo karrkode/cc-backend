@@ -32,7 +32,7 @@ def list_attended(db: DB, user: CurrentUser):
 
 def _photo_out(photo: WentPhoto) -> PhotoOut:
     out = PhotoOut.model_validate(photo)
-    out.url = photos.link(photo)
+    out.url = photos.link(photo) if photo.status != "rejected" else ""  # a rejected photo's file is deleted (CC-91)
     return out
 
 

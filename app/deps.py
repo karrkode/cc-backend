@@ -48,3 +48,13 @@ def admin_user(user: Annotated[User, Depends(current_user)]) -> User:
 CurrentUser = Annotated[User, Depends(current_user)]
 OptionalUser = Annotated[User | None, Depends(optional_user)]
 AdminUser = Annotated[User, Depends(admin_user)]
+
+
+def approver_user(user: Annotated[User, Depends(current_user)]) -> User:
+    """CC-91: approvers and admins. Read from the database, so removing the permission takes effect at once."""
+    if not user.can_approve:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Approvers only")
+    return user
+
+
+ApproverUser = Annotated[User, Depends(approver_user)]

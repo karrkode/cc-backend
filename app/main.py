@@ -4,7 +4,7 @@ from sqlalchemy import text
 
 from .config import get_settings
 from .deps import DB
-from .routers import admin, auth, crews, discovery, events, issues, me, photos, traffic, venues
+from .routers import admin, approvals, auth, crews, discovery, events, issues, me, photos, traffic, venues
 
 settings = get_settings()
 
@@ -22,7 +22,7 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type"],
 )
 
-for r in (auth.router, events.router, venues.router, me.router, admin.router, traffic.router, discovery.router, crews.router, issues.router, photos.router):
+for r in (auth.router, events.router, venues.router, me.router, admin.router, traffic.router, discovery.router, crews.router, issues.router, photos.router, approvals.router):
     app.include_router(r)
 
 

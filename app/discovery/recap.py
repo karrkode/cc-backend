@@ -21,7 +21,7 @@ from sqlalchemy import func, select
 
 from ..config import get_settings
 from ..mail import Email
-from ..models import DiscoveredItem, DiscoveryCheck, DiscoverySource, IssueReport
+from ..models import DiscoveredItem, DiscoveryCheck, DiscoverySource, IssueReport, WentPhoto
 from ..stats import CHICAGO
 from .budget import budget_state
 from .needs import needs
@@ -108,6 +108,7 @@ class Week:
     sources: list[tuple[str, str, str]] = field(default_factory=list)  # name, how often, next check
     issues: list[tuple[str, str, str, str]] = field(default_factory=list)  # CC-84: reported this week: ticket, who, page, what happened
     issues_open: int = 0  # new or being looked into, all time
+    photos_waiting: int = 0  # CC-91: "I've been" photos waiting for an approver
     needs: int = 0  # CC-88: new events still missing a date or show days
 
     @property
@@ -171,6 +172,7 @@ def gather(db, now: datetime) -> Week:
         who = (i.reporter.display_name.strip() if i.reporter else "") or ("A member" if i.reporter else "A deleted account")
         what = i.what_happened if len(i.what_happened) <= 140 else i.what_happened[:137].rstrip() + "..."
         w.issues.append((i.key, who, i.page or "-", what))
+    w.photos_waiting = db.scalar(select(func.count()).select_from(WentPhoto).where(WentPhoto.status == "waiting")) or 0
     w.issues_open = db.scalar(select(func.count()).select_from(IssueReport).where(IssueReport.status.in_(["new", "looking"]))) or 0
     return w
 
@@ -229,6 +231,7 @@ def as_text(w: Week) -> str:
     lines += ["", f"ISSUES REPORTED THIS WEEK: {len(w.issues)} ({w.issues_open} open in all)"]
     lines += [f"  - {key} {who} on {page}: {what}" for key, who, page, what in w.issues] or ["  None."]
     lines += [f"  Review them: {w.link('issues')}"] if w.issues or w.issues_open else []
+    lines += ["", f"PHOTOS WAITING FOR APPROVAL: {w.photos_waiting}"] + ([f"  Approve them: {w.link('approvals')}"] if w.photos_waiting else [])
     lines += ["", f"CHECKS THIS WEEK: {_n(w.checks, 'check')}, {_n(w.pages, 'page')} read, about ${w.week_cost:.2f}",
               f"This month: ${w.spent:.2f} of the ${w.budget:.0f} budget." + (f" {budget_note(w)}" if budget_note(w) else "")]
     lines += _cols([("Source", "How often", "Next check")] + w.sources)
@@ -343,6 +346,10 @@ def as_html(w: Week) -> str:
                  if w.issues else _none("None this week."))
     if w.issues or w.issues_open:
         parts.append(f'<p style="margin:8px 0 0;font-size:13px">{_a(w.link("issues"), "Review issues")}</p>')
+
+    parts.append(_h("Photos waiting for approval"))  # CC-91
+    parts.append(f'<p style="margin:0;font-size:14px">{_n(w.photos_waiting, "photo")} waiting. {_a(w.link("approvals"), "Approve them")}</p>'
+                 if w.photos_waiting else _none("None waiting."))
 
     parts.append(_h("Checks this week"))
     note = budget_note(w)
