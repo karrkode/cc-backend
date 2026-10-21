@@ -63,6 +63,8 @@ class UserOut(ORM):
     display_name: str
     role: Role
     dolphins: bool  # CC-61: plans show the dolphin icons for this account
+    can_approve: bool = False  # CC-91: approves "I've been" photos (approvers, and admins)
+    approver_offered: bool = False  # CC-91: an admin has offered them the approver permission; they haven't answered
     created_at: datetime
 
 
@@ -743,3 +745,43 @@ class IssuePage(BaseModel):
 class IssuePatch(BaseModel):
     status: IssueStatus | None = None
     admin_note: str | None = Field(default=None, max_length=500)
+
+
+# ---- approvers and approvals (CC-91) ----------------------------------------------
+
+class MemberOut(BaseModel):
+    """A member for the admin's Members page."""
+    id: uuid.UUID
+    display_name: str
+    email: str
+    role: Role
+    approver: bool
+    approver_offered: bool
+
+
+class ApproverAnswerIn(BaseModel):
+    accept: bool
+
+
+class ApprovalOut(BaseModel):
+    """A photo for approvers: the member by first name and last initial only, and what Rekognition found."""
+    id: int
+    status: str  # waiting | approved | rejected
+    event: EventRef
+    venue: str
+    member: str  # "Jordan R."
+    labels: list[dict] = []
+    blurred: bool
+    reason: str = ""
+    created_at: datetime
+    url: str
+
+
+class ApprovalsPage(BaseModel):
+    items: list[ApprovalOut]
+    counts: dict[str, int]  # photos per status
+
+
+class DecisionIn(BaseModel):
+    decision: Literal["approve", "reject"]
+    reason: str = Field(default="", max_length=300)

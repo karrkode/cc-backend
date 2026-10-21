@@ -78,11 +78,23 @@ class User(Base):
     # CC-61: show the dolphin icons on this account's plans. Only the owner's accounts have it
     # (set with scripts.dolphins); everyone else's plans get their own look later.
     dolphins: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    # CC-91: approves "I've been" photos. Only an admin can offer it (approver_offered_at), and the member
+    # accepts or declines. Admins can always approve.
+    approver: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    approver_offered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     @property
     def email_verified(self) -> bool:
         return self.email_verified_at is not None
+
+    @property
+    def can_approve(self) -> bool:
+        return self.approver or self.role == Role.admin
+
+    @property
+    def approver_offered(self) -> bool:  # an offer waiting for their answer
+        return self.approver_offered_at is not None and not self.approver
 
 
 class ActiveDay(Base):
