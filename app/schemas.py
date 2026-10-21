@@ -446,6 +446,8 @@ class StatsOut(BaseModel):
     confirmed_members: int
     active_since: date_ | None  # the first day activity was recorded
     retention: StatsRetention
+    photo_checks_month: int = 0  # CC-76: photos checked by Amazon Rekognition this month
+    photo_checks_usd: float = 0  # and about what that costs
 
 
 # ---- attended --------------------------------------------------------------
@@ -477,9 +479,19 @@ class PlanCrewsIn(BaseModel):
     crews: list[int] = Field(default_factory=list, max_length=50)
 
 
+class PhotoOut(ORM):
+    """CC-76: a member's photo from an event. url: a link (path on the API) that works for 15 minutes."""
+    id: int
+    status: str  # waiting | approved | rejected
+    reason: str = ""  # an approver's note, when rejected (CC-91)
+    created_at: datetime
+    url: str = ""
+
+
 class AttendedOut(ORM):
     event: EventOut
     created_at: datetime
+    photo: PhotoOut | None = None  # CC-76: your photo from it, if you added one
 
 
 class FoundChange(BaseModel):

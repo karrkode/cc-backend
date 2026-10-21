@@ -262,6 +262,40 @@ class Attended(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     event: Mapped[Event] = relationship(lazy="joined")
+    photo = None  # CC-76: set per request (the member's own photo, as PhotoOut)
+
+
+class WentPhoto(Base):
+    """CC-76: a member's photo from an event they've been to (one per mark), waiting for an approver
+    or decided. labels: what Amazon Rekognition found; blurred: shown blurred to approvers."""
+    __tablename__ = "went_photos"
+    __table_args__ = (ForeignKeyConstraint(["user_id", "event_id"], ["attended.user_id", "attended.event_id"], ondelete="CASCADE"),
+                      UniqueConstraint("user_id", "event_id", name="uq_went_photos_mark"))
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    event_id: Mapped[int] = mapped_column(Integer, index=True)
+    key: Mapped[str] = mapped_column(String(200), unique=True)  # where it's stored (S3 key, or a local path)
+    content_type: Mapped[str] = mapped_column(String(40))
+    size: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(20), default="waiting", index=True)  # waiting | approved | rejected
+    blurred: Mapped[bool] = mapped_column(Boolean, default=False)
+    labels: Mapped[list] = mapped_column(JSON, default=list)
+    reason: Mapped[str] = mapped_column(String(300), default="")  # an approver's note to the member (CC-91)
+    reviewed_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PhotoCheck(Base):
+    """CC-76: one Rekognition check of an uploaded photo, kept for the daily upload limit and the monthly cost.
+    outcome: stored | refused (refused photos are never stored)."""
+    __tablename__ = "photo_checks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    outcome: Mapped[str] = mapped_column(String(20))
+    checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 
 
 class Plan(Base):
