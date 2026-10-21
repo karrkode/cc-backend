@@ -1,17 +1,21 @@
+import logging
 from datetime import date, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Query, Response, status
+from fastapi import APIRouter, HTTPException, Query, Request, Response, status
 from sqlalchemy import case, delete, select
+from starlette.concurrency import run_in_threadpool
 
+from .. import photos
 from ..deps import DB, CurrentUser
-from ..models import Attended, Event, Plan, PlanStatus
+from ..models import Attended, Event, Plan, PlanStatus, WentPhoto
 from ..crewplans import attach_crew_plans, my_crew_ids, share_plan, shared_with, unshare
 from ..picks import attach_picks
-from ..schemas import AttendedOut, EventOut, PlanCrewsIn, PlanIn, PlanOut
+from ..schemas import AttendedOut, EventOut, PhotoOut, PlanCrewsIn, PlanIn, PlanOut
 from ..visibility import is_live, live_condition
 
 router = APIRouter(prefix="/me", tags=["me"])
+log = logging.getLogger(__name__)
 
 
 @router.get("/attended", response_model=list[AttendedOut])
@@ -20,7 +24,60 @@ def list_attended(db: DB, user: CurrentUser):
                       .order_by(Attended.created_at.desc())).all()
     attach_picks(db, [r.event for r in rows])
     attach_crew_plans(db, [r.event for r in rows], user)
+    mine = {p.event_id: p for p in db.scalars(select(WentPhoto).where(WentPhoto.user_id == user.id))}
+    for r in rows:
+        r.photo = _photo_out(mine[r.event_id]) if r.event_id in mine else None
     return rows
+
+
+def _photo_out(photo: WentPhoto) -> PhotoOut:
+    out = PhotoOut.model_validate(photo)
+    out.url = photos.link(photo)
+    return out
+
+
+def _photo_saved(db, user, event_id: int, data: bytes, content_type: str) -> WentPhoto:
+    if db.get(Attended, (user.id, event_id)) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Mark it \u201cI've been\u201d first")
+    if photos.uploads_today(db, user.id) >= photos.UPLOADS_PER_DAY:
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "That's 10 photos today. Try again tomorrow.")
+    kind = photos.kind_of(data, content_type)
+    if kind is None:
+        raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "Send a JPEG or WebP photo.")
+    try:
+        photo = photos.save(db, user.id, event_id, data, kind)
+    except photos.Refused:
+        db.commit()  # the check counts toward the limit; the photo was never stored
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "This photo can't be used. Try another.") from None
+    except Exception:  # Rekognition or storage unreachable: nothing was stored
+        db.rollback()
+        log.exception("Couldn't check or store a photo")
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Photos can't be sent right now. Try again later.") from None
+    db.commit()
+    db.refresh(photo)
+    return photo
+
+
+@router.put("/attended/{event_id}/photo", response_model=PhotoOut)
+async def add_photo(event_id: int, request: Request, db: DB, user: CurrentUser):
+    """CC-76: add (or replace) your photo from an event you've been to. The body is the photo itself,
+    JPEG or WebP, as the browser shrank it. Checked by Amazon Rekognition before it's stored; it then
+    waits for an approver."""
+    if int(request.headers.get("content-length") or 0) > photos.MAX_BYTES:
+        raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, "That photo is too big. Try a smaller one.")
+    data = bytearray()
+    async for chunk in request.stream():
+        data += chunk
+        if len(data) > photos.MAX_BYTES:
+            raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, "That photo is too big. Try a smaller one.")
+    photo = await run_in_threadpool(_photo_saved, db, user, event_id, bytes(data), request.headers.get("content-type", ""))
+    return _photo_out(photo)
+
+
+@router.delete("/attended/{event_id}/photo", status_code=status.HTTP_204_NO_CONTENT)
+def remove_photo(event_id: int, db: DB, user: CurrentUser):
+    photos.remove(db, db.scalars(select(WentPhoto).where(WentPhoto.user_id == user.id, WentPhoto.event_id == event_id)))
+    db.commit()
 
 
 @router.put("/attended/{event_id}", response_model=AttendedOut)
@@ -45,6 +102,7 @@ def mark_attended(event_id: int, db: DB, user: CurrentUser, response: Response):
 
 @router.delete("/attended/{event_id}", status_code=status.HTTP_204_NO_CONTENT)
 def unmark_attended(event_id: int, db: DB, user: CurrentUser):
+    photos.remove(db, db.scalars(select(WentPhoto).where(WentPhoto.user_id == user.id, WentPhoto.event_id == event_id)))  # CC-76
     db.execute(delete(Attended).where(Attended.user_id == user.id, Attended.event_id == event_id))
     db.commit()
 

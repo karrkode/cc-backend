@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 from ..deps import DB, AdminUser
 from ..models import Event, EventStatus
 from ..schemas import EventAdminOut, EventAdminPage, EventInterestOut, StatsOut, TrafficOut
+from ..photos import CHECK_USD, checks_this_month
 from ..stats import event_interest, today_in_chicago, weekly_stats
 from ..traffic import summary as traffic_summary
 from ..visibility import utcnow
@@ -60,7 +61,9 @@ def reject(event_id: int, db: DB, _: AdminUser):
 def stats(db: DB, _: AdminUser, weeks: Annotated[int, Query(ge=1, le=52)] = 12,
           today: Annotated[date | None, Query(description="The caller's local date")] = None):
     """Sign-ups and member activity for the last N weeks (CC-67). Totals only, never who."""
-    return weekly_stats(db, _callers_day(today), weeks)
+    out = weekly_stats(db, _callers_day(today), weeks)
+    checks = checks_this_month(db)  # CC-76: Amazon Rekognition's cost this month
+    return {**out, "photo_checks_month": checks, "photo_checks_usd": round(checks * CHECK_USD, 2)}
 
 
 def _callers_day(today: date | None) -> date:

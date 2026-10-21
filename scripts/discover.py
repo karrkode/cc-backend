@@ -1,7 +1,8 @@
 """Check event sources that are due (CC-70). Found events go to a holding list for review; nothing
 reaches the live catalog by itself.
 
-    python -m scripts.discover                 every source that's due, then pre-opening event pages
+    python -m scripts.discover                 every source that's due, then pre-opening event pages, then
+                                               tidies away photos left behind (CC-76)
     python -m scripts.discover --source 3      just that source, if due
     python -m scripts.discover --source 3 --now   that source, now
     ... --key-stdin                            read the Anthropic API key from standard input
@@ -15,6 +16,7 @@ import sys
 
 from app.db import SessionLocal
 from app.discovery.run import run
+from app.photos import sweep
 from app.stats import today_in_chicago
 
 
@@ -33,6 +35,13 @@ def main():
 
     with SessionLocal() as db:
         results = run(db, client, today_in_chicago(), only=args.source, force=args.now)
+        if args.source is None:  # CC-76: tidy away photos whose mark, event or account is gone
+            try:
+                swept = sweep(db)
+                if swept:
+                    print(f"Removed {swept} photos left behind.")
+            except Exception as e:  # noqa: BLE001 - the photos must never stop discovery
+                print(f"Couldn't tidy photos: {type(e).__name__}: {e}")
     if not results:
         print("Nothing due.")
     for name, out in results:

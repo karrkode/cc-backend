@@ -8,7 +8,8 @@ from sqlalchemy import case, func, or_, select
 from ..areas import area_of, region_of
 from ..config import get_settings
 from ..deps import DB, AdminUser, CurrentUser, OptionalUser
-from ..models import Area, Event, EventStatus, Plan, PlanStatus, Region, Role, Venue
+from .. import photos
+from ..models import Area, Event, EventStatus, Plan, PlanStatus, Region, Role, Venue, WentPhoto
 from ..crewplans import attach_crew_plans, crew_plans_condition
 from ..picks import attach_picks, pick_condition
 from ..schemas import EventFacets, EventIn, EventOut, EventPage, EventPatch, VenueIn
@@ -218,5 +219,6 @@ def delete_event(event_id: int, db: DB, _: AdminUser):
     event = db.get(Event, event_id)
     if event is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Event not found")
+    photos.remove(db, db.scalars(select(WentPhoto).where(WentPhoto.event_id == event_id)))  # CC-76: from storage too
     db.delete(event)
     db.commit()
