@@ -233,6 +233,9 @@ class Event(Base):
 
     venue: Mapped[Venue] = relationship(lazy="joined")
     submitter: Mapped[User | None] = relationship(lazy="selectin")  # one extra query per batch, not per event
+    # CC-96: a fixed run: on these dates only, each with its time; begin_date and end_date are the first and last
+    run_dates: Mapped[list["EventRunDate"]] = relationship(lazy="selectin", cascade="all, delete-orphan",
+                                                           order_by="EventRunDate.date")
 
     @validates("title")
     def _keep_sort_title(self, _key, value):
@@ -256,7 +259,8 @@ class Event(Base):
         """CC-79: what the planner needs to know when it's on: upcoming dates and times, the weekly pattern
         (the event's own, else its venue's show times), and the venue's opening hours."""
         today = datetime.now(_CHICAGO).date().isoformat()
-        dates = sorted((p for p in self.performances or [] if (p.get("date") or "") >= today),
+        given = [{"date": r.date.isoformat(), "time": r.time} for r in self.run_dates]  # CC-96: a fixed run's own dates come first
+        dates = sorted((p for p in given or self.performances or [] if (p.get("date") or "") >= today),
                        key=lambda p: (p.get("date"), p.get("time") or ""))[:120]
         own = bool(self.weekly)
         venue = self.venue
@@ -264,6 +268,18 @@ class Event(Base):
                 "weeks": (self.weeks or {}) if own else {},
                 "weekly_from": "event" if own else ("venue" if venue and venue.show_times else ""),
                 "hours": (venue.open_hours if venue else {}) or {}}
+
+
+class EventRunDate(Base):
+    """CC-96: one date of a fixed run (an event on chosen dates only), with its start time and, if given, its end."""
+    __tablename__ = "event_run_dates"
+    __table_args__ = (UniqueConstraint("event_id", "date", name="uq_event_run_dates_day"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    event_id: Mapped[int] = mapped_column(ForeignKey("events.id", ondelete="CASCADE"), index=True)
+    date: Mapped[date] = mapped_column(Date, index=True)
+    time: Mapped[str] = mapped_column(String(5))  # 24-hour HH:MM
+    end_time: Mapped[str] = mapped_column(String(5), default="", server_default="")
 
 
 class Attended(Base):
