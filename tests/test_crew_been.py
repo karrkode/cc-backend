@@ -5,9 +5,10 @@ from datetime import timedelta
 from sqlalchemy import select
 
 from app.models import AttendedShare, Event, WentPhoto
+from app.stats import today_in_chicago
 
 from .conftest import auth, register
-from .test_crew_plans import T, plan, setup, share
+from .test_crew_plans import plan, setup, share
 
 
 def board(client, h, crew_id):
@@ -67,7 +68,7 @@ def test_approved_first_and_closed_events_stay_two_weeks(client, make_event, db)
     later = make_event("Macbeth")  # still on, so it comes before a closed one
     plan(client, p["Ben"], later)
     share(client, p["Ben"], later, [crew["id"]])
-    event = db.get(Event, hamlet.id)
+    event, T = db.get(Event, hamlet.id), today_in_chicago()  # the board's "today" is Chicago's, not the machine's
     event.begin_date, event.end_date = T - timedelta(days=40), T - timedelta(days=10)  # closed 10 days ago: still there
     db.commit()
     assert list(board(client, p["Ana"], crew["id"])) == ["Macbeth", "Hamlet"]
