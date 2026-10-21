@@ -68,7 +68,7 @@ def list_events(
     include_past: bool = False,
     mine: Annotated[list[PlanStatus] | None, Query(description="Only events you're interested in or going to (needs sign-in)")] = None,
     picks: Annotated[list[PlanStatus] | None, Query(description="Only the owner's picks of these kinds (the dolphins)")] = None,
-    crews: Annotated[str | None, Query(pattern=r"^(all|\d+)$", description='Only events your crews have shared plans for: "all", or a crew id (needs sign-in)')] = None,
+    crews: Annotated[str | None, Query(pattern=r"^(all|\d+)$", description='Only events your crews have shared plans or "I\'ve been" marks for: "all", or a crew id (needs sign-in)')] = None,
     user: OptionalUser = None,
     sort: Sort = "start",
     limit: Annotated[int, Query(ge=1, le=1000)] = 100,
@@ -81,7 +81,8 @@ def list_events(
     sort: start (TBD first, then by opening date), closing, opening, az, price.
     mine (CC-66): only your own plans of those kinds; it never shows anyone else's.
     picks (CC-66): only the owner's public picks of those kinds (the dolphin filter buttons).
-    crews (CC-75): only events other members of your crews (all, or one) have shared plans for."""
+    crews (CC-75): only events other members of your crews (all, or one) have shared plans for, or (CC-94)
+    have been to."""
     conds = [live_condition()]
     if mine:
         if user is None:

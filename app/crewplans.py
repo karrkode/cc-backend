@@ -112,14 +112,18 @@ def attach_crew_plans(db, events, user: User | None):
 
 
 def crew_plans_condition(db, user: User, crew_id: int | None = None):
-    """SQL condition on Event.id: events your crews (or one of them) have shared plans for, from other members."""
+    """SQL condition on Event.id: events your crews (or one of them) have shared plans or "I've been" marks
+    for, from other members. CC-94: a crew-mate who's been counts too (Your Crews Catalog)."""
     crews = my_crew_ids(db, user)
     if crew_id is not None:
         crews &= {crew_id}
     members_plans = (select(PlanShare.event_id)
                      .join(CrewMember, (CrewMember.crew_id == PlanShare.crew_id) & (CrewMember.user_id == PlanShare.user_id))
                      .where(PlanShare.crew_id.in_(crews or {-1}), PlanShare.user_id != user.id))
-    return Event.id.in_(members_plans)
+    members_been = (select(AttendedShare.event_id)
+                    .join(CrewMember, (CrewMember.crew_id == AttendedShare.crew_id) & (CrewMember.user_id == AttendedShare.user_id))
+                    .where(AttendedShare.crew_id.in_(crews or {-1}), AttendedShare.user_id != user.id))
+    return Event.id.in_(members_plans) | Event.id.in_(members_been)
 
 
 def crew_board(db, crew_ids: set[int], viewer: User, today: date) -> dict[int, list[dict]]:
