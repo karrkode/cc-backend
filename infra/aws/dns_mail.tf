@@ -15,11 +15,14 @@ locals {
         "0 mx3-usg2.ppe-hosted.com.",
       ]
     }
+    # Route 53 holds one TXT record set per name, so Google Search Console's domain
+    # verification lives here too. Keep it: Google re-checks it.
     "TXT @" = {
       name = "", type = "TXT"
       records = [
         "NETORGFT21209736.onmicrosoft.com",
         "v=spf1 include:_spf-usg2.ppe-hosted.com include:secureserver.net ~all",
+        "google-site-verification=IapmeXHqcQnMp2HFwiChb_IGXcmapNxuRBoQGozNjDI",
       ]
     }
     "TXT _dmarc" = {
