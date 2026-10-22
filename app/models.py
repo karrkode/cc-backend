@@ -134,6 +134,30 @@ class TrafficVisitorDay(Base):
     visitor: Mapped[str] = mapped_column(String(40), primary_key=True)
 
 
+class TrafficSourceVisit(Base):
+    """CC-110: which (hashed) visitors arrived from which source on which day, for visitors by source.
+    A source is a tagged link's utm_source / utm_medium / utm_campaign, or else the referring site's
+    domain (medium "site"). Never a full address."""
+    __tablename__ = "traffic_source_visits"
+
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    visitor: Mapped[str] = mapped_column(String(40), primary_key=True)
+    source: Mapped[str] = mapped_column(String(60), primary_key=True)
+    medium: Mapped[str] = mapped_column(String(40), primary_key=True, default="")
+    campaign: Mapped[str] = mapped_column(String(60), primary_key=True, default="")
+
+
+class TrafficSourceCount(Base):
+    """CC-110: daily ticket clicks by the source that brought the visitor in this visit. Counts only."""
+    __tablename__ = "traffic_source_counts"
+
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    source: Mapped[str] = mapped_column(String(60), primary_key=True)
+    medium: Mapped[str] = mapped_column(String(40), primary_key=True, default="")
+    campaign: Mapped[str] = mapped_column(String(60), primary_key=True, default="")
+    tickets: Mapped[int] = mapped_column(Integer, default=0)
+
+
 class RefreshToken(Base):
     __tablename__ = "refresh_tokens"
 
