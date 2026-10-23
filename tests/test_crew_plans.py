@@ -33,7 +33,7 @@ def test_nothing_is_shared_until_you_choose(client, make_event):
     r = share(client, p["Ben"], hamlet, [crew["id"]])
     assert r.status_code == 200 and r.json()["crews"] == [crew["id"]]
     seen = client.get(f"/events/{hamlet.id}", headers=p["Ana"]).json()["crew_plans"]
-    assert seen == [{"crew_id": crew["id"], "crew_name": "Thursday Theater", "going": ["Ben"], "interested": []}]
+    assert seen == [{"crew_id": crew["id"], "crew_name": "Thursday Theater", "going": ["Ben"], "interested": [], "been": []}]
     assert client.get(f"/events/{hamlet.id}", headers=p["Ben"]).json()["crew_plans"] == []  # never your own
     assert client.get(f"/events/{hamlet.id}", headers=p["Cy"]).json()["crew_plans"] == []  # not in the crew
     assert client.get(f"/events/{hamlet.id}").json()["crew_plans"] == []  # signed out
@@ -70,7 +70,9 @@ def test_sharing_ends_with_the_plan_or_the_membership(client, make_event):
     plan(client, p["Ben"], hamlet, status="going", date=(T + timedelta(days=2)).isoformat())  # a changed plan stays shared
     assert client.get(f"/events/{hamlet.id}", headers=p["Ana"]).json()["crew_plans"][0]["going"] == ["Ben"]
     client.put(f"/me/attended/{hamlet.id}", headers=p["Ben"])  # "I've been" ends the plan, and the sharing
-    assert client.get(f"/events/{hamlet.id}", headers=p["Ana"]).json()["crew_plans"] == []
+    # CC-117: ...and the crew sees that he's been instead
+    assert client.get(f"/events/{hamlet.id}", headers=p["Ana"]).json()["crew_plans"] == [
+        {"crew_id": crew["id"], "crew_name": "Thursday Theater", "going": [], "interested": [], "been": ["Ben"]}]
     plan(client, p["Ben"], hamlet)
     assert client.get("/me/plans", headers=p["Ben"]).json()[0]["crews"] == []  # a new plan starts unshared
     plan(client, p["Ben"], sue); share(client, p["Ben"], sue, [crew["id"]])

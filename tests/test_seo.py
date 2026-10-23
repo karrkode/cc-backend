@@ -27,7 +27,7 @@ def test_event_page_is_readable_without_javascript(client, make_event):
     assert "<h1>4000 Miles</h1>" in page and "The Den Theatre · Wicker Park, Chicago" in page and "$20–$30" in page
     assert f"{TODAY.year}" in page and 'rel="canonical"' in page and 'property="og:image"' in page
     assert f'href="https://example.org/4000 miles"' in page  # the event's own page, for tickets
-    assert re.search(rf'#o-\d{{8}}-\d{{8}}-{ev.id}"', page)  # opens the event in the site
+    assert f'href="http://localhost:4173/#e/{ev.id}"' in page or f'/#e/{ev.id}"' in page  # opens the event view (CC-117)
 
 
 def test_json_ld_describes_the_event(client, make_event):
