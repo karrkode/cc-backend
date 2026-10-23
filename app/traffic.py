@@ -24,7 +24,7 @@ from sqlalchemy.exc import IntegrityError
 from .config import get_settings
 from .models import TrafficCount, TrafficSourceCount, TrafficSourceVisit, TrafficVisitor, TrafficVisitorDay
 
-VIEWS = ("home", "catalog", "plan", "submit", "account", "review", "venues", "stats", "reset", "verify")
+VIEWS = ("home", "catalog", "event", "plan", "submit", "account", "review", "venues", "stats", "reset", "verify")
 KINDS = ("view", "ticket", "outing")
 BOTS = re.compile(r"bot|crawl|spider|slurp|preview|headless|lighthouse|monitor|curl|wget|python|httpclient", re.I)
 

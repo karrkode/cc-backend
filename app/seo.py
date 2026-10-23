@@ -10,7 +10,7 @@ Only what the catalog already shows publicly goes on a page: never plans, crews,
 import json
 import re
 import unicodedata
-from datetime import date, timedelta
+from datetime import date
 from html import escape
 from xml.sax.saxutils import escape as xml_escape
 
@@ -135,16 +135,9 @@ def json_ld(event: Event, today: date) -> dict | None:
     return data
 
 
-def _outing_link(event: Event, today: date) -> str:
-    """The event in the site, as a one-stop shared outing (#o-<from>-<to>-<id>, which the site already opens)."""
-    site = get_settings().site_url
-    if is_closed(event, today):
-        return site + "/#catalog"
-    start = max(today, event.begin_date or today)
-    end = start + timedelta(days=6)
-    if event.end_date and event.end_date < end:
-        end = event.end_date
-    return f"{site}/#o-{start:%Y%m%d}-{end:%Y%m%d}-{event.id}"
+def _view_link(event: Event) -> str:
+    """CC-117: the event's view in the site, with your plans and your crews' (#e/<id>, which the site opens)."""
+    return f"{get_settings().site_url}/#e/{event.id}"
 
 
 PAGE_STYLE = """
@@ -242,8 +235,7 @@ def render_event(event: Event, today: date) -> str:
     actions = []
     if event.url and not closed:
         actions.append(f'<a class="btn primary" href="{e(event.url)}" rel="noopener">Tickets and showtimes ↗</a>')
-    actions.append(f'<a class="btn {"secondary" if actions else "primary"}" href="{e(_outing_link(event, today))}">'
-                   f'{"See what else is on" if closed else "Open in Culture Crew"}</a>')
+    actions.append(f'<a class="btn {"secondary" if actions else "primary"}" href="{e(_view_link(event))}">Open in Culture Crew</a>')
     body.append(f'<div class="actions">{"".join(actions)}</div>')
     body.append('<p class="note">Dates and prices change, so check the event’s own page before you go.</p>')
     ld = json_ld(event, today)

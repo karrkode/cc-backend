@@ -177,6 +177,7 @@ class CrewPlansOut(BaseModel):
     crew_name: str
     going: list[str] = []
     interested: list[str] = []
+    been: list[str] = []  # CC-117: crew-mates who've marked "I've been" and shared it with this crew
 
 
 class EventOut(ORM):

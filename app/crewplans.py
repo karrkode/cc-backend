@@ -2,7 +2,8 @@
 (PlanShare); nothing is shared by default. Only members of a crew ever see what's shared with it.
 
 - attach_crew_plans: on event cards, which of your crew-mates are interested or going ("2 from
-  Thursday Theater are going"), per crew; never your own plan, never a crew you're not in
+  Thursday Theater are going"), per crew; never your own plan, never a crew you're not in. CC-117: and
+  who's been (their "I've been" marks shared with that crew), for the event view
 - crew_plans_condition: the catalog's filter for events your crews have plans for
 - crew_board: a crew's shared plans by event, for its box on the account page
 - CC-93: "I've been" marks, seen by the crews the plan was shared with when it was marked (AttendedShare),
@@ -68,13 +69,16 @@ def unshare_been(db, user_id, crew_id: int) -> None:
     db.execute(delete(AttendedShare).where(AttendedShare.user_id == user_id, AttendedShare.crew_id == crew_id))
 
 
-def _been_rows(db, crew_ids: set[int]):
+def _been_rows(db, crew_ids: set[int], event_ids: set[int] | None = None):
     """(event id, crew id, user, photo status or None) for marks seen by these crews, from current members."""
-    return db.execute(select(AttendedShare.event_id, AttendedShare.crew_id, User, WentPhoto.status)
-                      .join(User, User.id == AttendedShare.user_id)
-                      .join(CrewMember, (CrewMember.crew_id == AttendedShare.crew_id) & (CrewMember.user_id == AttendedShare.user_id))
-                      .outerjoin(WentPhoto, (WentPhoto.user_id == AttendedShare.user_id) & (WentPhoto.event_id == AttendedShare.event_id))
-                      .where(AttendedShare.crew_id.in_(crew_ids))).all()
+    q = (select(AttendedShare.event_id, AttendedShare.crew_id, User, WentPhoto.status)
+         .join(User, User.id == AttendedShare.user_id)
+         .join(CrewMember, (CrewMember.crew_id == AttendedShare.crew_id) & (CrewMember.user_id == AttendedShare.user_id))
+         .outerjoin(WentPhoto, (WentPhoto.user_id == AttendedShare.user_id) & (WentPhoto.event_id == AttendedShare.event_id))
+         .where(AttendedShare.crew_id.in_(crew_ids)))
+    if event_ids is not None:
+        q = q.where(AttendedShare.event_id.in_(event_ids))
+    return db.execute(q).all()
 
 
 def _shared_rows(db, crew_ids: set[int], event_ids: set[int] | None = None):
@@ -101,11 +105,18 @@ def attach_crew_plans(db, events, user: User | None):
     if not crews:
         return events
     by_event: dict[int, dict[int, dict]] = defaultdict(dict)
-    for event_id, crew_id, crew_name, who, status, going_on in _shared_rows(db, crews, {e.id for e in events}):
+    ids = {e.id for e in events}
+
+    def entry_for(event_id, crew_id, crew_name):
+        return by_event[event_id].setdefault(crew_id, {"crew_id": crew_id, "crew_name": crew_name, "going": [], "interested": [], "been": []})
+    for event_id, crew_id, crew_name, who, status, going_on in _shared_rows(db, crews, ids):
         if who.id == user.id:
             continue
-        entry = by_event[event_id].setdefault(crew_id, {"crew_id": crew_id, "crew_name": crew_name, "going": [], "interested": []})
-        entry["going" if status == PlanStatus.going else "interested"].append(name_of(who))
+        entry_for(event_id, crew_id, crew_name)["going" if status == PlanStatus.going else "interested"].append(name_of(who))
+    names = dict(db.execute(select(Crew.id, Crew.name).where(Crew.id.in_(crews))).all())
+    for event_id, crew_id, who, _photo in _been_rows(db, crews, ids):
+        if who.id != user.id:
+            entry_for(event_id, crew_id, names[crew_id])["been"].append(name_of(who))
     for e in events:
         e.crew_plans = sorted(by_event.get(e.id, {}).values(), key=lambda c: c["crew_name"].lower())
     return events
