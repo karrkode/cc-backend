@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from ..deps import DB
 from ..stats import today_in_chicago
-from ..traffic import VIEWS, is_bot, record, visitor_key
+from ..traffic import VIEWS, is_bot, record, source_of, visitor_key
 
 router = APIRouter(prefix="/traffic", tags=["traffic"])
 
@@ -16,13 +16,19 @@ class Ping(BaseModel):
     kind: Literal["view", "ticket", "outing"] = "view"
     view: str = Field(default="", max_length=20)
     vid: str | None = Field(default=None, min_length=16, max_length=64, pattern=r"^[A-Za-z0-9-]+$")
+    # CC-110: where this visit came from. The site sends the tags from the link it landed on, or the
+    # referring site's domain only; source_of() cleans both and drops anything else.
+    utm_source: str | None = Field(default=None, max_length=300)
+    utm_medium: str | None = Field(default=None, max_length=300)
+    utm_campaign: str | None = Field(default=None, max_length=300)
+    ref: str | None = Field(default=None, max_length=253)
 
 
 @router.post("", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
 async def ping(request: Request, db: DB):
     """CC-68: count one view, ticket click or planned outing. Anyone may send it; it never fails the page.
     The site sends it as text/plain JSON so the browser needs no preflight request."""
-    body = (await request.body())[:500]
+    body = (await request.body())[:1000]
     try:
         p = Ping.model_validate(json.loads(body or b"{}"))
     except (ValueError, ValidationError):
@@ -34,9 +40,10 @@ async def ping(request: Request, db: DB):
                or (request.client.host if request.client else ""))
     day = today_in_chicago()
     visitor, lasting = visitor_key(p.vid, day, address, agent)
+    source = source_of(p.utm_source, p.utm_medium, p.utm_campaign, p.ref)
 
     def save():  # the database calls are blocking: keep them off the event loop
-        record(db, day, p.kind, p.view, visitor, lasting)
+        record(db, day, p.kind, p.view, visitor, lasting, source)
         db.commit()
     await run_in_threadpool(save)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

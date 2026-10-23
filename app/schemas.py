@@ -467,6 +467,20 @@ class TrafficDay(BaseModel):
     outings: int  # outings planned
 
 
+class TrafficSource(BaseModel):
+    """CC-110: a tagged link's utm values, or a referring site's domain (medium "site")."""
+    source: str
+    medium: str
+    campaign: str
+    visitors: int  # unique over the period
+    tickets: int  # clicks out to an event's own page during visits from this source
+
+
+class TrafficDirect(BaseModel):
+    visitors: int  # came with no tags and no referring site (typed it, a bookmark, an app that hides it)
+    tickets: int
+
+
 class TrafficOut(BaseModel):
     """CC-68: cookie-free traffic for the admin Stats page. Counts only."""
     days: list[TrafficDay]  # oldest first; the last is today
@@ -474,6 +488,8 @@ class TrafficOut(BaseModel):
     visitors: int  # unique visitors over the whole period
     returning_visitors: int  # of those, how many had visited before
     counting_since: date_ | None
+    sources: list[TrafficSource] = []  # CC-110: most visitors first
+    direct: TrafficDirect = TrafficDirect(visitors=0, tickets=0)
 
 
 class StatsOut(BaseModel):
