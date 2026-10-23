@@ -168,6 +168,7 @@ applies new migrations when it starts.
 | Members | `GET /admin/members`, `POST`/`DELETE /admin/members/{id}/approver` (offer, withdraw or remove) | admin |
 | Issues | `POST /issues`; `GET`/`PATCH /admin/issues` | signed in / admin |
 | Stats | `GET /admin/stats` (includes photo checks and their cost this month), `/admin/stats/events`, `/admin/stats/traffic`; `POST /traffic` | admin / anyone |
+| Pages (CC-108) | `GET /e/{id}-{title}` (plain HTML event page, with Event JSON-LD and preview tags), `/sitemap.xml`, `/robots.txt`. On chiculturecrew.com CloudFront sends these paths here and caches them | anyone |
 | Ops | `GET /health` (API and database) | anyone |
 
 ## How sign-in works

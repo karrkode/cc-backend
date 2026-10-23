@@ -95,6 +95,28 @@ locals {
   response_policy_security_headers = "67f7725c-6f97-4210-82d7-5512b31e9d03" # HSTS, nosniff, frame-options...
 }
 
+# CC-108: event pages, the sitemap and robots.txt come from the API, which renders them as plain HTML
+# for search engines and link previews. Cached for the API's max-age (10 minutes), never longer than
+# an hour; no cookies, headers or query strings are passed or cached on.
+resource "aws_cloudfront_cache_policy" "api_pages" {
+  name        = "${var.name}-api-pages"
+  comment     = "Event pages, sitemap, robots.txt (CC-108)"
+  min_ttl     = 0
+  default_ttl = 600
+  max_ttl     = 3600
+  parameters_in_cache_key_and_forwarded_to_origin {
+    enable_accept_encoding_gzip   = true
+    enable_accept_encoding_brotli = true
+    cookies_config { cookie_behavior = "none" }
+    headers_config { header_behavior = "none" }
+    query_strings_config { query_string_behavior = "none" }
+  }
+}
+
+locals {
+  api_page_paths = ["/e/*", "/sitemap.xml", "/robots.txt"]
+}
+
 resource "aws_cloudfront_distribution" "site" {
   enabled             = true
   comment             = "${var.name} page"
@@ -107,6 +129,36 @@ resource "aws_cloudfront_distribution" "site" {
     origin_id                = "site-bucket"
     domain_name              = aws_s3_bucket.site.bucket_regional_domain_name
     origin_access_control_id = aws_cloudfront_origin_access_control.site.id
+  }
+
+  origin {
+    origin_id   = "api"
+    domain_name = var.api_domain
+    custom_origin_config {
+      http_port              = 80
+      https_port             = 443
+      origin_protocol_policy = "https-only"
+      origin_ssl_protocols   = ["TLSv1.2"]
+    }
+  }
+
+  dynamic "ordered_cache_behavior" {
+    for_each = local.api_page_paths
+    content {
+      path_pattern               = ordered_cache_behavior.value
+      target_origin_id           = "api"
+      viewer_protocol_policy     = "redirect-to-https"
+      allowed_methods            = ["GET", "HEAD"]
+      cached_methods             = ["GET", "HEAD"]
+      compress                   = true
+      cache_policy_id            = aws_cloudfront_cache_policy.api_pages.id
+      response_headers_policy_id = local.response_policy_security_headers
+
+      function_association {
+        event_type   = "viewer-request"
+        function_arn = aws_cloudfront_function.canonical_host.arn
+      }
+    }
   }
 
   default_cache_behavior {
