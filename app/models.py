@@ -158,6 +158,30 @@ class TrafficSourceCount(Base):
     tickets: Mapped[int] = mapped_column(Integer, default=0)
 
 
+class TrafficJoinVisit(Base):
+    """CC-121: which (hashed) visitors opened the join page (/join) on which day, and the source that brought
+    them (CC-110's, or "" for direct / unknown). Visits to the join page by source."""
+    __tablename__ = "traffic_join_visits"
+
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    visitor: Mapped[str] = mapped_column(String(40), primary_key=True)
+    source: Mapped[str] = mapped_column(String(60), primary_key=True, default="")
+    medium: Mapped[str] = mapped_column(String(40), primary_key=True, default="")
+    campaign: Mapped[str] = mapped_column(String(60), primary_key=True, default="")
+
+
+class TrafficJoinSignup(Base):
+    """CC-121: daily sign-ups in visits that came by the join page, by that visit's source. Counts only:
+    nothing ties a count to the account."""
+    __tablename__ = "traffic_join_signups"
+
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    source: Mapped[str] = mapped_column(String(60), primary_key=True, default="")
+    medium: Mapped[str] = mapped_column(String(40), primary_key=True, default="")
+    campaign: Mapped[str] = mapped_column(String(60), primary_key=True, default="")
+    signups: Mapped[int] = mapped_column(Integer, default=0)
+
+
 class RefreshToken(Base):
     __tablename__ = "refresh_tokens"
 
