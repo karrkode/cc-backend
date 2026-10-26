@@ -13,6 +13,9 @@ and can't be turned back into either. No address, ID or browser string is ever s
 CC-110: a ping can also say where this visit came from: a tagged link's utm_source / utm_medium /
 utm_campaign, or else just the domain of the site that linked here (never the full address). We keep
 which visitors came from each source on a day, and ticket clicks by source.
+
+CC-121: views of the join page (/join) are also kept by source, and so are sign-ups in a visit that came by it
+(the site says so when it registers): counts only, never tied to the account.
 """
 import hashlib
 import re
@@ -22,9 +25,10 @@ from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 
 from .config import get_settings
-from .models import TrafficCount, TrafficSourceCount, TrafficSourceVisit, TrafficVisitor, TrafficVisitorDay
+from .models import (TrafficCount, TrafficJoinSignup, TrafficJoinVisit, TrafficSourceCount, TrafficSourceVisit,
+                     TrafficVisitor, TrafficVisitorDay)
 
-VIEWS = ("home", "catalog", "event", "plan", "submit", "account", "review", "venues", "stats", "reset", "verify")
+VIEWS = ("home", "join", "catalog", "event", "plan", "submit", "account", "review", "venues", "stats", "reset", "verify")
 KINDS = ("view", "ticket", "outing")
 BOTS = re.compile(r"bot|crawl|spider|slurp|preview|headless|lighthouse|monitor|curl|wget|python|httpclient", re.I)
 
@@ -90,6 +94,8 @@ def record(db, day: date, kind: str, name: str, visitor: str, lasting: bool,
     """Count one ping, and where the visit came from if known (CC-110). The caller commits."""
     if source is not None:
         _record_source(db, day, kind, visitor, source)
+    if kind == "view" and name == "join":
+        _record_join_visit(db, day, visitor, source or ("", "", ""))
     _bump(db, day, kind, name if kind == "view" else "")
     if db.get(TrafficVisitorDay, (day, visitor)) is None:
         try:
@@ -124,6 +130,61 @@ def _record_source(db, day: date, kind: str, visitor: str, source: tuple[str, st
             db.add(TrafficSourceCount(day=day, source=src, medium=medium, campaign=campaign, tickets=1))
     except IntegrityError:  # someone else made the row first
         db.execute(update(TrafficSourceCount).where(*where).values(tickets=TrafficSourceCount.tickets + 1))
+
+
+def _record_join_visit(db, day: date, visitor: str, source: tuple[str, str, str]) -> None:
+    key = (day, visitor, *source)
+    if db.get(TrafficJoinVisit, key) is None:
+        try:
+            with db.begin_nested():
+                db.add(TrafficJoinVisit(day=day, visitor=visitor, source=source[0], medium=source[1], campaign=source[2]))
+        except IntegrityError:
+            pass
+
+
+def record_join_signup(db, day: date, source: tuple[str, str, str] | None) -> None:
+    """CC-121: count a sign-up in a visit that came by the join page, under that visit's source ("" for direct).
+    The caller commits, with the account."""
+    src, medium, campaign = source or ("", "", "")
+    where = (TrafficJoinSignup.day == day, TrafficJoinSignup.source == src,
+             TrafficJoinSignup.medium == medium, TrafficJoinSignup.campaign == campaign)
+    if db.execute(update(TrafficJoinSignup).where(*where).values(signups=TrafficJoinSignup.signups + 1)).rowcount:
+        return
+    try:
+        with db.begin_nested():
+            db.add(TrafficJoinSignup(day=day, source=src, medium=medium, campaign=campaign, signups=1))
+    except IntegrityError:  # someone else made the row first
+        db.execute(update(TrafficJoinSignup).where(*where).values(signups=TrafficJoinSignup.signups + 1))
+
+
+def _rate(signups: int, visits: int) -> float | None:
+    return round(signups / visits, 3) if visits else None
+
+
+def _join(db, first: date, today: date) -> dict:
+    """CC-121: join page visits (a visitor on a day), sign-ups and the sign-up rate over the period, overall and
+    by source, most visits first. Direct / unknown visits are their own line."""
+    rows: dict[tuple, dict] = {}
+
+    def row(key):
+        return rows.setdefault(key, {"source": key[0], "medium": key[1], "campaign": key[2], "visits": 0, "signups": 0})
+    for src, medium, campaign, n in db.execute(
+            select(TrafficJoinVisit.source, TrafficJoinVisit.medium, TrafficJoinVisit.campaign, func.count())
+            .where(TrafficJoinVisit.day >= first, TrafficJoinVisit.day <= today)
+            .group_by(TrafficJoinVisit.source, TrafficJoinVisit.medium, TrafficJoinVisit.campaign)):
+        row((src, medium, campaign))["visits"] += n
+    for src, medium, campaign, n in db.execute(
+            select(TrafficJoinSignup.source, TrafficJoinSignup.medium, TrafficJoinSignup.campaign, func.sum(TrafficJoinSignup.signups))
+            .where(TrafficJoinSignup.day >= first, TrafficJoinSignup.day <= today)
+            .group_by(TrafficJoinSignup.source, TrafficJoinSignup.medium, TrafficJoinSignup.campaign)):
+        row((src, medium, campaign))["signups"] += int(n or 0)
+    direct = rows.pop(("", "", ""), {"visits": 0, "signups": 0})
+    sources = [{**r, "rate": _rate(r["signups"], r["visits"])} for r in rows.values()]
+    sources.sort(key=lambda r: (-r["visits"], -r["signups"], r["source"], r["medium"], r["campaign"]))
+    visits = direct["visits"] + sum(r["visits"] for r in sources)
+    signups = direct["signups"] + sum(r["signups"] for r in sources)
+    return {"visits": visits, "signups": signups, "rate": _rate(signups, visits), "sources": sources,
+            "direct": {"visits": direct["visits"], "signups": direct["signups"], "rate": _rate(direct["signups"], direct["visits"])}}
 
 
 def _sources(db, first: date, today: date, period_visitors: set, tickets: int) -> tuple[list[dict], dict]:
@@ -179,4 +240,4 @@ def summary(db, today: date, days: int) -> dict:
     sources, direct = _sources(db, first, today, period_visitors, sum(r["tickets"] for r in rows.values()))
     return {"days": list(rows.values()), "by_view": dict(sorted(by_view.items(), key=lambda kv: -kv[1])),
             "visitors": len(period_visitors), "returning_visitors": len(period_returning), "counting_since": since,
-            "sources": sources, "direct": direct}
+            "sources": sources, "direct": direct, "join": _join(db, first, today)}

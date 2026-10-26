@@ -167,7 +167,7 @@ applies new migrations when it starts.
 | Approvals | `GET /approvals?show=waiting\|approved\|rejected`, `POST /approvals/{id}` (approve, or reject with a reason) | approvers and admins |
 | Members | `GET /admin/members`, `POST`/`DELETE /admin/members/{id}/approver` (offer, withdraw or remove) | admin |
 | Issues | `POST /issues`; `GET`/`PATCH /admin/issues` | signed in / admin |
-| Stats | `GET /admin/stats` (includes photo checks and their cost this month), `/admin/stats/events`, `/admin/stats/traffic`; `POST /traffic` | admin / anyone |
+| Stats | `GET /admin/stats` (includes photo checks and their cost this month), `/admin/stats/events`, `/admin/stats/traffic` (with the join page's visits and sign-ups by source, CC-121); `POST /traffic` | admin / anyone |
 | Pages (CC-108) | `GET /e/{id}-{title}` (plain HTML event page, with Event JSON-LD and preview tags), `/sitemap.xml`, `/robots.txt`. On chiculturecrew.com CloudFront sends these paths here and caches them | anyone |
 | Ops | `GET /health` (API and database) | anyone |
 

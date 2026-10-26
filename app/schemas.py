@@ -24,10 +24,20 @@ def _bcrypt_limit(v: str) -> str:
     return v
 
 
+class JoinSourceIn(BaseModel):
+    """CC-121: where a visit that came by the join page came from (CC-110's tags or the referring domain).
+    Cleaned by traffic.source_of; only counted, never kept with the account."""
+    utm_source: str | None = Field(default=None, max_length=300)
+    utm_medium: str | None = Field(default=None, max_length=300)
+    utm_campaign: str | None = Field(default=None, max_length=300)
+    ref: str | None = Field(default=None, max_length=253)
+
+
 class RegisterIn(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=72)
     display_name: str = Field(default="", max_length=80)
+    join_source: JoinSourceIn | None = None  # CC-121: sent only for a sign-up in a visit that came by /join
 
     _password_fits_bcrypt = field_validator("password")(_bcrypt_limit)
 
@@ -482,6 +492,30 @@ class TrafficDirect(BaseModel):
     tickets: int
 
 
+class JoinSource(BaseModel):
+    """CC-121: join page visits and sign-ups from one source."""
+    source: str
+    medium: str
+    campaign: str
+    visits: int  # a visitor on a day
+    signups: int  # sign-ups in visits that came by the join page
+    rate: float | None  # signups / visits; None with no visits
+
+
+class JoinDirect(BaseModel):
+    visits: int
+    signups: int
+    rate: float | None
+
+
+class JoinStats(BaseModel):
+    visits: int
+    signups: int
+    rate: float | None
+    sources: list[JoinSource] = []  # most visits first
+    direct: JoinDirect = JoinDirect(visits=0, signups=0, rate=None)
+
+
 class TrafficOut(BaseModel):
     """CC-68: cookie-free traffic for the admin Stats page. Counts only."""
     days: list[TrafficDay]  # oldest first; the last is today
@@ -491,6 +525,7 @@ class TrafficOut(BaseModel):
     counting_since: date_ | None
     sources: list[TrafficSource] = []  # CC-110: most visitors first
     direct: TrafficDirect = TrafficDirect(visitors=0, tickets=0)
+    join: JoinStats = JoinStats(visits=0, signups=0, rate=None)  # CC-121
 
 
 class StatsOut(BaseModel):

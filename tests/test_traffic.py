@@ -120,3 +120,60 @@ def test_only_the_domain_is_stored(client, db):
     rows = db.scalars(select(TrafficSourceVisit)).all()
     assert [(r.source, r.medium, r.campaign) for r in rows] == [("news.example.org", "site", "")]
     assert VID_A not in rows[0].visitor
+
+
+# ---- CC-121: the join page: visits and sign-ups by source ----
+def register(client, email, join_source=None):
+    body = {"email": email, "password": "join-page-test-pw", "display_name": "Joiner"}
+    if join_source is not None:
+        body["join_source"] = join_source
+    r = client.post("/auth/register", json=body)
+    assert r.status_code == 201, r.text
+    return r
+
+
+QR = {"utm_source": "qr", "utm_medium": "", "utm_campaign": "lobby-goodman"}
+
+
+def test_a_join_page_visit_that_signs_up_counts_under_its_source(client, admin_token):
+    ping(client, view="join", vid=VID_A, **QR)
+    register(client, "goodman@example.com", QR)
+    j = summary(client, admin_token, days=7)["join"]
+    assert j["sources"] == [{"source": "qr", "medium": "", "campaign": "lobby-goodman", "visits": 1, "signups": 1, "rate": 1.0}]
+    assert (j["visits"], j["signups"], j["rate"]) == (1, 1, 1.0)
+
+
+def test_join_rate_by_source_and_direct(client, admin_token):
+    for vid in (VID_A, VID_B, "c" * 32, "d" * 32):
+        ping(client, view="join", vid=vid, utm_source="bookclub", utm_campaign="oct")
+    ping(client, view="join", vid="e" * 32)  # typed it in: direct
+    ping(client, view="join", vid=VID_A, utm_source="bookclub", utm_campaign="oct")  # same visitor, same day: one visit
+    register(client, "one@example.com", {"utm_source": "bookclub", "utm_campaign": "oct"})
+    register(client, "two@example.com", {})  # came to /join with no source
+    j = summary(client, admin_token, days=7)["join"]
+    assert [(r["source"], r["campaign"], r["visits"], r["signups"], r["rate"]) for r in j["sources"]] == [("bookclub", "oct", 4, 1, 0.25)]
+    assert j["direct"] == {"visits": 1, "signups": 1, "rate": 1.0}
+    assert (j["visits"], j["signups"], j["rate"]) == (5, 2, 0.4)
+
+
+def test_a_sign_up_elsewhere_is_not_a_join_page_sign_up(client, admin_token):
+    ping(client, view="home", vid=VID_A, **QR)  # a tagged visit to Home, not the join page
+    register(client, "elsewhere@example.com")
+    j = summary(client, admin_token, days=7)["join"]
+    assert (j["visits"], j["signups"], j["sources"], j["direct"]["signups"]) == (0, 0, [], 0)
+    assert j["rate"] is None
+
+
+def test_join_counts_keep_nothing_identifying(client, db):
+    from app.models import TrafficJoinSignup, TrafficJoinVisit
+    ping(client, view="join", vid=VID_A, **QR)
+    register(client, "private.person@example.com", QR)
+    stored = [tuple(getattr(r, c.name) for c in r.__table__.columns) for model in (TrafficJoinVisit, TrafficJoinSignup)
+              for r in db.scalars(select(model))]
+    text = repr(stored)
+    assert len(stored) == 2 and "private" not in text and "Joiner" not in text and VID_A not in text and "testclient" not in text
+
+
+def test_join_tracking_doesnt_get_in_the_way_of_signing_up(client):
+    r = register(client, "junk@example.com", {"utm_source": "<script>", "ref": "not a domain"})
+    assert r.json()["access_token"]

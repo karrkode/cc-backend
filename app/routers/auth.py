@@ -13,7 +13,8 @@ from ..schemas import (ForgotPasswordIn, LoginIn, MessageOut, PasswordChangeIn, 
                        ResetPasswordIn, TokenIn, TokenOut, UserOut)
 from ..security import (create_access_token, hash_password, hash_refresh_token, new_refresh_token,
                         verify_password)
-from ..stats import record_active
+from ..stats import record_active, today_in_chicago
+from ..traffic import record_join_signup, source_of
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -72,6 +73,9 @@ def register(body: RegisterIn, db: DB, response: Response, tasks: BackgroundTask
     except IntegrityError:
         db.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, "An account with that email already exists")
+    if body.join_source is not None:  # CC-121: a sign-up from the join page, counted by source with the account
+        j = body.join_source
+        record_join_signup(db, today_in_chicago(), source_of(j.utm_source, j.utm_medium, j.utm_campaign, j.ref))
     email = _verification_email(db, user)
     out = _issue(db, user, response)  # commits the account and its link together
     tasks.add_task(mail.send, email)
