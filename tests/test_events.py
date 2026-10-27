@@ -92,7 +92,7 @@ def test_user_submission_waits_for_approval(client, user_token, db):
 def test_admin_publish_now(client, admin_token, make_event):
     venue_id = make_event("Seed").venue_id
     r = client.post("/events", headers=auth(admin_token), json={
-        "title": "Admin Show", "category": "Concert", "venue_id": venue_id, "min_price": "20.00", "publish": "now"})
+        "title": "Admin Show", "category": "Music", "venue_id": venue_id, "min_price": "20.00", "publish": "now"})
     assert r.status_code == 201 and r.json()["status"] == "approved" and r.json()["publish_at"] is None
     assert "Admin Show" in titles(client.get("/events"))
 

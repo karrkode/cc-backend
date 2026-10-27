@@ -14,6 +14,7 @@ from datetime import date
 from html import escape
 from xml.sax.saxutils import escape as xml_escape
 
+from .categories import label
 from .config import get_settings
 from .models import Area, Event
 
@@ -91,7 +92,7 @@ def _locality(event: Event) -> tuple[str, str]:
 
 
 def description(event: Event, today: date) -> str:
-    lead = f"{event.category} at {place_text(event).replace(' · ', ' in ')}."
+    lead = f"{label(event.category, event.opera)} at {place_text(event).replace(' · ', ' in ')}."
     if is_closed(event, today):
         text = f"{lead} This run has closed. See what else is on in Chicago on Culture Crew."
     else:
@@ -227,7 +228,7 @@ def render_event(event: Event, today: date) -> str:
     title = f"{event.title} · {event.venue.name} · Culture Crew"
     desc = description(event, today)
     rows = [("When", dates_text(event)), ("Price", price_text(event))]  # where is right under the title
-    body = [f'<p class="eyebrow">{e(event.category)}</p>', f"<h1>{e(event.title)}</h1>",
+    body = [f'<p class="eyebrow">{e(label(event.category, event.opera))}</p>', f"<h1>{e(event.title)}</h1>",
             f'<p class="place">{e(place_text(event))}</p>']
     if closed:
         body.append('<p class="closed">This run has closed</p>')

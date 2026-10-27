@@ -1,6 +1,6 @@
 """What a found event still needs before it can go in the catalog (CC-88, agreed with the product owner).
 
-- Performances (Theater, Comedy, Concert; musicals count as theater): a date, and start times: show
+- Performances (Theater, Comedy, Music; musicals count as theater): a date, and start times: show
   days with times, dated performances with times, or the venue's usual show times. A show with an open
   run and its show days (a weekly open mic) is on now, so it doesn't need a date.
 - Everything else (exhibitions, talks, tours): an opening or closing date, unless it's an open run.

@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import and_, case, func, or_, select, true
 
 from ..areas import area_of, region_of
+from ..categories import CATEGORIES, OPERA_IS, category_condition
 from ..config import get_settings
 from ..deps import DB, AdminUser, CurrentUser, OptionalUser
 from .. import photos
@@ -126,8 +127,8 @@ def list_events(
         conds.append(Venue.region.in_(region))
     elif hood:
         conds.append(Venue.neighborhood.in_(hood))
-    if category:
-        conds.append(Event.category.in_(category))
+    if category:  # CC-125: an opera is also under Theater
+        conds.append(category_condition(category))
     if ended_before:
         conds.append(Event.end_date < ended_before)
     elif not include_past:
@@ -151,15 +152,13 @@ def list_events(
 @router.get("/facets", response_model=EventFacets)
 def facets(db: DB, today: Annotated[date | None, Query(description="The caller's local date")] = None):
     """What the site needs to build its filters and headline counts, without loading every event:
-    the categories and neighborhoods in use, and how many events there are."""
+    the categories (CC-125: always the five) and neighborhoods in use, and how many events there are."""
     today = today or date.today()
     live = live_condition()
-    categories = db.scalars(select(Event.category).where(live).group_by(Event.category)
-                            .order_by(func.count(Event.id).desc(), Event.category)).all()
     hoods = db.execute(select(Venue.neighborhood, Venue.area, Venue.region).join(Event).where(live, Venue.neighborhood != "")
                        .group_by(Venue.neighborhood, Venue.area, Venue.region).order_by(Venue.neighborhood)).all()
     current = db.scalar(select(func.count(Event.id)).where(live, or_(Event.end_date.is_(None), Event.end_date >= today)))
-    return EventFacets(categories=categories, neighborhoods=[{"name": n, "area": a, "region": r} for n, a, r in hoods],
+    return EventFacets(categories=list(CATEGORIES), neighborhoods=[{"name": n, "area": a, "region": r} for n, a, r in hoods],
                        current=current, total=db.scalar(select(func.count(Event.id)).where(live)))
 
 
@@ -214,8 +213,25 @@ def new_event(db: DB, body: EventIn, user) -> Event:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "No venue with that venue_id")
     else:
         venue = get_or_create_venue(db, body.venue)
-    return Event(**body.model_dump(exclude={"venue_id", "venue", "publish", "publish_at", "run_dates"}), venue_id=venue.id,
-                 submitted_by=user.id, status=status_, publish_at=publish_at, run_dates=_run_dates_of(body.run_dates))
+    category, opera = category_for(body, venue, user)
+    return Event(**body.model_dump(exclude={"venue_id", "venue", "publish", "publish_at", "run_dates", "category", "opera"}),
+                 category=category, opera=opera, venue_id=venue.id, submitted_by=user.id, status=status_,
+                 publish_at=publish_at, run_dates=_run_dates_of(body.run_dates))
+
+
+def category_for(body: EventIn, venue: Venue, user) -> tuple[str, bool]:
+    """CC-125: the new event's category and opera flag. Left out, the venue's default; an event can differ from its
+    venue (an Educational talk at a Visual Art venue). Only admins mark opera; left out, a Music event at an opera
+    venue is one. A venue with no default yet takes this event's."""
+    if body.opera and user.role != Role.admin:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only admins can mark an event as opera")
+    category = body.category or venue.category
+    if category is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Choose a type")
+    opera = body.opera if body.opera is not None else venue.opera and category == OPERA_IS
+    if venue.category is None:
+        venue.category, venue.opera = category, opera
+    return category, opera
 
 
 @router.patch("/{event_id}", response_model=EventOut)
@@ -228,6 +244,12 @@ def update_event(event_id: int, body: EventPatch, db: DB, _: AdminUser):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "No venue with that venue_id")
     if changes.get("publish_at") is not None:
         changes["publish_at"] = changes["publish_at"].astimezone(UTC)
+    if changes.get("opera"):  # CC-125: an opera is Music; any other category isn't an opera
+        if changes.get("category", OPERA_IS) != OPERA_IS:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "An opera's category is Music")
+        changes["category"] = OPERA_IS
+    elif changes.get("category") not in (None, OPERA_IS):
+        changes["opera"] = False
     if "run_dates" in changes:  # CC-96: the run sets the dates; new dates can't be in the past (ones it had can stay)
         _no_past_run_dates(body.run_dates, {r.date for r in event.run_dates})
         event.run_dates.clear()

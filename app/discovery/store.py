@@ -16,6 +16,7 @@ from decimal import Decimal, InvalidOperation
 
 from sqlalchemy import func, select
 
+from ..categories import BY_SOURCE_KIND
 from ..models import DiscoveredItem, DiscoverySource, Event, SkipRule, Venue
 from .readers import FoundEvent
 from .rules import norm_title
@@ -224,6 +225,9 @@ def _record(db, source: DiscoverySource, found: FoundEvent, skip: str) -> str:
     item = db.scalar(select(DiscoveredItem).where(DiscoveredItem.source_id == source.id, DiscoveredItem.key == key)) \
         or _same_title(db, source, found, key)
     f = fields_of(found)
+    # CC-125: the source's kind gives the category when the reading didn't; an opera source's events are opera (Music)
+    category, opera = BY_SOURCE_KIND.get(source.kind.value, (None, False))
+    f["category"], f["opera"] = (category if opera else f["category"] or category), opera
     if item is None:
         item = DiscoveredItem(source_id=source.id, key=key, first_seen_at=now, last_seen_at=now, changes={}, detail_checks=[], **f)
         db.add(item)

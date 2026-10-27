@@ -5,7 +5,7 @@
   that runs indefinitely
 - generic offerings that repeat without a specific experience (family days, daily highlights tours):
   anything the reader marked recurring, or the same title on 3 or more dates within two weeks. A repeating
-  performance (Theater, Comedy or Concert with show days or dates) is kept: a weekly comedy show (CC-88)
+  performance (Theater, Comedy or Music with show days or dates) is kept: a weekly comedy show (CC-88)
 Items left out are kept with a reason (status "skipped"), so the recap can count them.
 Admins' own "skip similar" rules come later (CC-71).
 """
@@ -22,7 +22,7 @@ def norm_title(title: str) -> str:
     return " ".join("".join(c.lower() if c.isalnum() else " " for c in title).split())
 
 
-PERFORMING_CATEGORIES = {"Theater", "Comedy", "Concert"}  # CC-88: these get show days and times
+PERFORMING_CATEGORIES = {"Theater", "Comedy", "Music"}  # CC-88: these get show days and times (CC-125: Concert is Music)
 CLASS_WORDS = {"workshop", "workshops", "class", "classes", "course", "intensive", "bootcamp"}
 
 

@@ -142,6 +142,8 @@ def _item_out(db: DB, item: DiscoveredItem, dups: dict | None = None) -> Discove
     out.dates_listed = len(item.performances or [])
     out.dates_timed = any(p.get("time") for p in item.performances or [])
     out.venue_show_times = venue.show_times if venue is not None else {}
+    if venue is not None:  # CC-125: the approve form starts with the venue's default category
+        out.venue_category, out.venue_opera = venue.category, venue.opera
     out.needs = needs(item, venue) if item.status == "new" else ""
     out.proposed = [FoundChange(field=k, listed=v[0], found=v[1]) for k, v in (item.changes or {}).items()] \
         if item.status == "update" else []
@@ -197,9 +199,11 @@ def items_csv(db: DB, _: AdminUser, show: Show = "waiting", source: int | None =
 
 def still_needs(db: DB, item: DiscoveredItem, body: EventIn) -> str:
     """What the event as it would be approved is missing (CC-88): the item, with what the admin gave."""
-    as_approved = SimpleNamespace(kind=item.kind, category=body.category, begin_date=body.begin_date, end_date=body.end_date,
+    venue = db.get(Venue, body.venue_id) if body.venue_id is not None else None
+    category = body.category or (venue.category if venue else None)  # CC-125: left out, the venue's default
+    as_approved = SimpleNamespace(kind=item.kind, category=category, begin_date=body.begin_date, end_date=body.end_date,
                                   open_run=body.open_run, performances=item.performances, weekly=body.weekly)
-    return needs(as_approved, db.get(Venue, body.venue_id) if body.venue_id is not None else None)
+    return needs(as_approved, venue)
 
 
 @router.post("/items/{item_id}/approve", response_model=DiscoveredItemOut)

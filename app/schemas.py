@@ -8,7 +8,8 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, mo
 
 from .models import Area, EventStatus, PlanStatus, Region, Role
 
-Category = Literal["Theater", "Concert", "Comedy", "Visual Art"]
+# CC-125: the five categories (app.categories.CATEGORIES); Concert became Music
+Category = Literal["Theater", "Comedy", "Music", "Visual Art", "Educational"]
 Publish = Literal["now", "later", "review"]
 
 
@@ -114,6 +115,8 @@ class VenueOut(ORM):
     region: Region | None  # CC-73: side of town; null if the neighborhood isn't placed yet
     standard_cost: str = ""  # CC-89: what it usually costs, for its events that don't post a price ("" = none)
     standard_min_price: float | None = None  # its lowest price in dollars (0 = free)
+    category: str | None = None  # CC-125: the category new events here start with (null: none set)
+    opera: bool = False  # and whether they start as opera
 
 
 class VenueIn(BaseModel):
@@ -145,6 +148,9 @@ class VenuePatch(BaseModel):
     # CC-89: what it usually costs, as written, with its lowest price (0 = free); "" clears both
     standard_cost: str | None = Field(default=None, max_length=120)
     standard_min_price: Decimal | None = Field(default=None, ge=0, max_digits=8, decimal_places=2)
+    # CC-125: the default category for new events here (null clears it); opera sets it to Music. Its events keep theirs.
+    category: Category | None = None
+    opera: bool | None = None
 
 
 class VenueAdminOut(VenueOut):
@@ -201,6 +207,7 @@ class EventOut(ORM):
     cost_text: str
     min_price: float | None  # a JSON number for the page; stored exactly as NUMERIC
     category: str
+    opera: bool = False  # CC-125: an opera (category Music), also listed under Theater and labelled "Opera"
     url: str
     status: EventStatus
     publish_at: datetime | None  # set while an approved event is scheduled for later
@@ -227,7 +234,7 @@ class NeighborhoodOut(BaseModel):
 
 
 class EventFacets(BaseModel):
-    categories: list[str]  # most events first
+    categories: list[str]  # CC-125: the five, in the site's order
     neighborhoods: list[NeighborhoodOut]  # alphabetical
     current: int  # live and not closed yet (as of the caller's date)
     total: int  # live, including closed ones
@@ -281,7 +288,10 @@ class _EventFields(BaseModel):
     open_run: bool = False
     cost_text: str = Field(default="", max_length=120)
     min_price: Decimal | None = Field(default=None, ge=0, max_digits=8, decimal_places=2)
-    category: Category
+    # CC-125: left out, the venue's default category (and opera) is used
+    category: Category | None = None
+    # CC-125: admins only. Left out, an event at an opera venue whose category is Music is an opera.
+    opera: bool | None = None
     url: str = Field(default="", max_length=2000)
 
     @field_validator("url")
@@ -295,6 +305,12 @@ class _EventFields(BaseModel):
     def _dates_in_order(self):
         if self.begin_date and self.end_date and self.end_date < self.begin_date:
             raise ValueError("end_date is before begin_date")
+        return self
+
+    @model_validator(mode="after")
+    def _opera_is_music(self):
+        if self.opera and self.category not in (None, "Music"):
+            raise ValueError("An opera's category is Music")
         return self
 
 
@@ -359,6 +375,7 @@ class EventPatch(BaseModel):
     cost_text: str | None = Field(default=None, max_length=120)
     min_price: Decimal | None = Field(default=None, ge=0, max_digits=8, decimal_places=2)
     category: Category | None = None
+    opera: bool | None = None  # CC-125: true sets the category to Music; a category other than Music clears it
     url: str | None = Field(default=None, max_length=2000)
     status: EventStatus | None = None
     publish_at: datetime | None = None  # null publishes as soon as the event is approved
@@ -385,7 +402,7 @@ class EventPatch(BaseModel):
     @model_validator(mode="after")
     def _no_nulls_where_required(self):
         # Leaving a field out keeps it; only dates, price and publish time can be cleared with null.
-        for name in ("title", "venue_id", "open_run", "cost_text", "category", "url", "status", "weekly", "weeks", "run_dates"):
+        for name in ("title", "venue_id", "open_run", "cost_text", "category", "opera", "url", "status", "weekly", "weeks", "run_dates"):
             if name in self.model_fields_set and getattr(self, name) is None:
                 raise ValueError(f"{name} can't be empty")
         return self
@@ -639,8 +656,11 @@ class DiscoveredItemOut(ORM):
     url: str
     kind: str
     category: str | None
+    opera: bool = False  # CC-125: found on an opera source
     venue_name: str
     venue_id: int | None = None
+    venue_category: str | None = None  # CC-125: the venue's default, which the approve form starts with
+    venue_opera: bool = False
     neighborhood: str = ""
     begin_date: date | None
     end_date: date | None

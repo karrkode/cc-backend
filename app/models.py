@@ -235,6 +235,9 @@ class Venue(Base):
     # and used by the price filters and sort; never copied into events. standard_min_price: 0 = free, NULL = none set
     standard_cost: Mapped[str] = mapped_column(String(120), default="", server_default="")
     standard_min_price: Mapped[Decimal | None] = mapped_column(Numeric(8, 2))
+    # CC-125: the category new events here start with (null: none yet), and whether they start as opera
+    category: Mapped[str | None] = mapped_column(String(40))
+    opera: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
 
 
 class Event(Base):
@@ -257,7 +260,9 @@ class Event(Base):
     open_run: Mapped[bool] = mapped_column(Boolean, default=False)
     cost_text: Mapped[str] = mapped_column(String(120), default="")
     min_price: Mapped[Decimal | None] = mapped_column(Numeric(8, 2))  # NULL = price not posted, 0 = free
-    category: Mapped[str] = mapped_column(String(40))
+    category: Mapped[str] = mapped_column(String(40))  # CC-125: one of app.categories.CATEGORIES
+    # CC-125: an opera (category Music), also listed under Theater; only admins set it
+    opera: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     url: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[EventStatus] = mapped_column(_enum(EventStatus, "event_status"), default=EventStatus.pending)
     # An approved event with a future publish_at stays hidden until then (admins can schedule events).
@@ -593,6 +598,7 @@ class DiscoveredItem(Base):
     url: Mapped[str] = mapped_column(String(2000), default="")
     kind: Mapped[str] = mapped_column(String(30), default="")  # production, exhibition, talk, ... as read
     category: Mapped[str | None] = mapped_column(String(40))
+    opera: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())  # CC-125: from an opera source
     venue_name: Mapped[str] = mapped_column(String(200), default="")
     begin_date: Mapped[date | None] = mapped_column(Date)
     end_date: Mapped[date | None] = mapped_column(Date)

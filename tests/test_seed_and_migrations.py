@@ -75,3 +75,33 @@ def test_migrations_match_models(engine):
         command.upgrade(cfg, "head")  # downgrade leaves nothing behind that blocks a re-run
     finally:
         command.downgrade(cfg, "base")
+
+
+@pytest.mark.skipif(not IS_POSTGRES, reason="migrations target Postgres; set TEST_DATABASE_URL to run")
+def test_cc125_migration_maps_old_types_and_fills_venue_defaults(engine):
+    with engine.begin() as conn:
+        Base.metadata.drop_all(conn)
+        conn.execute(text("DROP TABLE IF EXISTS alembic_version"))
+        for (t,) in conn.execute(text("SELECT typname FROM pg_type WHERE typtype = 'e'")).all():
+            conn.execute(text(f'DROP TYPE IF EXISTS "{t}" CASCADE'))
+    cfg = Config("alembic.ini")
+    cfg.set_main_option("sqlalchemy.url", TEST_DATABASE_URL)
+    command.upgrade(cfg, "0032")
+    try:
+        with create_engine(TEST_DATABASE_URL).begin() as conn:
+            conn.execute(text("INSERT INTO venues (id, name, neighborhood, area) VALUES (1, 'Metro', 'Wrigleyville', 'city'), "
+                              "(2, 'Goodman', 'Loop', 'city'), (3, 'Empty', 'Loop', 'city')"))
+            for i, (v, cat) in enumerate([(1, "Concert"), (1, "Concert"), (1, "Comedy"), (2, "Theater"), (2, "Dance")]):
+                conn.execute(text("INSERT INTO events (id, title, sort_title, venue_id, category, status, open_run, cost_text, url) "
+                                  "VALUES (:i, :t, :t, :v, :c, 'approved', false, '', '')"), {"i": i + 1, "t": f"e{i}", "v": v, "c": cat})
+        command.upgrade(cfg, "0033")
+        with create_engine(TEST_DATABASE_URL).connect() as conn:
+            cats = dict(conn.execute(text("SELECT title, category FROM events")).all())
+            defaults = dict(conn.execute(text("SELECT name, category FROM venues")).all())
+        assert cats == {"e0": "Music", "e1": "Music", "e2": "Comedy", "e3": "Theater", "e4": "Dance"}  # Dance is left for an admin
+        assert defaults == {"Metro": "Music", "Goodman": "Theater", "Empty": None}
+        command.downgrade(cfg, "0032")
+        with create_engine(TEST_DATABASE_URL).connect() as conn:
+            assert conn.execute(text("SELECT count(*) FROM events WHERE category = 'Concert'")).scalar() == 2
+    finally:
+        command.downgrade(cfg, "base")

@@ -155,10 +155,10 @@ applies new migrations when it starts.
 | | Endpoint | Who |
 |---|---|---|
 | Auth | `POST /auth/register`, `/auth/login`, `/auth/refresh`, `/auth/logout`; `GET`/`PATCH /auth/me` (includes `can_approve`, `approver_offered`) | anyone / signed in |
-| Events | `GET /events` (filters: `q`, `area`, `region`, `hood`, `category`, `from`, `to`, `max_price` (uses a venue's standard cost when the event has no price), `include_past`, `sort`, `limit`, `offset`), `GET /events/{id}`, `/events/facets`, `/events/lookup` | anyone |
+| Events | `GET /events` (filters: `q`, `area`, `region`, `hood`, `category` (CC-125: one of the five; an opera is under Music and Theater), `from`, `to`, `max_price` (uses a venue's standard cost when the event has no price), `include_past`, `sort`, `limit`, `offset`), `GET /events/{id}`, `/events/facets`, `/events/lookup` | anyone |
 | | `POST /events` (always pending for users, or rejected when an auto-reject rule matches; admins choose `publish`: `now`, `later` with `publish_at`, or `review`; optional `weekly` show days and `weeks` of the month) | signed in |
 | | `PATCH /events/{id}`, `DELETE /events/{id}` (deletes its photos too) | admin |
-| Review | `GET /admin/events?status=pending`, `GET /admin/events/scheduled`, `POST /admin/events/{id}/approve` (publishes now), `/reject`; auto-reject rules: `GET`/`POST /admin/submission-rules`, `DELETE /admin/submission-rules/{id}`, and what they caught: `GET /admin/events?status=rejected&caught=true` | admin |
+| Review | `GET /admin/events?status=pending`, `GET /admin/events/scheduled`, `GET /admin/events/other-types` (CC-125: types outside the five), `POST /admin/events/{id}/approve` (publishes now), `/reject`; auto-reject rules: `GET`/`POST /admin/submission-rules`, `DELETE /admin/submission-rules/{id}`, and what they caught: `GET /admin/events?status=rejected&caught=true` | admin |
 | Discovery | `/admin/discovery/sources`, `/items` (`show=needs` for events missing a date or show days), `/items/{id}/approve`, `/reject`, `/accept`, `/dismiss`, `/rules`, `/budget` | admin |
 | Venues | `GET /venues`, `POST /venues`; `GET /venues/manage`, `PATCH /venues/{id}` (hours, show times, standard cost), merge, delete | anyone / admin |
 | Me | `GET /me/attended`, `PUT`/`DELETE /me/attended/{event_id}`, `PUT`/`DELETE /me/attended/{event_id}/photo` (the body is the photo), `/me/plans`, `GET /me/submissions`, `/me/issues`, `POST /me/approver` (answer the approver offer) | signed in |
