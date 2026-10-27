@@ -663,9 +663,10 @@ class DiscoveryCheck(Base):
     __tablename__ = "discovery_checks"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    source_id: Mapped[int] = mapped_column(ForeignKey("discovery_sources.id", ondelete="CASCADE"), index=True)
+    # CC-124: no source for a member's link (what = "link"); its Claude reads still count toward the budget
+    source_id: Mapped[int | None] = mapped_column(ForeignKey("discovery_sources.id", ondelete="CASCADE"), index=True, nullable=True)
     checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
-    what: Mapped[str] = mapped_column(String(20), default="source")  # source | detail (one event's page)
+    what: Mapped[str] = mapped_column(String(20), default="source")  # source | detail (one event's page) | link
     status: Mapped[str] = mapped_column(String(20))  # ok | unchanged | blocked | error
     new_items: Mapped[int] = mapped_column(Integer, default=0)
     updates: Mapped[int] = mapped_column(Integer, default=0)

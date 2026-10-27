@@ -84,3 +84,16 @@ resource "aws_scheduler_schedule" "discovery_recap" {
     retry_policy { maximum_retry_attempts = 0 }
   }
 }
+
+# CC-124: the API reads a member's link for the Suggest form, with Claude when the page has no event data. The
+# container works with the email-sender role's short-lived credentials (ses.tf, server/mail-creds.sh), so that role
+# may read this one parameter. A separate policy, so the role (and the server) stay as they are. The key is never in
+# the container's environment: the API reads it when it needs it.
+resource "aws_iam_role_policy" "container_anthropic_key" {
+  name = "read-anthropic-key"
+  role = aws_iam_role.email_sender.id
+  policy = jsonencode({
+    Version   = "2012-10-17"
+    Statement = [{ Sid = "ReadAnthropicKey", Effect = "Allow", Action = "ssm:GetParameter", Resource = aws_ssm_parameter.anthropic_api_key.arn }]
+  })
+}

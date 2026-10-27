@@ -84,17 +84,30 @@ def parse_robots(text: str) -> Robots:
                   crawl_delay=min(delay, 30.0), ai_opt_out=ai_opt_out)
 
 
-def _open(url: str, headers: dict[str, str]):
+class _CheckedRedirects(urllib.request.HTTPRedirectHandler):
+    """CC-124: every hop of a redirect is checked too, so a public page can't send us on to a private address."""
+    def __init__(self, check):
+        self.check = check
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        self.check(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _open(url: str, headers: dict[str, str], check=None, timeout: float = TIMEOUT):
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept-Language": "en-US", **headers})
-    return urllib.request.urlopen(req, timeout=TIMEOUT)  # noqa: S310 - http(s) only, checked by the caller
+    if check is None:
+        return urllib.request.urlopen(req, timeout=timeout)  # noqa: S310 - http(s) only, checked by the caller
+    check(url)
+    return urllib.request.build_opener(_CheckedRedirects(check)).open(req, timeout=timeout)
 
 
-def robots_for(url: str) -> Robots:
+def robots_for(url: str, check=None, timeout: float = TIMEOUT) -> Robots:
     parts = urlsplit(url)
     origin = f"{parts.scheme}://{parts.netloc}"
     if origin not in _robots:
         try:
-            with _open(origin + "/robots.txt", {}) as r:
+            with _open(origin + "/robots.txt", {}, check, timeout) as r:
                 _robots[origin] = parse_robots(r.read(500_000).decode("utf-8", "replace"))
         except urllib.error.HTTPError as e:
             if e.code in (401, 403):
@@ -105,13 +118,14 @@ def robots_for(url: str) -> Robots:
     return _robots[origin]
 
 
-def fetch(url: str, etag: str = "", last_modified: str = "", ai: bool = True) -> Page:
+def fetch(url: str, etag: str = "", last_modified: str = "", ai: bool = True, check=None, timeout: float = TIMEOUT) -> Page:
     """Get a page, or a 304 when it hasn't changed. ai=True means its text will go to Claude, so an
-    AI opt-out in robots.txt counts as a refusal."""
+    AI opt-out in robots.txt counts as a refusal. check (CC-124, a member's link) is called with each address
+    asked for, redirects included, and raises Blocked for one we mustn't visit."""
     parts = urlsplit(url)
     if parts.scheme not in ("http", "https"):
         raise Blocked(f"not a web address: {url}")
-    rules = robots_for(url)
+    rules = robots_for(url, check, timeout)
     if ai and rules.ai_opt_out:
         raise Blocked("the site's robots.txt opts out of AI crawlers, so its pages aren't sent to Claude")
     if not rules.allows(parts.path or "/"):
@@ -126,7 +140,7 @@ def fetch(url: str, etag: str = "", last_modified: str = "", ai: bool = True) ->
     if last_modified:
         headers["If-Modified-Since"] = last_modified
     try:
-        with _open(url, headers) as r:
+        with _open(url, headers, check, timeout) as r:
             body = r.read(MAX_BYTES + 1)
             if len(body) > MAX_BYTES:
                 raise FetchError(f"page is larger than {MAX_BYTES // 1_000_000} MB")

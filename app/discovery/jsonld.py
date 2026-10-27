@@ -121,3 +121,38 @@ def complete(e: FoundEvent) -> bool:
     Thinner data (Goodman's gives a start date only) goes to Claude instead, so nothing is lost."""
     dated = bool(e.performances) or bool(e.begin_date and e.end_date)
     return dated and (e.cost_text is not None or e.min_price is not None)
+
+
+# CC-124: what a member's link says beyond the event itself, which discovery takes from the source instead
+BY_EVENT_TYPE = {"TheaterEvent": "Theater", "ComedyEvent": "Comedy", "MusicEvent": "Music", "DanceEvent": "Theater",
+                 "ExhibitionEvent": "Visual Art", "VisualArtsEvent": "Visual Art", "EducationEvent": "Educational"}
+
+
+def _place(location) -> tuple[str, str]:
+    """(name, town) of an event's location: the first Place, with its address's locality."""
+    for loc in location if isinstance(location, list) else [location]:
+        if isinstance(loc, dict) and _text(loc.get("name")):
+            addr = loc.get("address")
+            town = _text(addr.get("addressLocality")) if isinstance(addr, dict) else ""
+            return _text(loc.get("name"))[:200], town[:120]
+    return "", ""
+
+
+def event_places(page_html: str) -> dict[str, dict]:
+    """By normalized event name: its venue name, town, category (from its schema.org type) and whether the page gives
+    a closing date (events_in takes the opening date for a missing one, which a member's link shouldn't)."""
+    found = {}
+    for block in SCRIPTS.findall(page_html or ""):
+        try:
+            data = json.loads(html.unescape(block.strip()) if "&quot;" in block else block.strip())
+        except ValueError:
+            continue
+        for o in _objects(data):
+            if not (_is_event(o) and _text(o.get("name"))):
+                continue
+            types = o.get("@type") if isinstance(o.get("@type"), list) else [o.get("@type")]
+            category = next((BY_EVENT_TYPE[t] for t in types if t in BY_EVENT_TYPE), None)
+            venue, town = _place(o.get("location"))
+            found.setdefault(norm_title(_text(o.get("name"))[:300]), {"venue": venue, "town": town, "category": category,
+                                                                       "end_given": bool(_when(o.get("endDate"))[0])})
+    return found

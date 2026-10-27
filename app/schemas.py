@@ -233,6 +233,37 @@ class NeighborhoodOut(BaseModel):
     region: Region | None  # CC-73
 
 
+class LinkIn(BaseModel):
+    """CC-124: a link to an event's page, for a draft of the Suggest form."""
+    url: Annotated[str, Field(min_length=8, max_length=2000)]
+
+
+class LinkRunDate(BaseModel):
+    date: str
+    time: str
+
+
+class LinkDraft(BaseModel):
+    """CC-124: what the page says, for the member to check and send. missing names what it didn't say: title,
+    category, venue, neighborhood, dates, price. read_by is "page" (its event data) or "claude"."""
+    url: str
+    title: str
+    category: str | None = None
+    venue: str = ""
+    neighborhood: str = ""
+    begin_date: str | None = None
+    end_date: str | None = None
+    open_run: bool = False
+    cost_text: str = ""
+    min_price: float | None = None
+    run_dates: list[LinkRunDate] = []
+    weekly: dict[str, list[str]] = {}
+    weeks: dict[str, list[int]] = {}
+    read_by: Literal["page", "claude"]
+    other_events: int = 0
+    missing: list[str] = []
+
+
 class EventFacets(BaseModel):
     categories: list[str]  # CC-125: the five, in the site's order
     neighborhoods: list[NeighborhoodOut]  # alphabetical
