@@ -4,6 +4,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, select
 
+from ..categories import CATEGORIES
 from ..deps import DB, AdminUser
 from ..discovery.rules import norm_title
 from ..models import Event, EventStatus, SubmissionRule, Venue
@@ -32,6 +33,12 @@ def review_queue(db: DB, _: AdminUser,
     rows = db.scalars(select(Event).where(cond).order_by(*order)
                       .limit(limit).offset(offset)).all()
     return EventAdminPage(items=rows, total=total, limit=limit, offset=offset)
+
+
+@router.get("/events/other-types", response_model=list[EventAdminOut])
+def other_types(db: DB, _: AdminUser):
+    """CC-125: events whose category isn't one of the five (the migration didn't guess), for an admin to fix."""
+    return db.scalars(select(Event).where(Event.category.not_in(CATEGORIES)).order_by(Event.title, Event.id)).all()
 
 
 @router.get("/events/scheduled", response_model=list[EventAdminOut])

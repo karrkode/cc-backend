@@ -54,7 +54,8 @@ def _admin_out(venue: Venue, counts: dict[int, int]) -> VenueAdminOut:
                          region=venue.region, events=counts.get(venue.id, 0), open_hours=venue.open_hours or {},
                          open_hours_by=venue.open_hours_by or "", show_times=venue.show_times or {},
                          show_times_by=venue.show_times_by or "", standard_cost=venue.standard_cost or "",
-                         standard_min_price=None if venue.standard_min_price is None else float(venue.standard_min_price))
+                         standard_min_price=None if venue.standard_min_price is None else float(venue.standard_min_price),
+                         category=venue.category, opera=venue.opera)
 
 
 @router.get("/manage", response_model=list[VenueAdminOut])
@@ -100,6 +101,16 @@ def update_venue(venue_id: int, body: VenuePatch, db: DB, _: AdminUser):
     if changes.get("standard_cost") is not None:  # CC-89: set together; the price goes with the words
         venue.standard_cost = changes["standard_cost"].strip()
         venue.standard_min_price = changes.get("standard_min_price") if venue.standard_cost else None
+    # CC-125: the default for new events here; its events keep the category they have. Opera goes with Music only.
+    if changes.get("opera"):
+        if changes.get("category", "Music") != "Music":
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "An opera's category is Music")
+        venue.category, venue.opera = "Music", True
+    else:
+        if "category" in changes:
+            venue.category = changes["category"]
+        if "opera" in changes or venue.category != "Music":
+            venue.opera = False
     db.commit()
     return _admin_out(venue, _counts(db, [venue.id]))
 

@@ -19,9 +19,9 @@ from .rules import norm_title
 
 SCRIPTS = re.compile(r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', re.S | re.I)
 CANCELLED = ("EventCancelled", "EventPostponed")
-# by source kind: (kind, category); museum events get no category (an admin picks one when approving)
-BY_SOURCE = {"theater": ("production", "Theater"), "opera": ("production", "Theater"), "music": ("concert", "Concert"),
-             "comedy": ("comedy_show", "Comedy"), "museum": ("exhibition", None)}
+# by source kind: (kind, category); CC-125: opera is Music (and marked opera when stored), museums Visual Art
+BY_SOURCE = {"theater": ("production", "Theater"), "opera": ("production", "Music"), "music": ("concert", "Music"),
+             "comedy": ("comedy_show", "Comedy"), "museum": ("exhibition", "Visual Art")}
 MERGE_SAME_TITLE = {"theater", "opera", "museum"}  # one event per production or exhibition; concerts and comedy are one per night
 
 

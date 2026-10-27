@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .areas import region_of
+from .categories import OLD_NAMES, fill_venue_defaults
 from .models import Area, Event, EventStatus, Venue
 
 AREAS = {"City": Area.city, "Suburbs": Area.suburbs, "Out of town": Area.out_of_town}
@@ -66,7 +67,7 @@ def apply_rows(db: Session, rows: list[dict]) -> SyncCounts:
             counts.venues_added += 1
         fields = dict(
             title=row["title"], venue_id=venue.id, begin_date=begin, end_date=end, open_run=row["openRun"],
-            cost_text=row["cost"] or "", category=row["type"], url=row["url"] or "",
+            cost_text=row["cost"] or "", category=OLD_NAMES.get(row["type"], row["type"]), url=row["url"] or "",
             min_price=None if row["min"] is None else Decimal(str(row["min"])).quantize(Decimal("0.01")),
         )
         event = existing.get(row["id"])
@@ -82,4 +83,6 @@ def apply_rows(db: Session, rows: list[dict]) -> SyncCounts:
         else:
             counts.unchanged += 1
 
+    db.flush()
+    fill_venue_defaults(db)  # CC-125: venues it added start with their events' most common category
     return counts
