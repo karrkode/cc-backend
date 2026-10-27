@@ -177,3 +177,17 @@ def test_join_counts_keep_nothing_identifying(client, db):
 def test_join_tracking_doesnt_get_in_the_way_of_signing_up(client):
     r = register(client, "junk@example.com", {"utm_source": "<script>", "ref": "not a domain"})
     assert r.json()["access_token"]
+
+
+def test_invite_page_visits_and_sign_ups_by_link_and_qr(client, admin_token):
+    # CC-126: the invite page (/invite) is the join page with the invite pitch. An admin's link is tagged invite / link,
+    # the code on their phone invite / qr, and each counts on its own row.
+    link = {"utm_source": "invite", "utm_medium": "link", "utm_campaign": "friend"}
+    qr = {"utm_source": "invite", "utm_medium": "qr", "utm_campaign": "friend"}
+    ping(client, view="join", vid=VID_A, **link)
+    ping(client, view="join", vid=VID_B, **qr)
+    ping(client, view="join", vid="c" * 32, **qr)
+    register(client, "scanned@example.com", qr)
+    j = summary(client, admin_token, days=7)["join"]
+    assert [(r["source"], r["medium"], r["visits"], r["signups"]) for r in j["sources"]] == [
+        ("invite", "qr", 2, 1), ("invite", "link", 1, 0)]
