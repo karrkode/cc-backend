@@ -11,10 +11,11 @@ from ..config import get_settings
 from ..deps import DB, AdminUser, CurrentUser, OptionalUser
 from .. import photos
 from ..autoreject import reject_if_caught
+from .. import fromlink
 from ..models import Area, Event, EventRunDate, EventStatus, Plan, PlanStatus, Region, Role, Venue, WentPhoto
 from ..crewplans import attach_crew_plans, crew_plans_condition
 from ..picks import attach_picks, pick_condition
-from ..schemas import EventFacets, EventIn, EventOut, EventPage, EventPatch, RunDate, VenueIn
+from ..schemas import EventFacets, EventIn, EventOut, EventPage, EventPatch, LinkDraft, LinkIn, RunDate, VenueIn
 from ..stats import today_in_chicago
 from ..visibility import live_condition, utcnow, visible_to
 
@@ -194,6 +195,24 @@ def create_event(body: EventIn, db: DB, user: CurrentUser):
     db.commit()
     db.refresh(event)
     return event
+
+
+@router.post("/from-link", response_model=LinkDraft)
+def from_link(body: LinkIn, db: DB, user: CurrentUser):
+    """CC-124: read an event's page and send back a draft for the Suggest form. Saves no event. 422 when the
+    link isn't a public web page or the page can't be read, with a message to show."""
+    key = str(user.id)
+    if not fromlink.minute_limiter.hit(key, fromlink.PER_MINUTE):
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "That's a lot of links at once. Wait a minute and try again.")
+    if not fromlink.day_limiter.hit(key, fromlink.PER_DAY):
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "That's today's links. Enter the event yourself, or try again tomorrow.")
+    url = body.url.strip()
+    try:
+        return fromlink.read_link(db, url, today_in_chicago())
+    except fromlink.PrivateAddress as e:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"We can't read that link: {e}.") from e
+    except fromlink.Unreadable as e:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, fromlink.WHY[e.why]) from e
 
 
 def new_event(db: DB, body: EventIn, user) -> Event:

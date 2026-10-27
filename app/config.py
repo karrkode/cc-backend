@@ -50,6 +50,12 @@ class Settings(BaseSettings):
     photo_dir: str = "/tmp/culture-crew-photos"  # local storage
     photo_checker: str = ""  # "" works it out (photo_moderation): rekognition | none
 
+    # CC-124: Claude reads a member's link when the page has no event data. In production the key is read from
+    # Parameter Store (the discovery key); locally it's off unless ANTHROPIC_API_KEY is set, as real reads cost money.
+    anthropic_api_key: str = ""
+    anthropic_key_param: str = "/culture-crew/anthropic-api-key"
+    ssm_region: str = "us-east-2"
+
     # Local only: the test accounts scripts.dev_users creates (see docker-compose.yml). Never set in prod.
     dev_admin_email: str = ""
     dev_admin_password: str = ""

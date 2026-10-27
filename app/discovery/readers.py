@@ -90,13 +90,15 @@ Give each event's own page address when the text links to it (links appear in <a
 If the page states the venue's regular opening hours, give them in venue_hours."""
 
 
-def read_page(client, source_name: str, kind: str, url: str, text: str, today: date) -> tuple[PageReading, int, int]:
-    """(reading, input_tokens, output_tokens). Raises on a refusal or an unusable reply."""
+def read_page(client, source_name: str, kind: str, url: str, text: str, today: date,
+              note: str = "") -> tuple[PageReading, int, int]:
+    """(reading, input_tokens, output_tokens). Raises on a refusal or an unusable reply. note is added to the
+    instructions (CC-124: a member's link has no usual venue)."""
     response = client.messages.parse(
         model=MODEL,
         max_tokens=16000,
         output_config={"effort": "low"},
-        system=INSTRUCTIONS.format(today=today.isoformat(), source=source_name, kind=kind, url=url),
+        system=INSTRUCTIONS.format(today=today.isoformat(), source=source_name, kind=kind, url=url) + note,
         messages=[{"role": "user", "content": "The page's text:\n\n" + text}],
         output_format=PageReading,
     )
