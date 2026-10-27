@@ -275,6 +275,8 @@ class Event(Base):
     weeks: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
     # CC-71: the event source it was found on, when it was approved from discovery
     found_by_id: Mapped[int | None] = mapped_column(ForeignKey("discovery_sources.id", ondelete="SET NULL"))
+    # CC-100: why an auto-reject rule rejected it ("" otherwise), so admins can find it and approve it after all
+    reject_reason: Mapped[str] = mapped_column(String(200), default="", server_default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(),
                                                  onupdate=func.now())
@@ -632,6 +634,21 @@ class SkipRule(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     source: Mapped[DiscoverySource | None] = relationship(lazy="joined")
+
+
+class SubmissionRule(Base):
+    """CC-100: auto-reject rules for members' submissions (kept apart from the discovery skip rules).
+    "name": the title contains the phrase, normalized as rules.norm_title makes it. "venue": at that venue."""
+    __tablename__ = "submission_rules"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    kind: Mapped[str] = mapped_column(String(10))  # name | venue
+    phrase: Mapped[str] = mapped_column(String(200), default="")
+    venue_id: Mapped[int | None] = mapped_column(ForeignKey("venues.id", ondelete="CASCADE"))
+    caught: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    venue: Mapped[Venue | None] = relationship(lazy="joined")
 
 
 class DiscoveryCheck(Base):

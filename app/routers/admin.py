@@ -5,8 +5,10 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, select
 
 from ..deps import DB, AdminUser
-from ..models import Event, EventStatus
-from ..schemas import EventAdminOut, EventAdminPage, EventInterestOut, StatsOut, TrafficOut
+from ..discovery.rules import norm_title
+from ..models import Event, EventStatus, SubmissionRule, Venue
+from ..schemas import (EventAdminOut, EventAdminPage, EventInterestOut, StatsOut, SubmissionRuleIn, SubmissionRuleOut,
+                       TrafficOut)
 from ..photos import CHECK_USD, checks_this_month
 from ..stats import event_interest, today_in_chicago, weekly_stats
 from ..traffic import summary as traffic_summary
@@ -19,11 +21,15 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 def review_queue(db: DB, _: AdminUser,
                  status_: Annotated[EventStatus, Query(alias="status")] = EventStatus.pending,
                  limit: Annotated[int, Query(ge=1, le=500)] = 100,
-                 offset: Annotated[int, Query(ge=0)] = 0):
+                 offset: Annotated[int, Query(ge=0)] = 0,
+                 caught: Annotated[bool, Query(description="Only those an auto-reject rule caught, newest first")] = False):
     """Submissions to review, oldest first."""
     cond = Event.status == status_
+    order = (Event.created_at, Event.id)
+    if caught:  # CC-100
+        cond, order = cond & (Event.reject_reason != ""), (Event.created_at.desc(), Event.id.desc())
     total = db.scalar(select(func.count(Event.id)).where(cond))
-    rows = db.scalars(select(Event).where(cond).order_by(Event.created_at, Event.id)
+    rows = db.scalars(select(Event).where(cond).order_by(*order)
                       .limit(limit).offset(offset)).all()
     return EventAdminPage(items=rows, total=total, limit=limit, offset=offset)
 
@@ -40,6 +46,7 @@ def _set_status(db: DB, event_id: int, new: EventStatus) -> Event:
     if event is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Event not found")
     event.status = new
+    event.reject_reason = ""  # CC-100: an admin decided, so it's no longer one a rule caught
     event.publish_at = None  # approving publishes now, including a scheduled event
     db.commit()
     db.refresh(event)
@@ -55,6 +62,51 @@ def approve(event_id: int, db: DB, _: AdminUser):
 @router.post("/events/{event_id}/reject", response_model=EventAdminOut)
 def reject(event_id: int, db: DB, _: AdminUser):
     return _set_status(db, event_id, EventStatus.rejected)
+
+
+# ---- auto-reject rules for member submissions (CC-100) ----
+
+def _rule_out(r: SubmissionRule) -> SubmissionRuleOut:
+    venue = r.venue and (r.venue.name + (f" · {r.venue.neighborhood}" if r.venue.neighborhood else ""))
+    return SubmissionRuleOut(id=r.id, kind=r.kind, phrase=r.phrase, venue_id=r.venue_id, venue_name=venue or None,
+                             caught=r.caught, created_at=r.created_at)
+
+
+@router.get("/submission-rules", response_model=list[SubmissionRuleOut])
+def submission_rules(db: DB, _: AdminUser):
+    """The auto-reject rules, newest first, with how many submissions each has caught."""
+    return [_rule_out(r) for r in db.scalars(select(SubmissionRule).order_by(SubmissionRule.id.desc()))]
+
+
+@router.post("/submission-rules", response_model=SubmissionRuleOut, status_code=status.HTTP_201_CREATED)
+def add_submission_rule(body: SubmissionRuleIn, db: DB, _: AdminUser):
+    if body.kind == "venue":
+        if body.venue_id is None or db.get(Venue, body.venue_id) is None:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Choose a venue from the list")
+        rule = SubmissionRule(kind="venue", venue_id=body.venue_id)
+        same = SubmissionRule.venue_id == body.venue_id
+    else:
+        phrase = norm_title(body.phrase)  # case and punctuation don't matter, as with the skip rules
+        if not phrase:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Give a word or phrase from the event name")
+        rule = SubmissionRule(kind="name", phrase=phrase)
+        same = SubmissionRule.phrase == phrase
+    if db.scalar(select(SubmissionRule.id).where(SubmissionRule.kind == body.kind, same)):
+        raise HTTPException(status.HTTP_409_CONFLICT, "There's already a rule for that")
+    db.add(rule)
+    db.commit()
+    db.refresh(rule)
+    return _rule_out(rule)
+
+
+@router.delete("/submission-rules/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_submission_rule(rule_id: int, db: DB, _: AdminUser):
+    """Stop rejecting. Submissions it already caught stay rejected (they can still be approved)."""
+    rule = db.get(SubmissionRule, rule_id)
+    if rule is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Rule not found")
+    db.delete(rule)
+    db.commit()
 
 
 @router.get("/stats", response_model=StatsOut)

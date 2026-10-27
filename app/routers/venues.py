@@ -1,11 +1,11 @@
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 
 from ..areas import area_of, region_of
 from ..deps import DB, AdminUser
-from ..models import Event, Venue
+from ..models import Event, SubmissionRule, Venue
 from ..schemas import VenueAdminOut, VenueIn, VenueMergeOut, VenueOut, VenuePatch
 
 router = APIRouter(prefix="/venues", tags=["venues"])
@@ -111,6 +111,11 @@ def merge_venue(venue_id: int, other_id: int, db: DB, _: AdminUser):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Choose a different venue to merge into")
     venue, into = _venue(db, venue_id), _venue(db, other_id)
     moved = db.execute(update(Event).where(Event.venue_id == venue.id).values(venue_id=into.id)).rowcount
+    # CC-100: an auto-reject rule for this venue now covers the one it's merged into (unless it has one already)
+    if db.scalar(select(SubmissionRule.id).where(SubmissionRule.kind == "venue", SubmissionRule.venue_id == into.id)):
+        db.execute(delete(SubmissionRule).where(SubmissionRule.venue_id == venue.id))
+    else:
+        db.execute(update(SubmissionRule).where(SubmissionRule.venue_id == venue.id).values(venue_id=into.id))
     for field in ("open_hours", "show_times"):  # keep the hours if the venue merged into has none
         if not getattr(into, field) and getattr(venue, field):
             setattr(into, field, getattr(venue, field))
