@@ -9,6 +9,7 @@ from ..areas import area_of, region_of
 from ..config import get_settings
 from ..deps import DB, AdminUser, CurrentUser, OptionalUser
 from .. import photos
+from ..autoreject import reject_if_caught
 from ..models import Area, Event, EventRunDate, EventStatus, Plan, PlanStatus, Region, Role, Venue, WentPhoto
 from ..crewplans import attach_crew_plans, crew_plans_condition
 from ..picks import attach_picks, pick_condition
@@ -188,6 +189,8 @@ def create_event(body: EventIn, db: DB, user: CurrentUser):
                             "Use the link we emailed you, or send a new one from your account page.")
     _no_past_run_dates(body.run_dates)
     event = new_event(db, body, user)
+    if user.role != Role.admin:
+        reject_if_caught(db, event)
     db.add(event)
     db.commit()
     db.refresh(event)

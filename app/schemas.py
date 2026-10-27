@@ -244,6 +244,8 @@ class EventAdminOut(EventOut):
     # null for sheet and seed events, and when the submitter's account was deleted
     submitted_by: SubmitterOut | None = Field(validation_alias="submitter")
     credit_me: bool  # whether they asked to be credited publicly
+    reject_reason: str = ""  # CC-100: set when an auto-reject rule caught it
+    created_at: datetime  # when it was sent in
 
 
 class EventAdminPage(BaseModel):
@@ -695,6 +697,22 @@ class SkipRuleOut(BaseModel):
     caught: int
     created_at: datetime
 
+
+class SubmissionRuleIn(BaseModel):
+    """CC-100: an auto-reject rule. "name" takes a phrase; "venue" an existing venue."""
+    kind: Literal["name", "venue"]
+    phrase: str = Field(default="", max_length=200)
+    venue_id: int | None = None
+
+
+class SubmissionRuleOut(BaseModel):
+    id: int
+    kind: Literal["name", "venue"]
+    phrase: str
+    venue_id: int | None
+    venue_name: str | None
+    caught: int
+    created_at: datetime
 
 
 # ---- culture crews (CC-74) --------------------------------------------------------------
