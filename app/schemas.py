@@ -8,8 +8,8 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, mo
 
 from .models import Area, EventStatus, PlanStatus, Region, Role
 
-# CC-125: the five categories (app.categories.CATEGORIES); Concert became Music
-Category = Literal["Theater", "Comedy", "Music", "Visual Art", "Educational"]
+# CC-125: the categories (app.categories.CATEGORIES); Concert became Music. CC-133: Comedy and Educational went.
+Category = Literal["Theater", "Music", "Visual Art"]
 Publish = Literal["now", "later", "review"]
 
 
@@ -278,7 +278,7 @@ class LinkDraft(BaseModel):
 
 
 class EventFacets(BaseModel):
-    categories: list[str]  # CC-125: the five, in the site's order
+    categories: list[str]  # CC-125: the three (CC-133), in the site's order
     neighborhoods: list[NeighborhoodOut]  # alphabetical
     current: int  # live and not closed yet (as of the caller's date)
     total: int  # live, including closed ones
@@ -296,6 +296,7 @@ class EventAdminOut(EventOut):
     submitted_by: SubmitterOut | None = Field(validation_alias="submitter")
     credit_me: bool  # whether they asked to be credited publicly
     reject_reason: str = ""  # CC-100: set when an auto-reject rule caught it
+    withdrawn_reason: str = ""  # CC-133: why the removal of Comedy and Educational withdrew it ("" otherwise)
     created_at: datetime  # when it was sent in
 
 
@@ -711,7 +712,7 @@ class DiscoveredItemOut(ORM):
     """A found event for review (CC-71). venue_id: the venue it would be filed under (null: pick or
     add one); possible_duplicate: a catalog event at that venue with a similar title."""
     id: int
-    source_id: int
+    source_id: int | None  # CC-133: null once its source is deleted
     source_name: str = ""
     status: str  # new | update | listed | approved | rejected | skipped
     skip_reason: str

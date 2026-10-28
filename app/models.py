@@ -282,6 +282,9 @@ class Event(Base):
     found_by_id: Mapped[int | None] = mapped_column(ForeignKey("discovery_sources.id", ondelete="SET NULL"))
     # CC-100: why an auto-reject rule rejected it ("" otherwise), so admins can find it and approve it after all
     reject_reason: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    # CC-133: set when removing Comedy and Educational withdrew it (its category, or its venue's name), for the
+    # admin's review; cleared when an admin brings it back
+    withdrawn_reason: Mapped[str] = mapped_column(String(200), default="", server_default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(),
                                                  onupdate=func.now())
@@ -601,7 +604,8 @@ class DiscoveredItem(Base):
     __table_args__ = (UniqueConstraint("source_id", "key", name="uq_discovered_source_key"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    source_id: Mapped[int] = mapped_column(ForeignKey("discovery_sources.id", ondelete="CASCADE"), index=True)
+    # CC-133: kept, with its review status, when an admin deletes its source (then it has none)
+    source_id: Mapped[int | None] = mapped_column(ForeignKey("discovery_sources.id", ondelete="SET NULL"), index=True)
     key: Mapped[str] = mapped_column(String(500))  # the event's own page, or its normalized title
     status: Mapped[str] = mapped_column(String(20), default="new", index=True)  # new | listed | update | approved | rejected | skipped
     skip_reason: Mapped[str] = mapped_column(String(200), default="")
@@ -628,7 +632,7 @@ class DiscoveredItem(Base):
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    source: Mapped[DiscoverySource] = relationship(lazy="joined")
+    source: Mapped[DiscoverySource | None] = relationship(lazy="joined")
 
 
 class AppSetting(Base):
@@ -675,7 +679,8 @@ class DiscoveryCheck(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     # CC-124: no source for a member's link (what = "link"); its Claude reads still count toward the budget
-    source_id: Mapped[int | None] = mapped_column(ForeignKey("discovery_sources.id", ondelete="CASCADE"), index=True, nullable=True)
+    # CC-133: a deleted source's checks are kept too, so the month's spend still counts them
+    source_id: Mapped[int | None] = mapped_column(ForeignKey("discovery_sources.id", ondelete="SET NULL"), index=True, nullable=True)
     checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
     what: Mapped[str] = mapped_column(String(20), default="source")  # source | detail (one event's page) | link
     status: Mapped[str] = mapped_column(String(20))  # ok | unchanged | blocked | error

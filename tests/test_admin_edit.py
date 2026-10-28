@@ -15,14 +15,14 @@ def test_the_edit_form_can_change_every_field(client, admin_token, make_event, d
     steppenwolf = Venue(name="Steppenwolf", neighborhood="Lincoln Park")
     db.add(steppenwolf); db.commit()
     form = {"title": "Hamlet (extended)", "venue_id": steppenwolf.id, "begin_date": None, "end_date": None,
-            "open_run": True, "cost_text": "$25–$60", "min_price": "25", "category": "Comedy",
+            "open_run": True, "cost_text": "$25–$60", "min_price": "25", "category": "Music",
             "url": "https://example.org/hamlet2", "status": "approved", "publish_at": None}
     r = client.patch(f"/events/{ev.id}", json=form, headers=auth(admin_token))
     assert r.status_code == 200, r.text
     got = r.json()
     assert (got["title"], got["venue"]["name"], got["begin_date"], got["end_date"], got["open_run"], got["cost_text"],
             got["min_price"], got["category"], got["url"]) == \
-        ("Hamlet (extended)", "Steppenwolf", None, None, True, "$25–$60", 25.0, "Comedy", "https://example.org/hamlet2")
+        ("Hamlet (extended)", "Steppenwolf", None, None, True, "$25–$60", 25.0, "Music", "https://example.org/hamlet2")
     r = client.patch(f"/events/{ev.id}", json={"min_price": None}, headers=auth(admin_token))
     assert r.json()["min_price"] is None  # price can be cleared ("not posted")
 

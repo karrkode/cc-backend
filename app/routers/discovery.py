@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select, update
 
 from ..deps import DB, AdminUser
 from ..discovery.budget import budget_state, set_monthly_budget
@@ -85,6 +85,20 @@ def update_source(source_id: int, body: DiscoverySourcePatch, db: DB, _: AdminUs
     return _out(source, {}, {})
 
 
+@router.delete("/sources/{source_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_source(source_id: int, db: DB, _: AdminUser):
+    """CC-133: delete a source, so it's never checked again. The events it found are kept with their review status,
+    and its checks still count toward the month's spend; its own skip rules go with it."""
+    source = _source(db, source_id)
+    place = source.venue.name if source.venue else source.venue_name  # so its items still know where they are
+    db.execute(update(DiscoveredItem).where(DiscoveredItem.source_id == source.id, DiscoveredItem.venue_name == "").values(venue_name=place))
+    db.execute(update(DiscoveredItem).where(DiscoveredItem.source_id == source.id).values(source_id=None))
+    db.execute(update(DiscoveryCheck).where(DiscoveryCheck.source_id == source.id).values(source_id=None))
+    db.execute(delete(SkipRule).where(SkipRule.source_id == source.id))
+    db.delete(source)
+    db.commit()
+
+
 @router.post("/sources/{source_id}/check", response_model=DiscoverySourceOut)
 def check_now(source_id: int, db: DB, _: AdminUser):
     """Check this source at the next hourly run (e.g. after a season announcement)."""
@@ -130,11 +144,13 @@ def _filtered(show: str, source: int | None, price: Has = "any", dates: Has = "a
 
 def _item_out(db: DB, item: DiscoveredItem, dups: dict | None = None) -> DiscoveredItemOut:
     out = DiscoveredItemOut.model_validate(item)
-    out.source_name = item.source.name
+    out.source_name = item.source.name if item.source else "Deleted source"  # CC-133
     venue = venue_for(db, item.source, item)
     if venue is not None:
         out.venue_id, out.neighborhood = venue.id, venue.neighborhood
         out.venue_name = item.venue_name or venue.name
+    elif item.source is None:
+        out.venue_name = item.venue_name
     else:  # a venue we don't have yet: the source's own, with its neighborhood, or one the item names
         out.venue_name = item.venue_name or item.source.venue_name
         if not item.venue_name or norm_title(item.venue_name) == norm_title(item.source.venue_name):
@@ -239,6 +255,8 @@ def reject(item_id: int, body: RejectIn, db: DB, _: AdminUser):
         phrase = norm_title(body.skip_similar.phrase)
         if not phrase:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Give a phrase with letters or numbers")
+        if not body.skip_similar.everywhere and item.source_id is None:  # CC-133: a rule with no source means all of them
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Its source was deleted, so skip similar ones everywhere")
         rule = SkipRule(phrase=phrase, source_id=None if body.skip_similar.everywhere else item.source_id, caught=0)
         db.add(rule)
         db.flush()

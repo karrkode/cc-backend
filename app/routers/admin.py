@@ -5,7 +5,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, select
 
-from ..categories import CATEGORIES
+from ..categories import CATEGORIES, REMOVED
 from ..deps import DB, AdminUser
 from ..discovery.rules import norm_title
 from ..models import Attended, Event, EventStatus, SubmissionRule, Venue
@@ -38,8 +38,18 @@ def review_queue(db: DB, _: AdminUser,
 
 @router.get("/events/other-types", response_model=list[EventAdminOut])
 def other_types(db: DB, _: AdminUser):
-    """CC-125: events whose category isn't one of the five (the migration didn't guess), for an admin to fix."""
-    return db.scalars(select(Event).where(Event.category.not_in(CATEGORIES)).order_by(Event.title, Event.id)).all()
+    """CC-125: events whose category isn't one of ours (the migration didn't guess), for an admin to fix. CC-133: those
+    the removal of Comedy and Educational withdrew are on their own list."""
+    return db.scalars(select(Event).where(Event.category.not_in(CATEGORIES), Event.withdrawn_reason == "")
+                      .order_by(Event.title, Event.id)).all()
+
+
+@router.get("/events/removed", response_model=list[EventAdminOut])
+def removed(db: DB, _: AdminUser):
+    """CC-133: the events withdrawn when Comedy and Educational went (and those at The Second City and The Annoyance),
+    by title, for an admin to bring back with Theater, Music or Visual Art (PATCH /events/<id>) or delete."""
+    return db.scalars(select(Event).where(Event.status == EventStatus.withdrawn, Event.withdrawn_reason != "")
+                      .order_by(Event.title, Event.id)).all()
 
 
 @router.get("/events/scheduled", response_model=list[EventAdminOut])
@@ -53,7 +63,10 @@ def _set_status(db: DB, event_id: int, new: EventStatus) -> Event:
     event = db.get(Event, event_id)
     if event is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Event not found")
+    if new == EventStatus.approved and event.category in REMOVED:  # CC-133: not with Comedy or Educational
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Give it Theater, Music or Visual Art first")
     event.status = new
+    event.withdrawn_reason = ""
     event.reject_reason = ""  # CC-100: an admin decided, so it's no longer one a rule caught
     event.publish_at = None  # approving publishes now, including a scheduled event
     db.commit()

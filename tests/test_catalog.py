@@ -65,7 +65,7 @@ def test_facets(client, make_event):
     make_event("No hood", venue_name="Somewhere", neighborhood="")
 
     f = client.get("/events/facets", params={"today": T.isoformat()}).json()
-    assert f["categories"] == ["Theater", "Comedy", "Music", "Visual Art", "Educational"]  # CC-125: always the five
+    assert f["categories"] == ["Theater", "Music", "Visual Art"]  # CC-125, CC-133: always the three
     assert [n["name"] for n in f["neighborhoods"]] == ["Lakeview", "Lincoln Park", "Loop", "Pilsen"]  # live only, no blanks
     assert f["neighborhoods"][0]["area"] == "city"
     assert (f["current"], f["total"]) == (4, 5)  # "Old show" has closed

@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import and_, case, func, or_, select, true
 
 from ..areas import area_of, region_of
-from ..categories import CATEGORIES, OPERA_IS, category_condition
+from ..categories import CATEGORIES, OPERA_IS, REMOVED, category_condition
 from ..config import get_settings
 from ..deps import DB, AdminUser, CurrentUser, OptionalUser
 from .. import photos
@@ -154,7 +154,7 @@ def list_events(
 @router.get("/facets", response_model=EventFacets)
 def facets(db: DB, today: Annotated[date | None, Query(description="The caller's local date")] = None):
     """What the site needs to build its filters and headline counts, without loading every event:
-    the categories (CC-125: always the five) and neighborhoods in use, and how many events there are."""
+    the categories (CC-125, CC-133: always the three) and neighborhoods in use, and how many events there are."""
     today = today or date.today()
     live = live_condition()
     hoods = db.execute(select(Venue.neighborhood, Venue.area, Venue.region).join(Event).where(live, Venue.neighborhood != "")
@@ -280,6 +280,11 @@ def update_event(event_id: int, body: EventPatch, db: DB, _: AdminUser):
             changes.update(begin_date=body.run_dates[0].date, end_date=body.run_dates[-1].date, open_run=False, weekly={}, weeks={})
     for field, value in changes.items():
         setattr(event, field, value)
+    if event.status in (EventStatus.approved, EventStatus.pending) and event.category in REMOVED:
+        # CC-133: bringing back a Comedy or Educational event (or approving one) needs one of the three
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Give it Theater, Music or Visual Art")
+    if event.status != EventStatus.withdrawn:
+        event.withdrawn_reason = ""  # CC-133: brought back, so off the review list
     if "weekly" in changes or "weeks" in changes:  # CC-88: weeks of the month only for days it's still on
         event.weeks = {d: sorted(set(w)) for d, w in (event.weeks or {}).items() if d in (event.weekly or {})}
     if event.begin_date and event.end_date and event.end_date < event.begin_date:

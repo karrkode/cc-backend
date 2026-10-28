@@ -16,7 +16,7 @@ from decimal import Decimal, InvalidOperation
 
 from sqlalchemy import func, select
 
-from ..categories import BY_SOURCE_KIND
+from ..categories import BY_SOURCE_KIND, REMOVED
 from ..models import DiscoveredItem, DiscoverySource, Event, SkipRule, Venue
 from .readers import FoundEvent
 from .rules import norm_title
@@ -107,16 +107,21 @@ def find_listed(db, source: DiscoverySource, f: dict) -> Event | None:
     return next((ev for ev in db.scalars(select(Event).where(Event.venue_id.in_(venue_ids))) if norm_title(ev.title) == title), None)
 
 
-def venue_ids_of(db, source: DiscoverySource) -> set[int]:
+def venue_ids_of(db, source: DiscoverySource | None) -> set[int]:
     """The source's venue, and any other venue with the same name (with or without "The")."""
+    if source is None:  # CC-133: its source was deleted
+        return set()
     names = {_place(source.venue_name), _place(source.venue.name if source.venue else "")} - {""}
     return {source.venue_id} - {None} | {v.id for v in db.scalars(select(Venue)) if _place(v.name) in names}
 
 
-def venue_for(db, source: DiscoverySource, item: DiscoveredItem) -> Venue | None:
+def venue_for(db, source: DiscoverySource | None, item: DiscoveredItem) -> Venue | None:
     """The venue to file an item under: the source's own venue unless the item names another (the
-    CSO plays in Wheaton too), then a known venue with that name. None: an admin picks or adds it."""
+    CSO plays in Wheaton too), then a known venue with that name. None: an admin picks or adds it.
+    CC-133: an item whose source was deleted goes by the venue it names."""
     named = _place(item.venue_name)
+    if source is None:
+        return next((v for v in db.scalars(select(Venue).order_by(Venue.id)) if named and _place(v.name) == named), None)
     if not named or named in {_place(source.venue_name), _place(source.venue.name if source.venue else "")}:
         return source.venue
     return next((v for v in db.scalars(select(Venue).order_by(Venue.id)) if _place(v.name) == named), None)
@@ -228,6 +233,8 @@ def _record(db, source: DiscoverySource, found: FoundEvent, skip: str) -> str:
     # CC-125: the source's kind gives the category when the reading didn't; an opera source's events are opera (Music)
     category, opera = BY_SOURCE_KIND.get(source.kind.value, (None, False))
     f["category"], f["opera"] = (category if opera else f["category"] or category), opera
+    if f["category"] in REMOVED and not skip:  # CC-133: Comedy and Educational aren't listed
+        skip = f"{f['category']}, which isn't listed"
     if item is None:
         item = DiscoveredItem(source_id=source.id, key=key, first_seen_at=now, last_seen_at=now, changes={}, detail_checks=[], **f)
         db.add(item)

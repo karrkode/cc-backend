@@ -41,7 +41,8 @@ class FoundEvent(BaseModel):
     title: str
     url: str | None = Field(default=None, description="The event's own page, if the text links to it")
     kind: Kind
-    category: Literal["Theater", "Comedy", "Music", "Visual Art", "Educational"] | None = None  # CC-125
+    # CC-125. CC-133: Comedy and Educational stay here so a reading can say so, and discovery leaves those out
+    category: Literal["Theater", "Comedy", "Music", "Visual Art", "Educational"] | None = None
     venue_name: str | None = Field(default=None, description="Only if different from the source's usual venue")
     begin_date: str | None = Field(default=None, description="YYYY-MM-DD: the first day, if known")
     end_date: str | None = Field(default=None, description="YYYY-MM-DD: the last day, if known")
