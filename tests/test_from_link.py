@@ -187,3 +187,51 @@ def test_a_venue_site_known_to_discovery_gives_its_venue(client, user_token, db,
     web_pages["https://goodman.example/carol"] = LD_PAGE.replace("Steppenwolf Theatre", "albert").replace('"TheaterEvent"', '"Event"')
     d = ask(client, user_token, "https://goodman.example/carol").json()
     assert (d["venue"], d["neighborhood"], d["category"]) == ("Goodman Theatre", "Loop", "Theater")
+
+
+# CC-134: trimmed from Goodman's own page, whose event data says 2027 where everything a visitor sees says 2026
+GOODMAN_PAGE = """<html><head><title>A Christmas Carol %(year)s - Goodman Theatre</title>
+<meta property="og:title" content="A Christmas Carol %(year)s - Goodman Theatre" />
+<script type="application/ld+json">{"@context":"https:\\/\\/schema.org","@graph":[{"@type":"WebPage",
+"name":"A Christmas Carol %(year)s - Goodman Theatre"},{"@type":"BreadcrumbList","itemListElement":[
+{"@type":"ListItem","position":1,"name":"Shows"},{"@type":"ListItem","position":2,"name":"A Christmas Carol %(year)s"}]}]}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"TheaterEvent","name":"A Christmas Carol %(next)s",
+"location":{"@type":"Place","name":"albert","address":{"addressLocality":"Chicago"}},
+"startDate":"%(start)sT00:00:00+0000","endDate":"%(end)s",
+"offers":{"@type":"Offer","price":null,"url":"https://goodman.example/show/a-christmas-carol-%(next)s/"}}</script>
+</head><body><h1>A Christmas Carol %(year)s</h1></body></html>"""
+
+
+def goodman_page(year=None, next_=None):
+    year = year or DAY.year
+    return GOODMAN_PAGE % {"year": year, "next": next_ or year + 1, "start": DAY.isoformat(),
+                           "end": (DAY + timedelta(days=48)).strftime("%Y%m%d")}
+
+
+def test_the_page_title_wins_over_event_data_that_disagrees(client, user_token, web_pages, claude):
+    web_pages["https://goodman.example/show/carol"] = goodman_page()
+    d = ask(client, user_token, "https://goodman.example/show/carol").json()
+    assert claude.calls == 0 and d["read_by"] == "page"
+    assert d["title"] == f"A Christmas Carol {DAY.year}"  # without " - Goodman Theatre"
+    assert (d["begin_date"], d["end_date"]) == (DAY.isoformat(), (DAY + timedelta(days=48)).isoformat())
+    assert d["venue"] == "albert"  # the event data's place is still found under its own name
+
+
+def test_event_data_that_agrees_or_is_far_from_the_page_title_is_kept():
+    from app.discovery.jsonld import visible_title
+    assert visible_title("The Seagull", LD_PAGE.replace("<head>", "<head><title>The Seagull | Steppenwolf</title>")) == "The Seagull"
+    assert visible_title("The Seagull", LD_PAGE) == "The Seagull"  # no page title at all
+    # a list page's title isn't the event's
+    assert visible_title("The Seagull", "<title>What's On - Steppenwolf Theatre</title>") == "The Seagull"
+    page = goodman_page(year=2026, next_=2026)
+    assert visible_title("A Christmas Carol 2026", page) == "A Christmas Carol 2026"
+
+
+@pytest.mark.parametrize("value,expected", [
+    ("20261231", ("2026-12-31", None)), ("2026-12-31", ("2026-12-31", None)),
+    ("2026-11-13T19:30:00-06:00", ("2026-11-13", "19:30")), ("20261113T193000", ("2026-11-13", "19:30")),
+    ("2026-11-13T00:00:00+0000", ("2026-11-13", None)), ("20261332", (None, None)), ("202612310", (None, None)),
+    ("", (None, None)), (None, (None, None))])
+def test_event_data_dates(value, expected):
+    from app.discovery.jsonld import _when
+    assert _when(value) == expected

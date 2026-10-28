@@ -18,7 +18,7 @@ from urllib.parse import urlsplit
 from .config import get_settings
 from .discovery import fetch as web
 from .discovery.budget import budget_state
-from .discovery.jsonld import event_places, events_in
+from .discovery.jsonld import event_places, events_in, visible_title
 from .discovery.pagetext import page_text
 from .discovery.readers import FoundEvent, read_page
 from .discovery.rules import norm_title
@@ -150,6 +150,8 @@ def read_link(db, url: str, today: date) -> dict:
         raise
     found = _pick(events, page.url)
     place = event_places(page.text).get(norm_title(found.title), {}) if how == "page" else {}
+    if how == "page":
+        found = found.model_copy(update={"title": visible_title(found.title, page.text)})
     return _draft(db, found, url, place, how, today, others=len(events) - 1)
 
 

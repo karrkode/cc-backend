@@ -11,7 +11,9 @@ which of the owner's categories an event belongs in. The leave-out rules still a
 import html
 import json
 import re
+from datetime import date
 from decimal import Decimal, InvalidOperation
+from difflib import SequenceMatcher
 from urllib.parse import urljoin
 
 from .readers import FoundEvent, Performance
@@ -45,12 +47,16 @@ def _is_event(obj: dict) -> bool:
 
 def _when(value) -> tuple[str | None, str | None]:
     """"2026-11-05T19:30:00-06:00" -> ("2026-11-05", "19:30"); "2026-11-05" -> ("2026-11-05", None). The
-    time is the venue's local time as written."""
-    m = re.match(r"(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2}))?", str(value or ""))
+    time is the venue's local time as written. CC-134: "20261231" (Goodman's endDate) is read too."""
+    m = re.match(r"(\d{4})-?(\d{2})-?(\d{2})(?!\d)(?:[T ](\d{2}):?(\d{2}))?", str(value or "").strip())
     if not m:
         return None, None
-    t = m.group(2)
-    return m.group(1), (t if t and t != "00:00" else None)
+    try:
+        day = date(*map(int, m.group(1, 2, 3))).isoformat()
+    except ValueError:
+        return None, None
+    t = f"{m.group(4)}:{m.group(5)}" if m.group(4) else None
+    return day, (t if t and t != "00:00" else None)
 
 
 def _price(offers) -> tuple[str, float | None]:
@@ -156,3 +162,46 @@ def event_places(page_html: str) -> dict[str, dict]:
             found.setdefault(norm_title(_text(o.get("name"))[:300]), {"venue": venue, "town": town, "category": category,
                                                                        "end_given": bool(_when(o.get("endDate"))[0])})
     return found
+
+
+# CC-134: the page's own title, which a visitor sees, against its event data, which can be out of date (Goodman's
+# "A Christmas Carol 2026" page calls its event "A Christmas Carol 2027")
+TITLE = re.compile(r"<title[^>]*>(.*?)</title>", re.S | re.I)
+OG_TITLE = re.compile(r'<meta[^>]+(?:property|name)=["\']og:title["\'][^>]*>', re.I)
+CONTENT = re.compile(r'content=["\']([^"\']*)["\']', re.I)
+SUFFIX = re.compile(r"\s+[-|–—]\s+[^-|–—]*$")  # " - Goodman Theatre"
+SAME_SHOW = 0.8  # how alike the two must be: a different year or a typo, not a list page's own title
+
+
+def page_titles(page_html: str) -> list[str]:
+    """The page's <title>, og:title, WebPage name and last breadcrumb, as written."""
+    found = [m.group(1) for m in TITLE.finditer(page_html or "")][:1]
+    found += [c.group(1) for m in OG_TITLE.finditer(page_html or "") if (c := CONTENT.search(m.group(0)))]
+    for block in SCRIPTS.findall(page_html or ""):
+        try:
+            data = json.loads(html.unescape(block.strip()) if "&quot;" in block else block.strip())
+        except ValueError:
+            continue
+        for o in _objects(data):
+            if o.get("@type") == "WebPage":
+                found.append(o.get("name"))
+            elif o.get("@type") == "BreadcrumbList" and isinstance(o.get("itemListElement"), list) and o["itemListElement"]:
+                last = o["itemListElement"][-1]
+                if isinstance(last, dict):
+                    item = last.get("item")
+                    found.append(last.get("name") or (item.get("name") if isinstance(item, dict) else None))
+    return [t for t in (_text(f) for f in found if isinstance(f, str)) if t]
+
+
+def visible_title(name: str, page_html: str) -> str:
+    """name, unless the page's own title is nearly the same but not quite: then that title, without a venue suffix."""
+    want = norm_title(name)
+    best, score = name, 0.0
+    for title in page_titles(page_html):
+        for t in (title, SUFFIX.sub("", title)):
+            got = norm_title(t)
+            if got == want:
+                return name  # the page agrees with its event data
+            if got and (r := SequenceMatcher(None, want, got).ratio()) > score:
+                best, score = t.strip(), r
+    return best[:300] if score >= SAME_SHOW else name
