@@ -155,21 +155,22 @@ applies new migrations when it starts.
 | | Endpoint | Who |
 |---|---|---|
 | Auth | `POST /auth/register`, `/auth/login`, `/auth/refresh`, `/auth/logout`; `GET`/`PATCH /auth/me` (includes `can_approve`, `approver_offered`) | anyone / signed in |
-| Events | `GET /events` (filters: `q`, `area`, `region`, `hood`, `category` (CC-125: one of the five; an opera is under Music and Theater), `from`, `to`, `max_price` (uses a venue's standard cost when the event has no price), `include_past`, `sort`, `limit`, `offset`), `GET /events/{id}`, `/events/facets`, `/events/lookup` | anyone |
+| Events | `GET /events` (filters: `q`, `area`, `region`, `hood`, `category` (CC-125: one of the five; an opera is under Music and Theater), `from`, `to`, `max_price` (uses a venue's standard cost when the event has no price), `include_past`, `sort`, `limit`, `offset`), `GET /events/{id}` (with `takes`, members' shared journal entries, CC-112), `/events/facets`, `/events/lookup` | anyone |
 | | `POST /events` (always pending for users, or rejected when an auto-reject rule matches; admins choose `publish`: `now`, `later` with `publish_at`, or `review`; optional `weekly` show days and `weeks` of the month) | signed in |
 | | `POST /events/from-link` (CC-124: `{url}` → a draft for the Suggest form, saves nothing: the page's event data first, Claude only when it has none and within the discovery budget; public http(s) hosts only; 4 a minute and 30 a day per member; 422 with a message when it can't be read) | signed in |
 | | `PATCH /events/{id}`, `DELETE /events/{id}` (deletes its photos too) | admin |
 | Review | `GET /admin/events?status=pending`, `GET /admin/events/scheduled`, `GET /admin/events/other-types` (CC-125: types outside the five), `POST /admin/events/{id}/approve` (publishes now), `/reject`; auto-reject rules: `GET`/`POST /admin/submission-rules`, `DELETE /admin/submission-rules/{id}`, and what they caught: `GET /admin/events?status=rejected&caught=true` | admin |
 | Discovery | `/admin/discovery/sources`, `/items` (`show=needs` for events missing a date or show days), `/items/{id}/approve`, `/reject`, `/accept`, `/dismiss`, `/rules`, `/budget` | admin |
 | Venues | `GET /venues`, `POST /venues`; `GET /venues/manage`, `PATCH /venues/{id}` (hours, show times, standard cost), merge, delete | anyone / admin |
-| Me | `GET /me/attended`, `PUT`/`DELETE /me/attended/{event_id}`, `PUT`/`DELETE /me/attended/{event_id}/photo` (the body is the photo), `/me/plans`, `GET /me/submissions`, `/me/issues`, `POST /me/approver` (answer the approver offer) | signed in |
+| Me | `GET /me/attended`, `PUT`/`DELETE /me/attended/{event_id}`, `PUT`/`DELETE /me/attended/{event_id}/photo` (the body is the photo), `PUT /me/attended/{event_id}/journal`, `PUT /me/attended/{event_id}/share` (CC-112: `{shared, anonymous}`), `/me/plans`, `GET /me/submissions`, `/me/issues`, `POST /me/approver` (answer the approver offer) | signed in |
 | Crews | `/crews` (your crews with their shared plans and who's been), invites by link and by email, join, leave, members | signed in |
 | Photos | `GET /photos/{id}?exp&sig` (a link signed for 15 minutes) | anyone with the link |
 | Approvals | `GET /approvals?show=waiting\|approved\|rejected`, `POST /approvals/{id}` (approve, or reject with a reason) | approvers and admins |
+| Takes | `PUT /admin/takes/{event_id}/{user_id}` (CC-112: `{hidden}` hides a public take or unhides it; the journal entry stays) | admin |
 | Members | `GET /admin/members`, `POST`/`DELETE /admin/members/{id}/approver` (offer, withdraw or remove) | admin |
 | Issues | `POST /issues`; `GET`/`PATCH /admin/issues` | signed in / admin |
 | Stats | `GET /admin/stats` (includes photo checks and their cost this month), `/admin/stats/events`, `/admin/stats/traffic` (with the join page's visits and sign-ups by source, CC-121); `POST /traffic` | admin / anyone |
-| Pages (CC-108) | `GET /e/{id}-{title}` (plain HTML event page, with Event JSON-LD and preview tags), `/sitemap.xml`, `/robots.txt`. On chiculturecrew.com CloudFront sends these paths here and caches them | anyone |
+| Pages (CC-108) | `GET /e/{id}-{title}` (plain HTML event page, with Event JSON-LD, preview tags and public takes), `/sitemap.xml`, `/robots.txt`. On chiculturecrew.com CloudFront sends these paths here and caches them | anyone |
 | Ops | `GET /health` (API and database) | anyone |
 
 ## How sign-in works

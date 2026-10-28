@@ -1,5 +1,5 @@
 import logging
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response, status
@@ -11,7 +11,7 @@ from ..deps import DB, CurrentUser
 from ..models import Attended, Event, Plan, PlanStatus, WentPhoto
 from ..crewplans import attach_crew_plans, my_crew_ids, share_been, share_plan, shared_with, unshare
 from ..picks import attach_picks
-from ..schemas import AttendedOut, EventOut, JournalIn, JournalOut, PhotoOut, PlanCrewsIn, PlanIn, PlanOut
+from ..schemas import AttendedOut, EventOut, JournalIn, JournalOut, PhotoOut, PlanCrewsIn, PlanIn, PlanOut, ShareIn, ShareOut
 from ..visibility import is_live, live_condition
 
 router = APIRouter(prefix="/me", tags=["me"])
@@ -110,6 +110,24 @@ def save_journal(event_id: int, body: JournalIn, db: DB, user: CurrentUser):
     if mark is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Mark it \u201cI've been\u201d first")
     mark.words, mark.review, mark.recommend = body.words, body.review, body.recommend
+    db.commit()
+    return mark
+
+
+@router.put("/attended/{event_id}/share", response_model=ShareOut)
+def share_journal(event_id: int, body: ShareIn, db: DB, user: CurrentUser):
+    """CC-112: share your journal entry on the event's public page, or stop sharing it (at once). It needs its
+    three words saved first. Edits to a shared entry show there too. Un-marking "I've been" takes it down."""
+    mark = db.get(Attended, (user.id, event_id))
+    if mark is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Mark it \u201cI've been\u201d first")
+    if body.shared and not mark.words:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Save your three words first")
+    if not body.shared:
+        mark.shared_at = None
+    elif mark.shared_at is None:
+        mark.shared_at = datetime.now(timezone.utc)
+    mark.anonymous = body.anonymous
     db.commit()
     return mark
 

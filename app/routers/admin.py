@@ -1,3 +1,4 @@
+import uuid
 from datetime import date, timedelta
 from typing import Annotated, Literal
 
@@ -7,9 +8,9 @@ from sqlalchemy import func, select
 from ..categories import CATEGORIES
 from ..deps import DB, AdminUser
 from ..discovery.rules import norm_title
-from ..models import Event, EventStatus, SubmissionRule, Venue
+from ..models import Attended, Event, EventStatus, SubmissionRule, Venue
 from ..schemas import (EventAdminOut, EventAdminPage, EventInterestOut, StatsOut, SubmissionRuleIn, SubmissionRuleOut,
-                       TrafficOut)
+                       TakeHideIn, TrafficOut)
 from ..photos import CHECK_USD, checks_this_month
 from ..stats import event_interest, today_in_chicago, weekly_stats
 from ..traffic import summary as traffic_summary
@@ -113,6 +114,17 @@ def delete_submission_rule(rule_id: int, db: DB, _: AdminUser):
     if rule is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Rule not found")
     db.delete(rule)
+    db.commit()
+
+
+@router.put("/takes/{event_id}/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+def hide_take(event_id: int, user_id: uuid.UUID, body: TakeHideIn, db: DB, _: AdminUser):
+    """CC-112: hide a member's public take (moderation), or unhide it. The journal entry itself is kept, and a
+    hidden take stays hidden whatever the member edits, until an admin unhides it."""
+    mark = db.get(Attended, (user_id, event_id))
+    if mark is None or mark.shared_at is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Take not found")
+    mark.hidden = body.hidden
     db.commit()
 
 
