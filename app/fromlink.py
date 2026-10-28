@@ -22,7 +22,7 @@ from .discovery.jsonld import event_places, events_in
 from .discovery.pagetext import page_text
 from .discovery.readers import FoundEvent, read_page
 from .discovery.rules import norm_title
-from .categories import BY_SOURCE_KIND
+from .categories import BY_SOURCE_KIND, CATEGORIES
 from .models import DiscoveryCheck, DiscoverySource, Venue
 from .ratelimit import SlidingWindowLimiter
 
@@ -189,6 +189,8 @@ def _draft(db, e: FoundEvent, url: str, place: dict, how: str, today: date, othe
     defaults = {v.category for v in known if v.category}
     category = e.category or ld_category or (defaults.pop() if len(defaults) == 1 else None) or \
         (BY_SOURCE_KIND[source.kind.value][0] if source and source.kind.value in BY_SOURCE_KIND else None)
+    if category not in CATEGORIES:  # CC-133: a comedy club's page, say; the member picks one of the three
+        category = None
     shows = sorted({p.date: p for p in e.performances if p.time and p.date >= today.isoformat()}.values(), key=lambda p: p.date)
     run_dates = [{"date": p.date, "time": p.time} for p in shows] if 0 < len(shows) <= RUN_DATES_MAX else []
     weekly = {d.weekday: d.times[:6] for d in e.show_days if d.times} if not run_dates else {}

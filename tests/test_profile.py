@@ -70,7 +70,7 @@ def test_validation_and_sign_in(client, user_token):
 
 def test_new_name_shows_on_credited_events(client, user_token, admin_token):
     ev = client.post("/events", headers=auth(user_token), json={
-        "title": "Credit me", "category": "Comedy", "venue": {"name": "Annoyance", "neighborhood": "Lakeview"},
+        "title": "Credit me", "category": "Music", "venue": {"name": "Annoyance", "neighborhood": "Lakeview"},
         "credit_me": True}).json()
     client.post(f"/admin/events/{ev['id']}/approve", headers=auth(admin_token))
     patch(client, user_token, display_name="Ana Lucía")

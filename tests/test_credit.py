@@ -9,7 +9,7 @@ VENUE = {"name": "Annoyance", "neighborhood": "Lakeview"}
 
 
 def submit(client, token, title, **extra):
-    r = client.post("/events", headers=auth(token), json={"title": title, "category": "Comedy", "venue": VENUE, **extra})
+    r = client.post("/events", headers=auth(token), json={"title": title, "category": "Music", "venue": VENUE, **extra})
     assert r.status_code == 201, r.text
     return r.json()
 

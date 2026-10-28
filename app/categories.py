@@ -1,4 +1,5 @@
-"""CC-125: the five event categories, and opera, the one event that's listed under two.
+"""CC-125: the event categories (CC-133: three, since Comedy and Educational went), and opera, the one event that's
+listed under two.
 
 An event has one category from CATEGORIES. Opera is a flag an admin sets on a Music event: it's also listed under
 Theater in the catalog filter, and labelled "Opera" on its card and page. Stats count it once, under Music.
@@ -9,12 +10,14 @@ from sqlalchemy import func, or_, select
 
 from .models import Event, Venue
 
-CATEGORIES = ("Theater", "Comedy", "Music", "Visual Art", "Educational")  # the order the site shows them in
+CATEGORIES = ("Theater", "Music", "Visual Art")  # the order the site shows them in
+# CC-133: no longer listed. Readers can still say an event is one of these, so discovery and links can leave it out.
+REMOVED = ("Comedy", "Educational")
 OPERA_IS = "Music"  # an opera's own category
 OPERA_ALSO = "Theater"  # and the one it's also listed under
-OLD_NAMES = {"Concert": "Music"}  # the old free-text types that map onto the five
+OLD_NAMES = {"Concert": "Music"}  # the old free-text types that map onto the three
 
-# Discovery's source kinds: (category, opera)
+# Discovery's source kinds: (category, opera). CC-133: a comedy source's events are Comedy, so they're left out.
 BY_SOURCE_KIND = {"theater": ("Theater", False), "music": ("Music", False), "comedy": ("Comedy", False),
                   "museum": ("Visual Art", False), "opera": (OPERA_IS, True)}
 

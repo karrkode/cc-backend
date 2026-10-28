@@ -168,7 +168,7 @@ def test_the_recap_counts_events_waiting_for_a_date(db):
 def test_show_days_on_some_weeks_of_the_month(client, admin_token, user_token, db, make_event):
     s = make_source(db)
     no_show_times(s)
-    record(db, s, found("First and Third", "https://goodman.example/ft", kind="comedy_show", category="Comedy", open_run=True,
+    record(db, s, found("First and Third", "https://goodman.example/ft", kind="concert", category="Music", open_run=True,
                         show_days=[ShowDay(weekday="thu", times=["20:00"], weeks=[3, 1, 9]), ShowDay(weekday="sun", times=["19:00"])]), "")
     db.commit()
     item = item_named(db, "First and Third")
@@ -176,7 +176,7 @@ def test_show_days_on_some_weeks_of_the_month(client, admin_token, user_token, d
     assert show_days_text(item.weekly, {"thu": [1, 3], "sun": [5]}) == "1st and 3rd Thu 8 PM; last Sun 7 PM"
 
     h = auth(admin_token)
-    body = {"title": "First and Third", "category": "Comedy", "venue_id": s.venue_id, "open_run": True, "publish": "now",
+    body = {"title": "First and Third", "category": "Music", "venue_id": s.venue_id, "open_run": True, "publish": "now",
             "weekly": {"thu": ["20:00"]}, "weeks": {"thu": [3, 1], "fri": [2]}}  # Friday isn't a show day, so it's dropped
     r = client.post(f"/admin/discovery/items/{item.id}/approve", json=body, headers=h)
     event = db.get(Event, r.json()["event"]["id"])

@@ -131,7 +131,7 @@ def gather(db, now: datetime) -> Week:
     rule_caught = [i for i in week if i.status == "rejected" and i.skip_reason.startswith("skip rule")]
     found = [i for i in week if i.status in ("new", "approved", "rejected") and i not in rule_caught]
     w.found_total = len(found)
-    w.found_by_source = Counter(names.get(i.source_id, "?") for i in found).most_common()
+    w.found_by_source = Counter(names.get(i.source_id, "a deleted source") for i in found).most_common()
     w.by_rule = Counter(i.skip_reason.removeprefix("skip rule: ").strip("\u201c\u201d") for i in rule_caught).most_common()
     w.built_in = Counter((i.skip_reason or "other").capitalize() for i in week if i.status == "skipped").most_common()
 
@@ -139,7 +139,7 @@ def gather(db, now: datetime) -> Week:
         for k, (was, now_v) in (i.changes or {}).items():
             if k == "min_price" and "cost_text" in i.changes:
                 continue  # the price as written says it better
-            w.updates.append((i.title, names.get(i.source_id, "?"), CHANGE_NAMES.get(k, k), _change(k, was), _change(k, now_v)))
+            w.updates.append((i.title, names.get(i.source_id, "a deleted source"), CHANGE_NAMES.get(k, k), _change(k, was), _change(k, now_v)))
     w.more_updates, w.updates = max(len(w.updates) - MAX_UPDATES, 0), w.updates[:MAX_UPDATES]
 
     waiting = dict(db.execute(select(DiscoveredItem.status, func.count()).where(DiscoveredItem.status.in_(["new", "update"]))

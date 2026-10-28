@@ -190,7 +190,7 @@ def test_skipped_email_never_logs_the_link(monkeypatch, caplog):
 
 # ---- requiring a confirmed address to submit (on in production, CC-46) -----------------
 
-EVENT = {"title": "Fresh pick", "category": "Comedy", "venue": {"name": "Annoyance", "neighborhood": "Lakeview"}}
+EVENT = {"title": "Fresh pick", "category": "Music", "venue": {"name": "Annoyance", "neighborhood": "Lakeview"}}
 
 
 @pytest.mark.parametrize("required", [False, True])

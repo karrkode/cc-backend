@@ -216,7 +216,7 @@ def test_review_queue(client, user_token, admin_token, make_event):
 
 def test_admins_see_who_submitted(client, user_token, admin_token, make_event):
     sent = client.post("/events", headers=auth(user_token), json={
-        "title": "Fresh pick", "category": "Comedy", "venue": {"name": "Annoyance", "neighborhood": "Lakeview"}}).json()
+        "title": "Fresh pick", "category": "Music", "venue": {"name": "Annoyance", "neighborhood": "Lakeview"}}).json()
     make_event("From the sheet", status=EventStatus.pending)  # no submitter
 
     items = {e["title"]: e for e in client.get("/admin/events", headers=auth(admin_token)).json()["items"]}
@@ -239,7 +239,7 @@ def test_scheduled_list_shows_the_submitter(client, admin_token, make_event):
 
 def test_submitter_is_null_once_their_account_is_gone(client, user_token, admin_token, db):
     client.post("/events", headers=auth(user_token), json={
-        "title": "Orphan", "category": "Comedy", "venue": {"name": "Annoyance", "neighborhood": "Lakeview"}})
+        "title": "Orphan", "category": "Music", "venue": {"name": "Annoyance", "neighborhood": "Lakeview"}})
     db.delete(db.scalar(select(User).where(User.email == "ana@example.com")))
     db.commit()
     [ev] = client.get("/admin/events", headers=auth(admin_token)).json()["items"]
@@ -248,7 +248,7 @@ def test_submitter_is_null_once_their_account_is_gone(client, user_token, admin_
 
 def test_submitter_details_never_leave_the_admin_routes(client, user_token, admin_token, make_event):
     sent = client.post("/events", headers=auth(user_token), json={
-        "title": "Mine", "category": "Comedy", "venue": {"name": "Annoyance", "neighborhood": "Lakeview"}})
+        "title": "Mine", "category": "Music", "venue": {"name": "Annoyance", "neighborhood": "Lakeview"}})
     assert "submitted_by" not in sent.json()
     ev_id = sent.json()["id"]
     assert client.get("/admin/events", headers=auth(user_token)).status_code == 403
