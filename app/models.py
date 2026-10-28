@@ -308,6 +308,8 @@ class Event(Base):
     pick = None
     # CC-75: set per request by app.crewplans.attach_crew_plans (not stored); your crew-mates' shared plans.
     crew_plans = ()
+    # CC-112: set per request by app.takes.attach_takes (not stored); members' shared journal entries.
+    takes = ()
 
     @property
     def schedule(self) -> dict:
@@ -347,9 +349,18 @@ class Attended(Base):
     words: Mapped[str] = mapped_column(String(62), default="", server_default="")
     review: Mapped[str] = mapped_column(String(1000), default="", server_default="")
     recommend: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    # CC-112: a public take. shared_at: when the member shared the entry on the event's page (null: private);
+    # anonymous: shown as "A Culture Crew member"; hidden: an admin took it down (the member isn't told).
+    shared_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    anonymous: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    hidden: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
 
     event: Mapped[Event] = relationship(lazy="joined")
     photo = None  # CC-76: set per request (the member's own photo, as PhotoOut)
+
+    @property
+    def shared(self) -> bool:
+        return self.shared_at is not None
 
 
 class WentPhoto(Base):

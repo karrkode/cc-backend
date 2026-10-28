@@ -8,6 +8,7 @@ from ..deps import DB
 from ..models import Event
 from ..seo import id_from, path_for, render_event, render_missing, robots, sitemap
 from ..stats import today_in_chicago
+from ..takes import takes_for
 from ..visibility import is_live, live_condition
 
 router = APIRouter(tags=["seo"], include_in_schema=False)
@@ -25,7 +26,7 @@ def event_page(ref: str, db: DB):
     canonical = path_for(event)
     if f"/e/{ref}" != canonical:  # an old title or a bare id: send it to the current address
         return RedirectResponse(canonical, status_code=301, headers=CACHED)
-    return HTMLResponse(render_event(event, today_in_chicago()), headers=CACHED)
+    return HTMLResponse(render_event(event, today_in_chicago(), takes_for(db, event.id)), headers=CACHED)
 
 
 @router.get("/sitemap.xml")

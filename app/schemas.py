@@ -196,6 +196,18 @@ class CrewPlansOut(BaseModel):
     been: list[str] = []  # CC-117: crew-mates who've marked "I've been" and shared it with this crew
 
 
+class TakeOut(BaseModel):
+    """CC-112: a member's shared journal entry, as anyone sees it on the event. name: "Maya C." or
+    "A Culture Crew member". user_id and hidden: admins only (to hide or unhide it), else null and false."""
+    words: str
+    review: str
+    recommend: bool
+    name: str
+    shared_at: datetime
+    user_id: uuid.UUID | None = None
+    hidden: bool = False
+
+
 class EventOut(ORM):
     id: int
     source_id: str | None  # id from the old Google Sheet site, so its share links keep working
@@ -218,6 +230,7 @@ class EventOut(ORM):
     schedule: ScheduleOut = ScheduleOut()  # CC-79: for the planner; not shown on cards
     run_dates: list[RunDate] = []  # CC-96: a fixed run's dates, every one (the site shows the upcoming ones)
     crew_plans: list[CrewPlansOut] = []  # CC-75: signed in only: your crew-mates' shared plans
+    takes: list[TakeOut] = []  # CC-112: members' shared journal entries (GET /events/<id> only)
 
 
 class EventPage(BaseModel):
@@ -662,6 +675,25 @@ class AttendedOut(ORM):
     words: str = ""  # CC-98: your journal entry for it (only ever sent to you)
     review: str = ""
     recommend: bool = False
+    shared: bool = False  # CC-112: shared publicly on the event's page
+    anonymous: bool = False  # CC-112: shown as "A Culture Crew member" rather than your name
+
+
+class ShareIn(BaseModel):
+    """CC-112: share your journal entry for an event on its public page (or stop sharing it).
+    anonymous: show it as "A Culture Crew member" instead of your first name and initial."""
+    shared: bool
+    anonymous: bool = False
+
+
+class ShareOut(ORM):
+    shared: bool
+    anonymous: bool
+
+
+class TakeHideIn(BaseModel):
+    """CC-112: an admin hides a public take (or unhides it). The member's journal entry isn't touched."""
+    hidden: bool
 
 
 class FoundChange(BaseModel):

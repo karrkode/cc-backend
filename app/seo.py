@@ -5,7 +5,8 @@ nothing. These are plain HTML instead: a page per live event at /e/<id>-<title>,
 robots.txt. CloudFront sends those paths on chiculturecrew.com here and caches the answers for a few
 minutes (infra/aws/frontend.tf), so a change shows up without a rebuild.
 
-Only what the catalog already shows publicly goes on a page: never plans, crews, names or journals.
+Only what the catalog already shows publicly goes on a page: never plans, crews, names or journals, except the
+journal entries members chose to share there (public takes, CC-112, from app.takes).
 """
 import json
 import re
@@ -172,6 +173,15 @@ dd { margin: 0; font-variant-numeric: tabular-nums; }
 .btn.primary { background: var(--lead); color: var(--on-lead); }
 .btn.secondary { color: var(--lead); }
 .note { margin-top: 36px; color: var(--muted); font-size: 0.875rem; }
+.takes { margin-top: 44px; }
+.takes h2 { margin: 0 0 4px; font: 600 1.375rem/1.2 "Outfit", "Figtree", system-ui, sans-serif; }
+.takes ol { list-style: none; margin: 0; padding: 0; }
+.take { padding: 20px 0; border-bottom: 1px solid var(--line); }
+.take-words { margin: 0 0 6px; font: 600 1.5rem/1.2 "Outfit", "Figtree", system-ui, sans-serif; letter-spacing: -0.01em; overflow-wrap: anywhere; }
+.take-words span + span::before { content: " · "; color: var(--star); }
+.take-review { margin: 0 0 8px; white-space: pre-line; overflow-wrap: anywhere; }
+.take-by { margin: 0; color: var(--muted); font-size: 0.875rem; }
+.take-by b { color: var(--text); font-weight: 600; }
 """
 
 THEME_SCRIPT = """(function () {
@@ -221,7 +231,22 @@ def _page(title: str, desc: str, canonical: str | None, body: str, extra_head: s
             f"<main>\n{body}\n</main>\n</div>\n</body>\n</html>\n")
 
 
-def render_event(event: Event, today: date) -> str:
+def _takes_html(takes: list[dict]) -> str:
+    """CC-112: members' shared journal entries: the three words, the review, the name and whether they'd recommend it."""
+    if not takes:
+        return ""
+    e = lambda s: escape(s, quote=True)  # noqa: E731
+    items = []
+    for t in takes:
+        words = "".join(f"<span>{e(w)}</span>" for w in t["words"].split())
+        review = f'<p class="take-review">{e(t["review"])}</p>' if t["review"] else ""
+        by = f"<b>{e(t['name'])}</b>" + (" · Would recommend" if t["recommend"] else "")
+        items.append(f'<li class="take"><p class="take-words">{words}</p>{review}<p class="take-by">{by}</p></li>')
+    return ('<section class="takes" aria-labelledby="takes-h"><h2 id="takes-h">From people who went</h2>'
+            f'<ol>{"".join(items)}</ol></section>')
+
+
+def render_event(event: Event, today: date, takes: list[dict] = ()) -> str:
     site = get_settings().site_url
     e = lambda s: escape(s, quote=True)  # noqa: E731
     closed = is_closed(event, today)
@@ -238,6 +263,8 @@ def render_event(event: Event, today: date) -> str:
         actions.append(f'<a class="btn primary" href="{e(event.url)}" rel="noopener">Tickets and showtimes ↗</a>')
     actions.append(f'<a class="btn {"secondary" if actions else "primary"}" href="{e(_view_link(event))}">Open in Culture Crew</a>')
     body.append(f'<div class="actions">{"".join(actions)}</div>')
+    if takes:
+        body.append(_takes_html(list(takes)))
     body.append('<p class="note">Dates and prices change, so check the event’s own page before you go.</p>')
     ld = json_ld(event, today)
     extra = ""

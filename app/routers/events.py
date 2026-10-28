@@ -17,6 +17,7 @@ from ..crewplans import attach_crew_plans, crew_plans_condition
 from ..picks import attach_picks, pick_condition
 from ..schemas import EventFacets, EventIn, EventOut, EventPage, EventPatch, LinkDraft, LinkIn, RunDate, VenueIn
 from ..stats import today_in_chicago
+from ..takes import attach_takes
 from ..visibility import live_condition, utcnow, visible_to
 
 router = APIRouter(prefix="/events", tags=["events"])
@@ -177,7 +178,7 @@ def get_event(event_id: int, db: DB, user: OptionalUser):
     event = db.get(Event, event_id)
     if event is None or not visible_to(event, user):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Event not found")
-    return attach_crew_plans(db, attach_picks(db, [event]), user)[0]
+    return attach_takes(db, attach_crew_plans(db, attach_picks(db, [event]), user)[0], user)  # CC-112
 
 
 @router.post("", response_model=EventOut, status_code=status.HTTP_201_CREATED)
