@@ -8,8 +8,9 @@ from sqlalchemy import func, select
 from ..categories import CATEGORIES, REMOVED
 from ..deps import DB, AdminUser
 from ..discovery.rules import norm_title
+from .. import roundups
 from ..models import Attended, Event, EventStatus, SubmissionRule, Venue
-from ..schemas import (EventAdminOut, EventAdminPage, EventInterestOut, StatsOut, SubmissionRuleIn, SubmissionRuleOut,
+from ..schemas import (EventAdminOut, EventAdminPage, EventInterestOut, RoundupIntroIn, RoundupOut, StatsOut, SubmissionRuleIn, SubmissionRuleOut,
                        TakeHideIn, TrafficOut)
 from ..photos import CHECK_USD, checks_this_month
 from ..stats import event_interest, today_in_chicago, weekly_stats
@@ -139,6 +140,29 @@ def hide_take(event_id: int, user_id: uuid.UUID, body: TakeHideIn, db: DB, _: Ad
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Take not found")
     mark.hidden = body.hidden
     db.commit()
+
+
+def _roundups_out(db, today: date) -> list[RoundupOut]:
+    custom = roundups.intros(db)
+    return [RoundupOut(slug=r.slug, group=r.group, name=r.name, path=f"/chicago/{r.slug}", intro=custom.get(r.slug) or r.intro,
+                       default_intro=r.intro, custom=r.slug in custom, count=roundups.count(db, r, today))
+            for r in roundups.ROUNDUPS]
+
+
+@router.get("/roundups", response_model=list[RoundupOut])
+def roundup_list(db: DB, _: AdminUser):
+    """CC-109: the roundup pages, with their intros and how many events each lists today."""
+    return _roundups_out(db, today_in_chicago())
+
+
+@router.put("/roundups/{slug}", response_model=RoundupOut)
+def set_roundup_intro(slug: str, body: RoundupIntroIn, db: DB, _: AdminUser):
+    """CC-109: change a roundup's intro; an empty one goes back to the default."""
+    if slug not in roundups.BY_SLUG:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such roundup")
+    roundups.set_intro(db, slug, body.intro)
+    db.commit()
+    return next(r for r in _roundups_out(db, today_in_chicago()) if r.slug == slug)
 
 
 @router.get("/stats", response_model=StatsOut)

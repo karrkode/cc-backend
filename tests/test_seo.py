@@ -76,7 +76,7 @@ def test_sitemap_lists_live_running_events_only(client, make_event):
     assert r.text.startswith('<?xml version="1.0" encoding="UTF-8"?>')
     assert f"/e/{live.id}-running</loc>" in r.text
     assert f"/e/{closed.id}-" not in r.text and f"/e/{pending.id}-" not in r.text
-    assert r.text.count("<loc>") == 2  # home and the running event
+    assert r.text.count("/e/") == 1 and "<loc>http://localhost:4173/</loc>" in r.text  # home and the running event (and CC-109's roundups)
 
 
 def test_robots_points_to_the_sitemap(client):

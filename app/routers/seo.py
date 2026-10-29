@@ -1,11 +1,13 @@
-"""CC-108: the event pages, sitemap and robots.txt (see app/seo.py). On chiculturecrew.com, CloudFront
-sends /e/*, /sitemap.xml and /robots.txt here and caches them for CACHE_SECONDS."""
+"""CC-108: the event pages, sitemap and robots.txt (see app/seo.py), and CC-109's roundups at /chicago/ (see
+app/roundups.py). On chiculturecrew.com, CloudFront sends /e/*, /chicago, /chicago/*, /sitemap.xml and /robots.txt
+here and caches them for CACHE_SECONDS."""
 from fastapi import APIRouter
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
 from sqlalchemy import or_, select
 
 from ..deps import DB
 from ..models import Event
+from .. import roundups
 from ..seo import id_from, path_for, render_event, render_missing, robots, sitemap
 from ..stats import today_in_chicago
 from ..takes import takes_for
@@ -34,9 +36,27 @@ def sitemap_xml(db: DB):
     today = today_in_chicago()
     events = db.scalars(select(Event).where(live_condition(), or_(Event.end_date.is_(None), Event.end_date >= today))
                         .order_by(Event.id)).all()
-    return Response(sitemap(list(events), today), media_type="application/xml", headers=CACHED)
+    return Response(sitemap(list(events), today, roundups.sitemap_paths(db, today)), media_type="application/xml", headers=CACHED)
 
 
 @router.get("/robots.txt", response_class=PlainTextResponse)
 def robots_txt():
     return PlainTextResponse(robots(), headers=CACHED)
+
+
+@router.get("/chicago", include_in_schema=False)
+def roundups_bare():
+    return RedirectResponse("/chicago/", status_code=301, headers=CACHED)
+
+
+@router.get("/chicago/", response_class=HTMLResponse)
+def roundups_index(db: DB):
+    return HTMLResponse(roundups.render_index(db, today_in_chicago()), headers=CACHED)
+
+
+@router.get("/chicago/{slug}", response_class=HTMLResponse)
+def roundup_page(slug: str, db: DB):
+    r = roundups.BY_SLUG.get(slug.rstrip("/"))
+    if r is None:
+        return HTMLResponse(roundups.render_unknown(), status_code=404, headers={"Cache-Control": "public, max-age=60"})
+    return HTMLResponse(roundups.render_roundup(db, r, today_in_chicago()), headers=CACHED)
