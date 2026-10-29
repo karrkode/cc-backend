@@ -114,7 +114,7 @@ resource "aws_cloudfront_cache_policy" "api_pages" {
 }
 
 locals {
-  api_page_paths = ["/e/*", "/sitemap.xml", "/robots.txt"]
+  api_page_paths = ["/e/*", "/chicago", "/chicago/*", "/sitemap.xml", "/robots.txt"] # CC-109: roundups at /chicago/
 }
 
 resource "aws_cloudfront_distribution" "site" {

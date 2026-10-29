@@ -697,6 +697,22 @@ class TakeHideIn(BaseModel):
     hidden: bool
 
 
+class RoundupOut(BaseModel):
+    """CC-109: a roundup page, for the admins' intro editor."""
+    slug: str
+    group: str
+    name: str
+    path: str
+    intro: str  # what the page shows: the admins' text, else the default
+    default_intro: str
+    custom: bool
+    count: int
+
+
+class RoundupIntroIn(BaseModel):
+    intro: str = Field(max_length=600)  # empty: back to the default
+
+
 class FoundChange(BaseModel):
     field: str  # cost_text | min_price | begin_date | end_date | weekly
     listed: str | float | dict | None  # what the catalog says

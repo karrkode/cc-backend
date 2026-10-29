@@ -194,7 +194,8 @@ STAR = ('<svg aria-hidden="true" viewBox="0 0 24 24"><polygon points="12,1 14.5,
         '14.5,16.33 12,23 9.5,16.33 2.47,17.5 7,12 2.47,6.5 9.5,7.67"></polygon></svg>')
 
 
-def _page(title: str, desc: str, canonical: str | None, body: str, extra_head: str = "", noindex: bool = False) -> str:
+def _page(title: str, desc: str, canonical: str | None, body: str, extra_head: str = "", noindex: bool = False,
+          nav: str = "") -> str:
     site = get_settings().site_url
     e = lambda s: escape(s, quote=True)  # noqa: E731
     head = [
@@ -227,7 +228,7 @@ def _page(title: str, desc: str, canonical: str | None, body: str, extra_head: s
         extra_head,
     ]
     return ("<!doctype html>\n<html lang=\"en\">\n<head>\n" + "\n".join(h for h in head if h) + "\n</head>\n<body>\n"
-            f'<div class="wrap">\n<header><a class="brand" href="{e(site)}/">{STAR}Culture Crew</a></header>\n'
+            f'<div class="wrap">\n<header><a class="brand" href="{e(site)}/">{STAR}Culture Crew</a>{nav}</header>\n'
             f"<main>\n{body}\n</main>\n</div>\n</body>\n</html>\n")
 
 
@@ -281,10 +282,11 @@ def render_missing() -> str:
     return _page("Event not found · Culture Crew", "That event isn't on Culture Crew's list.", None, body, noindex=True)
 
 
-def sitemap(events: list[Event], today: date) -> str:
+def sitemap(events: list[Event], today: date, pages: list[str] = ()) -> str:
+    """pages: other paths to list, such as the roundups (CC-109)."""
     site = get_settings().site_url
-    urls = [(site + "/", None)] + [(site + path_for(ev), ev.updated_at.date() if ev.updated_at else None)
-                                   for ev in events if not is_closed(ev, today)]
+    urls = [(site + "/", None)] + [(site + p, None) for p in pages] + [
+        (site + path_for(ev), ev.updated_at.date() if ev.updated_at else None) for ev in events if not is_closed(ev, today)]
     lines = ['<?xml version="1.0" encoding="UTF-8"?>', '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
     for loc, mod in urls:
         lines.append(f"  <url><loc>{xml_escape(loc)}</loc>" + (f"<lastmod>{mod.isoformat()}</lastmod>" if mod else "") + "</url>")
