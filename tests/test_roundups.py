@@ -112,7 +112,7 @@ def test_kinds_list_opera_under_theater_and_music(client, make_event, db):
     assert set(names(page(client, "theater"))) == {"A Play", "Tosca"}
     assert set(names(page(client, "music"))) == {"Tosca", "Quartet"}
     assert names(page(client, "visual-art")) == ["Prints"]
-    assert 'class="cat cat-music">Opera<' in page(client, "theater")
+    assert '<span class="tile cat-music"><span class="tile-k">Opera</span>' in page(client, "theater")
 
 
 def test_sides_of_town_go_by_the_venues_region(client, make_event, db):
@@ -151,7 +151,7 @@ def test_each_page_links_its_events_and_the_other_roundups(client, make_event):
 def test_index_redirect_and_unknown(client, make_event):
     make_event(title="Hamlet")
     html = client.get("/chicago/").text
-    assert "<h1>What’s on in Chicago</h1>" in html and "Theater</a> <span class=\"count\">· 1 event" in html
+    assert "<h1>What’s on in Chicago</h1>" in html and "Theater →</span><span class=\"count\">1 event<" in html
     r = client.get("/chicago", follow_redirects=False)
     assert r.status_code == 301 and r.headers["location"] == "/chicago/"
     r = client.get("/chicago/nope")
@@ -192,3 +192,23 @@ def test_a_busy_day_cannot_crowd_out_the_rest_of_the_weekend(client, make_event,
     html = page(client, "this-weekend")
     assert len(names(html)) == 2 and "Last Day" in names(html)
     assert "That’s 2 of 3." in html and f'href="#{SUN.strftime("%a").lower()}"' in html
+
+
+def test_roundups_are_lakefront_rows_under_day_heads(client, make_event, db):
+    """CC-151: rows under day heads like the site's listings, each with a plain category tile; no old fonts or pills."""
+    make_event(title="Running Play", begin=TODAY - timedelta(days=3), end=TODAY + timedelta(days=30))
+    make_event(title="New Show", category="Visual Art", venue_name="Museum", begin=TODAY + timedelta(days=4),
+               end=TODAY + timedelta(days=40))
+    db.commit()
+    html = page(client, "theater") + page(client, "visual-art")
+    for old in ("Figtree", "Outfit", "border-radius", "999px", "text-transform", "eyebrow", "pill"):
+        assert old not in html, old
+    assert '<h2 class="day-head">On now</h2><ol class="rows"><li><a class="row"' in html
+    opening = TODAY + timedelta(days=4)
+    assert f'<h2 class="day-head">Opening {opening.strftime("%A")}, {opening.strftime("%b")} {opening.day}' in html
+    assert '<span class="tile cat-art"><span class="tile-k">Visual Art</span></span>' in html
+    assert ".row:focus-visible .name" in html and '<header class="mast">' in html
+    make_event(title="Last Week", begin=TODAY - timedelta(days=9), end=TODAY + timedelta(days=2))
+    db.commit()
+    end = TODAY + timedelta(days=2)
+    assert f'<h2 class="day-head">Closing {end.strftime("%A")}, {end.strftime("%b")} {end.day}' in page(client, "closing-soon")
