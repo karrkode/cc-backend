@@ -142,56 +142,102 @@ def _view_link(event: Event) -> str:
     return f"{get_settings().site_url}/#e/{event.id}"
 
 
+# CC-151: Lakefront, as in the site (site.css, CC-136): the same tokens and type, the compact masthead (CC-137) and square
+# corners. The 404 page (cc-site public/404.html, CC-149) is the model for a standalone page.
 PAGE_STYLE = """
-:root, :root[data-theme="dark"] {
-  --page: #0B1220; --surface: #141D2F; --line: #26334C; --text: #EAF0F8; --muted: #A3B3CA;
-  --lead: #5CC8F5; --on-lead: #04212E; --star: #FF5C70; --danger-soft: #3D1420; --on-danger-soft: #FFB3BD; --focus: #5CC8F5;
-  color-scheme: dark;
-}
-:root[data-theme="light"] {
-  --page: #F6F6F3; --surface: #FFFFFF; --line: #E2E2DC; --text: #111111; --muted: #5C5C57;
-  --lead: #D62839; --on-lead: #FFFFFF; --star: #D62839; --danger-soft: #FBE4E6; --on-danger-soft: #9E1B28; --focus: #1D4ED8;
+:root, :root[data-theme="light"] {
+  --page: #FFFFFF; --surface: #F2F7F9; --line: #D3E3EA; --rule: #0E2A40; --text: #0E2A40; --muted: #4A6275;
+  --lake: #0E3A5B; --on-lake: #FFFFFF; --stripe: #9CD3EF; --lead: #0E3A5B; --on-lead: #FFFFFF; --star: #C8102E; --focus: #0F5E8C;
+  --cat-theater: #B9472E; --cat-music: #5B3E9E; --cat-art: #2F7A5B;
   color-scheme: light;
 }
+:root[data-theme="dark"] {
+  --page: #0A1A28; --surface: #0F2334; --line: #22394D; --rule: #A6BDCC; --text: #EAF2F7; --muted: #A6BDCC;
+  --lake: #06121C; --on-lake: #EAF2F7; --stripe: #5E9FC2; --lead: #9CD3EF; --on-lead: #06121C; --star: #FF5C70; --focus: #9CD3EF;
+  --cat-theater: #B9472E; --cat-music: #7A5AD0; --cat-art: #2F7A5B;
+  color-scheme: dark;
+}
+:root { --on-cat: #FFFFFF; --display: "Newsreader", Georgia, "Times New Roman", serif;
+  --sign: "Big Shoulders Text", "Arial Narrow", system-ui, sans-serif; }
 *, *::before, *::after { box-sizing: border-box; }
-body { margin: 0; background: var(--page); color: var(--text); font: 1rem/1.55 "Figtree", system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
-.wrap { max-width: 760px; margin: 0 auto; padding: 24px max(20px, env(safe-area-inset-right)) 56px max(20px, env(safe-area-inset-left)); }
-a { color: var(--lead); }
-a:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; border-radius: 4px; }
-.brand { display: inline-flex; align-items: center; gap: 8px; font: 600 1.25rem "Outfit", "Figtree", system-ui, sans-serif; color: var(--text); text-decoration: none; }
-.brand svg { width: 20px; height: 20px; fill: var(--star); }
-header { padding-bottom: 18px; border-bottom: 1px solid var(--line); margin-bottom: 36px; }
-.eyebrow { margin: 0 0 8px; font-size: 0.8125rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
-h1 { margin: 0 0 12px; font: 600 clamp(2rem, 6vw, 3rem)/1.08 "Outfit", "Figtree", system-ui, sans-serif; text-wrap: balance; }
-.place { margin: 0 0 24px; color: var(--muted); font-size: 1.0625rem; }
-dl { display: grid; grid-template-columns: max-content 1fr; gap: 10px 20px; margin: 0 0 28px; padding: 18px 20px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
-dt { color: var(--muted); font-size: 0.875rem; font-weight: 600; }
-dd { margin: 0; font-variant-numeric: tabular-nums; }
-.closed { display: inline-block; margin: 0 0 20px; padding: 4px 10px; border-radius: 999px; background: var(--danger-soft); color: var(--on-danger-soft); font-weight: 600; font-size: 0.875rem; }
-.actions { display: flex; flex-wrap: wrap; gap: 12px; }
-.btn { display: inline-flex; align-items: center; min-height: 44px; padding: 10px 18px; border-radius: 8px; font-weight: 600; text-decoration: none; border: 1px solid var(--lead); }
+body { margin: 0; background: var(--page); color: var(--text); font-family: var(--display); font-size: 1.125rem; line-height: 1.45;
+  -webkit-font-smoothing: antialiased; }
+.wrap { max-width: 1120px; margin-inline: auto;
+  padding-inline: max(16px, min(4vw, 40px), env(safe-area-inset-left)) max(16px, min(4vw, 40px), env(safe-area-inset-right)); }
+a { color: var(--lead); text-underline-offset: 3px; }
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.mast { background: var(--lake); color: var(--on-lake); border-bottom: 6px solid var(--stripe); }
+.mast .wrap { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px 20px; min-height: 72px; }
+.brand { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; color: inherit; text-decoration: none;
+  font-weight: 600; font-size: 2rem; letter-spacing: -0.015em; }
+.star { width: 0.7em; height: 0.7em; fill: var(--star); }
+.navlink { display: inline-flex; align-items: center; min-height: 44px; color: inherit; font-family: var(--sign); font-weight: 700;
+  font-size: 1.1875rem; text-decoration: none; }
+.navlink:hover { text-decoration: underline 3px var(--stripe); text-underline-offset: 8px; }
+.mast a:focus-visible { outline-color: var(--stripe); }
+main { padding-bottom: 64px; }
+h1, h2, p { margin: 0; }
+.cat-theater { --cat: var(--cat-theater); } .cat-music { --cat: var(--cat-music); } .cat-art { --cat: var(--cat-art); }
+.cat-none { --cat: var(--lake); }
+.back { display: inline-flex; align-items: center; min-height: 44px; margin-top: 12px; color: var(--text); font-size: 1.1875rem; text-decoration: none; }
+.back:hover { text-decoration: underline; }
+.poster { display: flex; align-items: flex-end; min-height: 300px; margin-top: 4px; padding: clamp(20px, 4vw, 40px);
+  background: var(--cat); color: var(--on-cat); }
+.poster-in { display: grid; gap: 10px; max-width: 920px; min-width: 0; }
+.poster-k { font-family: var(--sign); font-weight: 700; font-size: 1.25rem; line-height: 1.2; }
+.poster h1 { font-weight: 500; font-size: clamp(2.5rem, 6.5vw, 4.5rem); line-height: 0.98; letter-spacing: -0.02em; overflow-wrap: anywhere; text-wrap: balance; }
+.poster-where { font-size: 1.5rem; line-height: 1.25; }
+.ev-main { max-width: 720px; margin-top: 32px; }
+.facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); margin: 0; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
+.facts dt, .facts dd { margin: 0; padding: 12px 0; border-top: 1px solid var(--line); }
+.facts dt:first-of-type, .facts dd:first-of-type { border-top: 0; }
+.facts dt { padding-right: 32px; font-family: var(--sign); font-weight: 700; font-size: 1.125rem; line-height: 1.6; color: var(--muted); }
+.facts dd { font-size: 1.375rem; line-height: 1.3; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.closed { margin-top: 12px; font-family: var(--sign); font-weight: 700; font-size: 1.125rem; color: var(--muted); }
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 24px; }
+.btn { display: inline-flex; align-items: center; min-height: 48px; padding: 0 20px; font-family: var(--sign); font-weight: 700;
+  font-size: 1.1875rem; line-height: 1.1; text-decoration: none; }
 .btn.primary { background: var(--lead); color: var(--on-lead); }
-.btn.secondary { color: var(--lead); }
-.note { margin-top: 36px; color: var(--muted); font-size: 0.875rem; }
-.takes { margin-top: 44px; }
-.takes h2 { margin: 0 0 4px; font: 600 1.375rem/1.2 "Outfit", "Figtree", system-ui, sans-serif; }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn.secondary { color: var(--text); box-shadow: inset 0 0 0 1.5px var(--text); }
+.btn.secondary:hover { background: var(--surface); }
+.takes { margin-top: 48px; }
+.takes h2 { padding-bottom: 6px; border-bottom: 1px solid var(--rule); font-family: var(--sign); font-weight: 700; font-size: 1.375rem; }
 .takes ol { list-style: none; margin: 0; padding: 0; }
-.take { padding: 20px 0; border-bottom: 1px solid var(--line); }
-.take-words { margin: 0 0 6px; font: 600 1.5rem/1.2 "Outfit", "Figtree", system-ui, sans-serif; letter-spacing: -0.01em; overflow-wrap: anywhere; }
-.take-words span + span::before { content: " · "; color: var(--star); }
-.take-review { margin: 0 0 8px; white-space: pre-line; overflow-wrap: anywhere; }
-.take-by { margin: 0; color: var(--muted); font-size: 0.875rem; }
-.take-by b { color: var(--text); font-weight: 600; }
+.take { display: grid; gap: 6px; padding: 16px 0; border-bottom: 1px solid var(--line); }
+.take-words { font-style: italic; font-size: 1.625rem; line-height: 1.2; overflow-wrap: anywhere; }
+.take-words span + span::before { content: " · "; color: var(--muted); font-style: normal; }
+.take-review { white-space: pre-line; overflow-wrap: anywhere; }
+.take-by { font-family: var(--sign); font-weight: 700; font-size: 1rem; color: var(--muted); }
+.take-by b { color: var(--text); }
+.note { margin-top: 48px; color: var(--muted); font-size: 1rem; }
+.lost { padding-top: 48px; }
+.lost h1 { max-width: 18ch; font-weight: 500; font-size: clamp(2.5rem, 6vw, 4rem); line-height: 1; letter-spacing: -0.025em; text-wrap: balance; }
+.deck { max-width: 46ch; margin-top: 14px; font-style: italic; font-size: 1.3125rem; line-height: 1.4; color: var(--muted); }
+@media (max-width: 760px) {
+  .brand { font-size: 1.625rem; } .mast .wrap { min-height: 60px; } .lost { padding-top: 32px; }
+  .poster { min-height: 240px; } .poster-where { font-size: 1.3125rem; }
+}
 """
 
+# Light leads (CC-136); a visitor who chose "Lights down" on the site gets dark here too.
 THEME_SCRIPT = """(function () {
-  var t = "dark";
+  var t = "light";
   try { var s = localStorage.getItem("cc_theme"); if (s === "light" || s === "dark") t = s; } catch (e) {}
   document.documentElement.setAttribute("data-theme", t);
 })();"""
 
-STAR = ('<svg aria-hidden="true" viewBox="0 0 24 24"><polygon points="12,1 14.5,7.67 21.53,6.5 17,12 21.53,17.5 '
+STAR = ('<svg class="star" aria-hidden="true" viewBox="0 0 24 24"><polygon points="12,1 14.5,7.67 21.53,6.5 17,12 21.53,17.5 '
         '14.5,16.33 12,23 9.5,16.33 2.47,17.5 7,12 2.47,6.5 9.5,7.67"></polygon></svg>')
+FONTS = ("https://fonts.googleapis.com/css2?family=Big+Shoulders+Text:wght@600..800"
+         "&family=Newsreader:ital,opsz,wght@0,6..72,400..600;1,6..72,400&display=swap")
+
+_CAT_CLASS = {"Theater": "cat-theater", "Music": "cat-music", "Visual Art": "cat-art"}
+
+
+def cat_class(event: Event) -> str:
+    """CC-151: the class that gives a tile or poster its category field (an opera is Music's)."""
+    return "cat-music" if event.opera else _CAT_CLASS.get(event.category, "cat-none")
 
 
 def _page(title: str, desc: str, canonical: str | None, body: str, extra_head: str = "", noindex: bool = False,
@@ -223,13 +269,13 @@ def _page(title: str, desc: str, canonical: str | None, body: str, extra_head: s
     head += [
         '<link rel="preconnect" href="https://fonts.googleapis.com">',
         '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>',
-        '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400..700&family=Outfit:wght@600&display=swap">',
+        f'<link rel="stylesheet" href="{e(FONTS)}">',
         f"<style>{PAGE_STYLE}</style>",
         extra_head,
     ]
     return ("<!doctype html>\n<html lang=\"en\">\n<head>\n" + "\n".join(h for h in head if h) + "\n</head>\n<body>\n"
-            f'<div class="wrap">\n<header><a class="brand" href="{e(site)}/">{STAR}Culture Crew</a>{nav}</header>\n'
-            f"<main>\n{body}\n</main>\n</div>\n</body>\n</html>\n")
+            f'<header class="mast"><div class="wrap"><a class="brand" href="{e(site)}/">Culture{STAR}Crew</a>{nav}</div></header>\n'
+            f'<main class="wrap">\n{body}\n</main>\n</body>\n</html>\n')
 
 
 def _takes_html(takes: list[dict]) -> str:
@@ -253,20 +299,23 @@ def render_event(event: Event, today: date, takes: list[dict] = ()) -> str:
     closed = is_closed(event, today)
     title = f"{event.title} · {event.venue.name} · Culture Crew"
     desc = description(event, today)
-    rows = [("When", dates_text(event)), ("Price", price_text(event))]  # where is right under the title
-    body = [f'<p class="eyebrow">{e(label(event.category, event.opera))}</p>', f"<h1>{e(event.title)}</h1>",
-            f'<p class="place">{e(place_text(event))}</p>']
+    rows = [("When", dates_text(event)), ("Price", price_text(event))]  # where is on the poster, under the title
+    # CC-151: a small version of the site's event poster (CC-142): the category field with the kicker, title and venue
+    body = [f'<a class="back" href="{e(site)}/">← The listings</a>',
+            f'<div class="poster {cat_class(event)}"><div class="poster-in">'
+            f'<p class="poster-k">{e(label(event.category, event.opera))}</p><h1>{e(event.title)}</h1>'
+            f'<p class="poster-where">{e(place_text(event))}</p></div></div>', '<div class="ev-main">']
+    body.append('<dl class="facts">' + "".join(f"<dt>{e(k)}</dt><dd>{e(v)}</dd>" for k, v in rows) + "</dl>")
     if closed:
         body.append('<p class="closed">This run has closed</p>')
-    body.append("<dl>" + "".join(f"<dt>{e(k)}</dt><dd>{e(v)}</dd>" for k, v in rows) + "</dl>")
-    actions = []
+    # CC-151: the main button opens the event in the site; its tickets page comes second
+    actions = [f'<a class="btn primary" href="{e(_view_link(event))}">Open in Culture Crew</a>']
     if event.url and not closed:
-        actions.append(f'<a class="btn primary" href="{e(event.url)}" rel="noopener">Tickets and showtimes ↗</a>')
-    actions.append(f'<a class="btn {"secondary" if actions else "primary"}" href="{e(_view_link(event))}">Open in Culture Crew</a>')
+        actions.append(f'<a class="btn secondary" href="{e(event.url)}" rel="noopener">Tickets and showtimes ↗</a>')
     body.append(f'<div class="actions">{"".join(actions)}</div>')
     if takes:
         body.append(_takes_html(list(takes)))
-    body.append('<p class="note">Dates and prices change, so check the event’s own page before you go.</p>')
+    body.append('<p class="note">Dates and prices change, so check the event’s own page before you go.</p></div>')
     ld = json_ld(event, today)
     extra = ""
     if ld and not closed:
@@ -277,8 +326,8 @@ def render_event(event: Event, today: date, takes: list[dict] = ()) -> str:
 
 def render_missing() -> str:
     site = escape(get_settings().site_url, quote=True)
-    body = ('<h1>That event isn’t on the list</h1>\n<p class="place">It may have been taken down, or the link is wrong.</p>\n'
-            f'<div class="actions"><a class="btn primary" href="{site}/#catalog">Browse the catalog</a></div>')
+    body = ('<div class="lost"><h1>That event isn’t on the list</h1>\n<p class="deck">It may have been taken down, or the link is wrong.</p>\n'
+            f'<div class="actions"><a class="btn primary" href="{site}/#catalog">Browse the catalog</a></div></div>')
     return _page("Event not found · Culture Crew", "That event isn't on Culture Crew's list.", None, body, noindex=True)
 
 

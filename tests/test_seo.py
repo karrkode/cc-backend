@@ -96,3 +96,36 @@ def test_slug():
     assert slug("Tanya Crane: Embodied Histories—Exploring") == "tanya-crane-embodied-histories-exploring"
     assert slug("Wait Wait... Don't Tell Me!") == "wait-wait-dont-tell-me"
     assert slug("!!!") == "event" and len(slug("word " * 40)) <= 60
+
+
+OLD_LOOK = ("Figtree", "Outfit", "border-radius", "999px", "text-transform", "eyebrow", "pill")
+
+
+def test_event_page_is_a_small_lakefront_poster(client, make_event, db):
+    """CC-151: Lakefront type and shapes, the compact masthead, then the poster on its category field, the facts table
+    and the main button into the site. The link-preview tags and structured data stay as they were."""
+    ev = make_event(title="Tosca", category="Music", venue_name="Lyric Opera", begin=TODAY, end=TODAY + timedelta(days=7))
+    ev.opera = True
+    db.commit()
+    page = client.get(f"/e/{ev.id}-tosca").text
+    for old in OLD_LOOK:
+        assert old not in page, old
+    assert "Newsreader" in page and "Big+Shoulders+Text" in page and 'var t = "light"' in page
+    assert '<header class="mast"><div class="wrap"><a class="brand"' in page and "border-bottom: 6px solid var(--stripe)" in page
+    assert '<div class="poster cat-music"><div class="poster-in"><p class="poster-k">Opera</p><h1>Tosca</h1>' in page
+    assert '<dl class="facts"><dt>When</dt>' in page
+    actions = page.split('<div class="actions">')[1]
+    assert actions.startswith(f'<a class="btn primary" href="http://localhost:4173/#e/{ev.id}">Open in Culture Crew</a>')
+    assert '<a class="btn secondary" href="https://example.org/tosca"' in actions
+    assert "min-height: 48px" in page and ":focus-visible { outline: 3px solid var(--focus)" in page
+    for tag in ('property="og:title" content="Tosca · Lyric Opera · Culture Crew"', 'property="og:image"',
+                'name="twitter:card" content="summary_large_image"', 'rel="canonical"'):
+        assert tag in page
+    assert ld_of(page)["name"] == "Tosca"
+
+
+def test_missing_event_page_is_lakefront_too(client):
+    page = client.get("/e/999999-nope").text
+    for old in OLD_LOOK:
+        assert old not in page, old
+    assert '<div class="lost"><h1>That event isn’t on the list</h1>' in page and 'class="deck"' in page

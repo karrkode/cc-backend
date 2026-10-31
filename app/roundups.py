@@ -18,7 +18,7 @@ from .categories import category_condition, label
 from .config import get_settings
 from .models import AppSetting, Event, Region, Venue
 from .routers.events import _on_between, price_or_usual
-from .seo import _page, path_for, price_text
+from .seo import _page, cat_class, path_for, price_text
 from .visibility import live_condition
 
 INTROS_KEY = "roundup_intros"
@@ -177,8 +177,9 @@ def _short(d: date) -> str:
     return f"{d.strftime('%b')} {d.day}"
 
 
-def _long(d: date) -> str:
-    return f"{d.strftime('%A')}, {_short(d)}"
+def _long(d: date, today: date | None = None) -> str:
+    """"Friday, Oct 30", with the year when it isn't this one (given today)."""
+    return f"{d.strftime('%A')}, {_short(d)}" + (f", {d.year}" if today and d.year != today.year else "")
 
 
 def _when(event: Event, today: date, closing: bool) -> str:
@@ -268,68 +269,79 @@ def set_intro(db, slug: str, text: str) -> None:
 
 # ---- pages -----------------------------------------------------------------
 
+# CC-151: Lakefront rows under day heads, as in the site's listings (CC-140). A tile is the plain category field
+# with its name in white: these pages have no JS, so no water.
 ROUNDUP_STYLE = """
-:root, :root[data-theme="dark"] { --cat-theater: #FDA15C; --cat-music: #C9A2FB; --cat-art: #5FD9A8; }
-:root[data-theme="light"] { --cat-theater: #B84E05; --cat-music: #7A2BC8; --cat-art: #08795A; }
-.wrap { max-width: 880px; }
-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.navlink { display: inline-flex; align-items: center; min-height: 44px; font-weight: 600; text-decoration: none; }
-.meta { margin: 0 0 20px; color: var(--muted); font-size: 1.0625rem; }
-.intro { margin: 0 0 28px; font-size: 1.125rem; max-width: 640px; }
-.intro p { margin: 0 0 12px; }
-.daynav { display: flex; gap: 10px; flex-wrap: wrap; margin: 0 0 40px; }
-.daynav a, .pill { display: inline-flex; align-items: center; min-height: 44px; padding: 0 16px; border: 1px solid var(--line);
-  border-radius: 999px; background: var(--surface); color: var(--text); font-weight: 600; text-decoration: none; }
-.day { margin: 0 0 40px; scroll-margin-top: 16px; }
-.day h2, .more h2, .group h2 { margin: 0 0 14px; font: 600 1.5rem/1.2 "Outfit", "Figtree", system-ui, sans-serif; }
-.rows { list-style: none; margin: 0 0 40px; padding: 0; display: flex; flex-direction: column; gap: 12px; }
-.day .rows { margin: 0; }
-.row { display: grid; grid-template-columns: 112px minmax(0, 1fr) auto; gap: 20px; align-items: start; padding: 18px 20px;
-  background: var(--surface); border: 1px solid var(--line); border-radius: 12px; color: var(--text); text-decoration: none; }
-.row:hover { border-color: var(--muted); }
-.when, .price { font-weight: 600; font-variant-numeric: tabular-nums; }
-.price { text-align: right; }
-.what { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-.cat { display: inline-flex; align-items: center; gap: 8px; font-size: 0.8125rem; font-weight: 600; letter-spacing: 0.06em;
-  text-transform: uppercase; }
-.cat::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
-.cat-theater { color: var(--cat-theater); } .cat-music { color: var(--cat-music); } .cat-art { color: var(--cat-art); }
-.name { font: 600 1.3125rem/1.25 "Outfit", "Figtree", system-ui, sans-serif; overflow-wrap: anywhere; }
-.where, .small { color: var(--muted); }
-.small { font-size: 0.875rem; }
-.panel { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding: 24px;
-  background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
-.panel p { margin: 0; font-size: 1.0625rem; }
-.empty { flex-direction: column; align-items: flex-start; margin: 0 0 40px; }
-.empty h2 { margin: 0; font: 600 1.3125rem/1.25 "Outfit", "Figtree", system-ui, sans-serif; }
-.more { margin-top: 56px; padding-top: 28px; border-top: 1px solid var(--line); }
-.more .cols { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; }
-.more ul, .group ul { list-style: none; margin: 0; padding: 0; }
-.more li a, .group li a { display: inline-flex; align-items: center; min-height: 36px; font-weight: 500; text-decoration: none; }
-.group { margin: 0 0 32px; }
-.group .count { color: var(--muted); font-weight: 400; }
-@media (max-width: 600px) {
-  .row { grid-template-columns: 1fr auto; gap: 4px 12px; padding: 16px; }
-  .what { grid-column: 1 / -1; grid-row: 1; }
-  .when, .price { grid-row: 2; margin-top: 4px; }
-  .name { font-size: 1.1875rem; }
+.head { padding-top: 48px; }
+.kicker { font-family: var(--sign); font-weight: 700; font-size: 1.125rem; color: var(--muted); }
+.head h1 { margin-top: 6px; max-width: 20ch; font-weight: 500; font-size: clamp(2.5rem, 6vw, 4rem); line-height: 1;
+  letter-spacing: -0.025em; text-wrap: balance; }
+.meta { margin-top: 12px; font-family: var(--sign); font-weight: 700; font-size: 1.1875rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.intro { max-width: 60ch; margin-top: 14px; font-style: italic; font-size: 1.3125rem; line-height: 1.4; color: var(--muted); }
+.intro p + p { margin-top: 10px; }
+.daynav { display: flex; flex-wrap: wrap; margin-top: 24px; padding-left: 1.5px; }
+.daynav a { display: inline-flex; align-items: center; min-height: 44px; margin-left: -1.5px; padding: 0 18px; color: var(--text);
+  box-shadow: inset 0 0 0 1.5px var(--text); font-family: var(--sign); font-weight: 700; font-size: 1.1875rem; text-decoration: none; }
+.daynav a:hover { background: var(--surface); }
+.days { margin-top: 48px; }
+.day + .day { margin-top: 32px; }
+.day { scroll-margin-top: 16px; }
+.day-head { padding-bottom: 6px; border-bottom: 1px solid var(--rule); font-family: var(--sign); font-weight: 700; font-size: 1.25rem; line-height: 1.2; }
+.rows { list-style: none; margin: 0; padding: 0; }
+.row { display: grid; grid-template-columns: 112px 150px minmax(0, 1fr) 110px; gap: 20px; align-items: center; min-height: 44px;
+  padding: 12px 0; border-bottom: 1px solid var(--line); color: var(--text); text-decoration: none; }
+.tile { position: relative; display: block; width: 112px; height: 76px; background: var(--cat); color: var(--on-cat); }
+.tile-k { position: absolute; left: 6px; bottom: 5px; max-width: calc(100% - 12px); padding: 0 4px; font-family: var(--sign);
+  font-weight: 700; font-size: 15px; line-height: 1.15; }
+.what { display: grid; gap: 3px; min-width: 0; grid-column: 3; grid-row: 1; }
+.name { font-size: 26px; font-weight: 500; line-height: 1.12; overflow-wrap: anywhere; text-decoration: underline transparent;
+  text-decoration-thickness: 1px; text-underline-offset: 5px; transition: text-decoration-color 0.15s ease; }
+.row:hover .name, .row:focus-visible .name { text-decoration-color: currentColor; }
+.where { font-size: 1rem; color: var(--muted); }
+.small { font-family: var(--sign); font-weight: 700; font-size: 1rem; color: var(--muted); }
+.facts-line { display: contents; }
+.when, .price { font-family: var(--sign); font-weight: 700; font-size: 19px; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.when { grid-column: 2; grid-row: 1; }
+.price { grid-column: 4; grid-row: 1; text-align: right; overflow-wrap: anywhere; }
+.panel { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; margin-top: 48px; padding: 24px;
+  background: var(--surface); }
+.panel p { max-width: 52ch; }
+.panel h2 { font-weight: 600; font-size: 1.75rem; line-height: 1.15; }
+.empty { flex-direction: column; align-items: flex-start; }
+.more { margin-top: 64px; }
+.more h2, .group h2 { font-weight: 600; font-size: 2.5rem; line-height: 1.1; letter-spacing: -0.015em; }
+.more-group { display: grid; grid-template-columns: 9rem minmax(0, 1fr); gap: 0 20px; align-items: baseline; padding: 4px 0;
+  border-bottom: 1px solid var(--line); }
+.more-group:first-of-type { margin-top: 16px; border-top: 1px solid var(--rule); }
+.more-k { font-family: var(--sign); font-weight: 700; font-size: 1.125rem; color: var(--muted); }
+.more ul { display: flex; flex-wrap: wrap; gap: 0 24px; list-style: none; margin: 0; padding: 0; }
+.more li a { display: inline-flex; align-items: center; min-height: 44px; color: var(--text); text-underline-offset: 5px; }
+.more li a[aria-current="page"] { font-weight: 600; text-decoration: underline 3px var(--stripe); text-underline-offset: 8px; }
+.group { margin-top: 48px; }
+.group ul { list-style: none; margin: 16px 0 0; padding: 0; border-top: 1px solid var(--rule); }
+.way { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 4px 16px; min-height: 44px; padding: 12px 0;
+  border-bottom: 1px solid var(--line); color: var(--text); text-decoration: none; }
+.way-name { font-size: 1.75rem; font-weight: 500; line-height: 1.15; }
+.way:hover .way-name { text-decoration: underline 1px; text-underline-offset: 5px; }
+.count { font-family: var(--sign); font-weight: 700; font-size: 1.125rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+@media (max-width: 700px) {
+  .head { padding-top: 32px; }
+  .row { grid-template-columns: 76px minmax(0, 1fr); gap: 4px 12px; align-items: start; }
+  .tile { width: 76px; height: 76px; grid-row: span 2; }
+  .what { grid-column: 2; grid-row: 1; }
+  .name { font-size: 21px; }
+  .facts-line { display: flex; flex-wrap: wrap; grid-column: 2; justify-content: space-between; align-items: baseline; gap: 4px 8px; }
+  .when, .price { grid-column: auto; grid-row: auto; font-size: 1rem; }
   .panel { flex-direction: column; align-items: stretch; }
   .panel .btn { justify-content: center; }
-  .more .cols { grid-template-columns: 1fr; gap: 16px; }
-  .more li { display: inline; margin-right: 18px; }
-  .more li a { min-height: 44px; }
+  .more h2, .group h2 { font-size: 2rem; }
+  .more-group { grid-template-columns: minmax(0, 1fr); padding: 8px 0 4px; }
 }
 """
-
-_CAT_CLASS = {"Theater": "cat-theater", "Music": "cat-music", "Visual Art": "cat-art"}
 
 
 def _e(s: str) -> str:
     return escape(s, quote=True)
-
-
-def _cat_class(event: Event) -> str:
-    return "cat-music" if event.opera else _CAT_CLASS.get(event.category, "")
 
 
 def _row(event: Event, when: str, note: str = "") -> str:
@@ -337,22 +349,39 @@ def _row(event: Event, when: str, note: str = "") -> str:
     note_html = f'<span class="small">{_e(note)}</span>' if note else ""
     where = event.venue.name + (f" · {event.venue.neighborhood.strip()}" if event.venue.neighborhood.strip() else "")
     return (f'<li><a class="row" href="{_e(site + path_for(event))}">'
-            f'<span class="when">{_e(when)}</span>'
-            f'<span class="what"><span class="cat {_cat_class(event)}">{_e(label(event.category, event.opera))}</span>'
-            f'<span class="name">{_e(event.title)}</span><span class="where">{_e(where)}</span>{note_html}</span>'
-            f'<span class="price">{_e(_price(event))}</span></a></li>')
+            f'<span class="tile {cat_class(event)}"><span class="tile-k">{_e(label(event.category, event.opera))}</span></span>'
+            f'<span class="what"><span class="name">{_e(event.title)}</span><span class="where">{_e(where)}</span>{note_html}</span>'
+            f'<span class="facts-line"><span class="when">{_e(when)}</span><span class="price">{_e(_price(event))}</span></span></a></li>')
+
+
+def _day_head(event: Event, today: date, closing: bool) -> str:
+    """The head a row sits under, as in the site's listings (CC-140): the day it opens, or the day it closes."""
+    b, e = event.begin_date, event.end_date
+    if closing:
+        return "Closes today" if e == today else f"Closing {_long(e, today)}"
+    return f"Opening {_long(b, today)}" if b and b > today else "On now"
+
+
+def _days_html(heads: list[tuple[date | None, str, list[str]]]) -> str:
+    """(day, head, rows) per head. The weekend's days have ids, for the day links."""
+    sections = []
+    for d, h, rows in heads:
+        ids = (f' id="{d.strftime("%a").lower()}" aria-labelledby="h-{d.isoformat()}"', f' id="h-{d.isoformat()}"') if d else ("", "")
+        sections.append(f'<section class="day"{ids[0]}><h2 class="day-head"{ids[1]}>{_e(h)}</h2>'
+                        f'<ol class="rows">{"".join(rows)}</ol></section>')
+    return '<div class="days">' + "".join(sections) + "</div>"
 
 
 def _more_html(current: str | None) -> str:
     site = get_settings().site_url
-    cols = []
+    groups = []
     for group in dict.fromkeys(r.group for r in ROUNDUPS):
         links = "".join(f'<li><a href="{_e(site)}/chicago/{r.slug}"'
                         + (' aria-current="page"' if r.slug == current else "") + f">{_e(r.name)}</a></li>"
                         for r in ROUNDUPS if r.group == group)
-        cols.append(f'<div><p class="eyebrow">{_e(group)}</p><ul>{links}</ul></div>')
+        groups.append(f'<div class="more-group"><p class="more-k">{_e(group)}</p><ul>{links}</ul></div>')
     return (f'<footer class="more" aria-labelledby="more-h"><h2 id="more-h">More roundups</h2>'
-            f'<div class="cols">{"".join(cols)}</div></footer>')
+            f'{"".join(groups)}</footer>')
 
 
 def _nav() -> str:
@@ -376,19 +405,20 @@ def _count_text(n: int) -> str:
 def render_roundup(db, r: Roundup, today: date) -> str:
     site = get_settings().site_url
     events = matching(db, r, today)
-    body = ['<p class="eyebrow">Chicago roundup</p>', f"<h1>{_e(r.h1)}</h1>"]
+    head = ['<div class="head"><p class="kicker">Chicago roundup</p>', f"<h1>{_e(r.h1)}</h1>"]
     if r.slug == WEEKEND:
         days = weekend_days(events, today)
         total = sum(len(evs) for _, evs in days)
         span = _long(days[0][0]) + (f" to {_long(days[-1][0])}" if len(days) > 1 else "")
-        body.append(f'<p class="meta">{_e(span)} · {_count_text(total)}</p>')
+        head.append(f'<p class="meta">{_e(span)} · {_count_text(total)}</p>')
     else:
         total = len(events)
         meta = _count_text(total)
         if r.closing:
             meta = f"Ending by {_long(today + timedelta(days=CLOSING_DAYS - 1))} · {meta}"
-        body.append(f'<p class="meta">{_e(meta)}</p>')
-    body.append(_intro_html(intro_of(db, r)))
+        head.append(f'<p class="meta">{_e(meta)}</p>')
+    head.append(_intro_html(intro_of(db, r)))
+    body = []
 
     shown = 0
     if total == 0:
@@ -400,18 +430,18 @@ def render_roundup(db, r: Roundup, today: date) -> str:
         for d, evs in days:
             if evs:  # each day gets its share, so a busy Friday can't crowd out Sunday
                 rows = [_row(ev, _when_on(ev, d, times), _note(ev, today)) for ev, times in evs[:DAY_MAX]]
-                sections.append((d, rows))
+                sections.append((d, _long(d), rows))
                 shown += len(rows)
         if len(sections) > 1:
-            body.append('<nav class="daynav" aria-label="Days">' + "".join(
-                f'<a href="#{d.strftime("%a").lower()}">{d.strftime("%A")}</a>' for d, _ in sections) + "</nav>")
-        body += [f'<section class="day" id="{d.strftime("%a").lower()}" aria-labelledby="h-{d.isoformat()}">'
-                 f'<h2 id="h-{d.isoformat()}">{_e(_long(d))}</h2><ol class="rows">{"".join(rows)}</ol></section>'
-                 for d, rows in sections]
+            head.append('<nav class="daynav" aria-label="Days">' + "".join(
+                f'<a href="#{d.strftime("%a").lower()}">{d.strftime("%A")}</a>' for d, _, _ in sections) + "</nav>")
+        body.append(_days_html(sections))
     else:
-        rows = [_row(ev, _when(ev, today, r.closing)) for ev in events[:SHOWN_MAX]]
-        shown = len(rows)
-        body.append(f'<ol class="rows">{"".join(rows)}</ol>')
+        grouped: dict[str, list[str]] = {}  # in order of first appearance; matching() sorts soonest first
+        for ev in events[:SHOWN_MAX]:
+            grouped.setdefault(_day_head(ev, today, r.closing), []).append(_row(ev, _when(ev, today, r.closing)))
+        shown = min(total, SHOWN_MAX)
+        body.append(_days_html([(None, h, rows) for h, rows in grouped.items()]))
 
     if total > shown:
         body.append(_catalog_panel(f"That’s {shown} of {total}. The catalog has them all, with filters."))
@@ -419,18 +449,18 @@ def render_roundup(db, r: Roundup, today: date) -> str:
         body.append(_catalog_panel("Want more? The catalog has every event, with filters for price, day and side of town."))
     body.append('<p class="note">Dates and prices change, so check the event’s own page before you go.</p>')
     body.append(_more_html(r.slug))
-    return _page(f"{r.title} · Culture Crew", r.description, f"{site}/chicago/{r.slug}", "\n".join(body),
-                 f"<style>{ROUNDUP_STYLE}</style>", nav=_nav())
+    return _page(f"{r.title} · Culture Crew", r.description, f"{site}/chicago/{r.slug}",
+                 "\n".join(head) + "</div>\n" + "\n".join(body), f"<style>{ROUNDUP_STYLE}</style>", nav=_nav())
 
 
 def render_index(db, today: date) -> str:
     site = get_settings().site_url
-    body = ['<p class="eyebrow">Chicago roundups</p>', "<h1>What’s on in Chicago</h1>",
+    body = ['<div class="head"><p class="kicker">Chicago roundups</p>', "<h1>What’s on in Chicago</h1>",
             '<div class="intro"><p>Theater, music and art in Chicago, gathered by when, price, kind and side of town. '
-            "Each list keeps itself up to date from the catalog.</p></div>"]
+            "Each list keeps itself up to date from the catalog.</p></div></div>"]
     for group in dict.fromkeys(r.group for r in ROUNDUPS):
-        links = "".join(f'<li><a href="{_e(site)}/chicago/{r.slug}">{_e(r.name)}</a> '
-                        f'<span class="count">· {_count_text(count(db, r, today))}</span></li>'
+        links = "".join(f'<li><a class="way" href="{_e(site)}/chicago/{r.slug}"><span class="way-name">{_e(r.name)} →</span>'
+                        f'<span class="count">{_count_text(count(db, r, today))}</span></a></li>'
                         for r in ROUNDUPS if r.group == group)
         body.append(f'<section class="group"><h2>{_e(group)}</h2><ul>{links}</ul></section>')
     body.append(_catalog_panel("The catalog has every event, with filters for price, day and side of town."))
@@ -442,8 +472,8 @@ def render_index(db, today: date) -> str:
 
 def render_unknown() -> str:
     site = _e(get_settings().site_url)
-    body = ('<h1>That roundup isn’t here</h1>\n<p class="place">The link may be wrong, or the page has moved.</p>\n'
-            f'<div class="actions"><a class="btn primary" href="{site}/chicago/">See all roundups</a></div>')
+    body = ('<div class="lost"><h1>That roundup isn’t here</h1>\n<p class="deck">The link may be wrong, or the page has moved.</p>\n'
+            f'<div class="actions"><a class="btn primary" href="{site}/chicago/">See all roundups</a></div></div>')
     return _page("Roundup not found · Culture Crew", "That roundup isn't on Culture Crew.", None, body,
                  f"<style>{ROUNDUP_STYLE}</style>", noindex=True, nav=_nav())
 
