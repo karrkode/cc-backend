@@ -7,9 +7,13 @@ draft for the Suggest form; nothing is saved but a line in the discovery log.
 - Only http(s) links to public hosts, checked again on every redirect: no localhost, private networks or the
   cloud's internal addresses (SSRF).
 - A few links a minute and a few dozen a day per member.
+- CC-182: the page is fetched and read in a process of its own, stopped at DEADLINE, so no page can hold up the
+  API's other requests. Only Claude's read (when there's no event data) runs in the request itself.
 """
 import ipaddress
+import multiprocessing
 import socket
+import threading
 from datetime import date
 from functools import lru_cache
 from time import monotonic
@@ -29,12 +33,16 @@ from .ratelimit import SlidingWindowLimiter
 PER_MINUTE, PER_DAY = 4, 30
 minute_limiter, day_limiter = SlidingWindowLimiter(60), SlidingWindowLimiter(24 * 3600)
 TIMEOUT = 10  # a member is waiting: discovery's 25 seconds is too long
+# CC-182: the most fetching and reading one page may take in all, the most of it that's downloaded, and how many
+# pages are read at once (a process each, on a small server)
+DEADLINE, MAX_BYTES, READERS = 15, 3_000_000, threading.BoundedSemaphore(3)
 RUN_DATES_MAX = 30  # as many dated shows as a fixed run takes (schemas.RUN_DATES_MAX)
 NOTE = ("\n\nThis page was sent in by a member suggesting one event, so there's no usual venue: give each event's "
         "venue_name as the page states it. List the event the page is about first.")
 WHY = {"blocked": "That site doesn't let us read its pages automatically.",
        "error": "We couldn't open that page.",
-       "none": "We couldn't find an event on that page."}
+       "none": "We couldn't find an event on that page.",
+       "busy": "We're reading a lot of links right now. Try again in a minute."}
 
 
 class PrivateAddress(web.Blocked):
@@ -110,49 +118,104 @@ def _log(db, status: str, url: str, tin: int = 0, tout: int = 0, note: str = "")
     db.commit()
 
 
+def fetch_and_read(url: str) -> tuple[str, object]:
+    """CC-182: everything the page itself decides: fetching it (robots.txt and redirects included) and reading its
+    event data, or its text for Claude. ("ok", what was read) or (why, detail); run in its own process."""
+    started = monotonic()
+    try:
+        page = web.fetch(url, ai=False, check=check_public, timeout=TIMEOUT, deadline=started + DEADLINE - 1,
+                         max_bytes=MAX_BYTES, wait=False)
+        events = events_in(page.text, page.url, "")
+        got = {"url": page.url, "others": max(len(events) - 1, 0),
+               "ai_opt_out": web.robots_for(page.url, check_public, TIMEOUT).ai_opt_out}  # already fetched: no request
+        if events:
+            found = _pick(events, page.url)
+            got["place"] = event_places(page.text).get(norm_title(found.title), {})
+            got["found"] = found.model_copy(update={"title": visible_title(found.title, page.text)}).model_dump()
+        else:
+            got["text"] = page_text(page.text, page.url)[0]
+        return "ok", got
+    except PrivateAddress as e:
+        return "private", str(e)
+    except web.Blocked as e:
+        return "blocked", str(e)
+    except web.FetchError as e:
+        return "error", str(e)
+    except Exception as e:  # noqa: BLE001 - a page that breaks the reader is a page we couldn't read, not a server error
+        return "error", f"couldn't read the page ({type(e).__name__})"
+
+
+@lru_cache(maxsize=1)
+def _workers():
+    """Processes forked from a small server process that has the reader loaded, not from the API itself."""
+    ctx = multiprocessing.get_context("forkserver")
+    ctx.set_forkserver_preload(["app.fromlink"])
+    return ctx
+
+
+def _child(conn, work, url):
+    try:
+        conn.send(work(url))
+    finally:
+        conn.close()
+
+
+def bounded_read(url: str, work=fetch_and_read) -> tuple[str, object]:
+    """work(url) in a process of its own, stopped if it takes longer than DEADLINE."""
+    if not READERS.acquire(blocking=False):
+        return "busy", "too many links being read at once"
+    try:
+        ctx = _workers()
+        recv, send = ctx.Pipe(duplex=False)
+        proc = ctx.Process(target=_child, args=(send, work, url), daemon=True)
+        proc.start()
+        send.close()
+        try:
+            if recv.poll(DEADLINE):
+                return recv.recv()
+            return "error", f"reading the page took over {DEADLINE} seconds"
+        except EOFError:
+            return "error", "the page reader stopped"
+        finally:
+            recv.close()
+            proc.kill()
+            proc.join()
+    finally:
+        READERS.release()
+
+
 def read_link(db, url: str, today: date) -> dict:
     """The draft for url, or raise PrivateAddress / Unreadable."""
     check_public(url)
+    why, got = bounded_read(url)
+    if why == "private":
+        raise PrivateAddress(got)
+    if why != "ok":
+        _log(db, "error" if why == "busy" else why, url, note=got)
+        raise Unreadable(why, got)
+    if "found" in got:
+        _log(db, "ok", url, note="read from the page's event data")
+        return _draft(db, FoundEvent.model_validate(got["found"]), url, got["place"], "page", today, others=got["others"])
+    state, _, _ = budget_state(db)
+    client = claude_client() if state != "paused" else None
+    if client is None or got["ai_opt_out"]:
+        note = "no event data on the page" + (", and no Claude read" if client is None else ", and the site opts out of AI")
+        _log(db, "none", url, note=note)
+        raise Unreadable("none", note)
+    if not got["text"].strip():
+        _log(db, "none", url, note="the page has no text")
+        raise Unreadable("none", "the page has no text")
     try:
-        page = web.fetch(url, ai=False, check=check_public, timeout=TIMEOUT)
-        events, how = events_in(page.text, page.url, ""), "page"
-        if not events:
-            state, _, _ = budget_state(db)
-            client = claude_client() if state != "paused" else None
-            if client is None or web.robots_for(page.url, check_public, TIMEOUT).ai_opt_out:
-                raise Unreadable("none", "no event data on the page" + (", and no Claude read" if client is None else
-                                                                         ", and the site opts out of AI"))
-            text, _ = page_text(page.text, page.url)
-            if not text.strip():
-                raise Unreadable("none", "the page has no text")
-            try:
-                reading, tin, tout = read_page(client, "a page a member sent in", "an event page", page.url, text, today, NOTE)
-            except Exception as e:  # noqa: BLE001 - a failed read is a page we couldn't read, not a server error
-                raise Unreadable("error", f"Claude: {type(e).__name__}: {e}") from e
-            events = [e for e in reading.events if e.kind not in ("rental", "members_only", "permanent")]
-            _log(db, "ok" if events else "none", url, tin, tout)
-            how = "claude"
-            if not events:
-                raise Unreadable("none")
-        else:
-            _log(db, "ok", url, note="read from the page's event data")
-    except PrivateAddress:
-        raise
-    except web.Blocked as e:
-        _log(db, "blocked", url, note=str(e))
-        raise Unreadable("blocked", str(e)) from e
-    except web.FetchError as e:
-        _log(db, "error", url, note=str(e))
-        raise Unreadable("error", str(e)) from e
-    except Unreadable as e:
-        if e.why != "none" or how == "page":
-            _log(db, e.why if e.why != "none" else "none", url, note=str(e))
-        raise
-    found = _pick(events, page.url)
-    place = event_places(page.text).get(norm_title(found.title), {}) if how == "page" else {}
-    if how == "page":
-        found = found.model_copy(update={"title": visible_title(found.title, page.text)})
-    return _draft(db, found, url, place, how, today, others=len(events) - 1)
+        reading, tin, tout = read_page(client, "a page a member sent in", "an event page", got["url"], got["text"],
+                                       today, NOTE)
+    except Exception as e:  # noqa: BLE001 - a failed read is a page we couldn't read, not a server error
+        _log(db, "error", url, note=f"Claude: {type(e).__name__}: {e}")
+        raise Unreadable("error", f"Claude: {type(e).__name__}: {e}") from e
+    events = [e for e in reading.events if e.kind not in ("rental", "members_only", "permanent")]
+    _log(db, "ok" if events else "none", url, tin, tout)
+    if not events:
+        raise Unreadable("none")
+    return _draft(db, _pick(events, got["url"]), url, {}, "claude", today, others=len(events) - 1)
 
 
 def _host(url: str) -> str:
