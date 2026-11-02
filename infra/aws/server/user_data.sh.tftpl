@@ -39,10 +39,23 @@ cat > /etc/culture-crew/Caddyfile <<'CADDY'
 
 ${api_domain} {
 	encode zstd gzip
+	# CC-183: refuse huge bodies before they reach the API. The largest real one is a 3 MB photo.
+	request_body {
+		max_size 4MB
+	}
 	reverse_proxy api:8000
 	header {
 		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
 		-Server
+	}
+	# CC-183: JSON answers never need to load anything or be framed. The API's HTML pages
+	# (events, roundups, docs) are left alone.
+	header Content-Security-Policy "default-src 'none'; frame-ancestors 'none'" {
+		match {
+			header Content-Type application/json*
+		}
 	}
 }
 CADDY
