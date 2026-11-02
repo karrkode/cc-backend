@@ -50,7 +50,8 @@ def page_text(html: str, url: str) -> tuple[str, bool]:
     text = re.sub(r" ?\n[ \n]*", "\n", text).strip()
     # drop links that point off the venue's own site (social media, ticketing ads) to save space
     host = urlsplit(url).netloc.removeprefix("www.")
-    text = re.sub(r" ?<(https?://[^>\s]+)>", lambda m: f" <{m.group(1)}>" if host in urlsplit(m.group(1)).netloc else "", text)
+    # CC-182: an address stops at the next "<" too, so each match ends where the next can start
+    text = re.sub(r" ?<(https?://[^<>\s]+)>", lambda m: f" <{m.group(1)}>" if host in urlsplit(m.group(1)).netloc else "", text)
     return (text[:MAX_CHARS], True) if len(text) > MAX_CHARS else (text, False)
 
 

@@ -29,7 +29,7 @@ def web_pages(monkeypatch):
     """Pages by url; every host is public unless a test says otherwise; robots.txt allows everything."""
     served = {}
 
-    def fake_fetch(url, etag="", last_modified="", ai=True, check=None, timeout=25):
+    def fake_fetch(url, etag="", last_modified="", ai=True, check=None, timeout=25, **limits):
         if check:
             check(url)
         got = served[url]
@@ -39,6 +39,7 @@ def web_pages(monkeypatch):
     monkeypatch.setattr(web, "fetch", fake_fetch)
     monkeypatch.setattr(web, "robots_for", lambda url, check=None, timeout=25: Robots([], [], 0.0, served.get("ai_opt_out", False)))
     monkeypatch.setattr(fromlink, "_addresses", lambda host, port: ["93.184.215.14"])
+    monkeypatch.setattr(fromlink, "bounded_read", fromlink.fetch_and_read)  # in this process, so the fakes apply (CC-182)
     return served
 
 

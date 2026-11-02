@@ -19,7 +19,12 @@ from urllib.parse import urljoin
 from .readers import FoundEvent, Performance
 from .rules import norm_title
 
-SCRIPTS = re.compile(r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', re.S | re.I)
+# CC-182: tags are found by plain searches that only move forward, so reading a page takes time in proportion to
+# its size whatever its markup; and at most MAX_DATA characters of event data are parsed
+SCRIPT_OPEN, SCRIPT_CLOSE = re.compile("<script", re.I), re.compile("</script", re.I)
+LD_TYPE = re.compile(r'type=["\']application/ld\+json["\']', re.I)
+MAX_TAG = 4_000  # an opening tag longer than this isn't one we read
+MAX_DATA = 1_000_000
 CANCELLED = ("EventCancelled", "EventPostponed")
 # by source kind: (kind, category); CC-125: opera is Music (and marked opera when stored), museums Visual Art
 BY_SOURCE = {"theater": ("production", "Theater"), "opera": ("production", "Music"), "music": ("concert", "Music"),
@@ -27,16 +32,55 @@ BY_SOURCE = {"theater": ("production", "Theater"), "opera": ("production", "Musi
 MERGE_SAME_TITLE = {"theater", "opera", "museum"}  # one event per production or exhibition; concerts and comedy are one per night
 
 
+def _tags(page_html: str, opening, closing=None):
+    """(opening tag, its content up to the closing tag) for each tag that opening finds. Each search starts where
+    the last one ended."""
+    pos = 0
+    while (m := opening.search(page_html, pos)):
+        end = page_html.find(">", m.end())
+        if end < 0:
+            return
+        tag, pos = page_html[m.start():end + 1], end + 1
+        if len(tag) > MAX_TAG:
+            continue
+        if closing is None:
+            yield tag, ""
+            continue
+        c = closing.search(page_html, pos)
+        if not c:
+            return
+        yield tag, page_html[pos:c.start()]
+        pos = c.end()
+
+
+def _blocks(page_html: str):
+    """The parsed JSON of each ld+json block, up to MAX_DATA characters in all. Blocks that don't parse, or don't
+    fit in what's left, are skipped."""
+    left = MAX_DATA
+    for tag, block in _tags(page_html or "", SCRIPT_OPEN, SCRIPT_CLOSE):
+        if not LD_TYPE.search(tag):
+            continue
+        block = block.strip()
+        if len(block) > left:
+            continue
+        left -= len(block)
+        try:
+            yield json.loads(html.unescape(block) if "&quot;" in block else block)
+        except (ValueError, RecursionError):
+            continue
+
+
 def _objects(data):
-    """Every JSON object in a ld+json block, @graph and nested lists included."""
-    if isinstance(data, list):
-        for x in data:
-            yield from _objects(x)
-    elif isinstance(data, dict):
-        yield data
-        for key in ("@graph", "subEvent", "itemListElement", "item"):
-            if key in data:
-                yield from _objects(data[key])
+    """Every JSON object in a ld+json block, @graph and nested lists included, in page order. CC-182: walked with a
+    list rather than by recursion, so deep nesting can't run out of stack."""
+    todo = [data]
+    while todo:
+        x = todo.pop()
+        if isinstance(x, list):
+            todo += reversed(x)
+        elif isinstance(x, dict):
+            yield x
+            todo += [x[key] for key in ("item", "itemListElement", "subEvent", "@graph") if key in x]
 
 
 def _is_event(obj: dict) -> bool:
@@ -66,8 +110,8 @@ def _price(offers) -> tuple[str, float | None]:
             continue
         for key in ("price", "lowPrice", "highPrice"):
             try:
-                if o.get(key) not in (None, ""):
-                    prices.append(Decimal(str(o[key]).replace("$", "").replace(",", "")))
+                if o.get(key) not in (None, "") and _sane(d := Decimal(str(o[key])[:40].replace("$", "").replace(",", ""))):
+                    prices.append(d)
             except InvalidOperation:
                 pass
     if not prices:
@@ -77,6 +121,11 @@ def _price(offers) -> tuple[str, float | None]:
         return "Free", 0.0
     text = f"${_money(lo)}" if lo == hi else f"${_money(lo)}–${_money(hi)}"
     return text, float(lo)
+
+
+def _sane(d: Decimal) -> bool:
+    """CC-182: a finite price under a million (to the cent or so); anything else isn't a ticket price."""
+    return d.is_finite() and d >= 0 and (d == 0 or -4 <= d.adjusted() <= 6)
 
 
 def _money(d: Decimal) -> str:
@@ -90,11 +139,7 @@ def _text(v) -> str:
 def events_in(page_html: str, page_url: str, source_kind: str) -> list[FoundEvent]:
     kind, category = BY_SOURCE.get(source_kind, ("other", None))
     raw = []
-    for block in SCRIPTS.findall(page_html or ""):
-        try:
-            data = json.loads(html.unescape(block.strip()) if "&quot;" in block else block.strip())
-        except ValueError:
-            continue
+    for data in _blocks(page_html):
         raw += [o for o in _objects(data) if _is_event(o) and _text(o.get("name"))]
     events: dict[str, FoundEvent] = {}
     for o in raw:
@@ -148,11 +193,7 @@ def event_places(page_html: str) -> dict[str, dict]:
     """By normalized event name: its venue name, town, category (from its schema.org type) and whether the page gives
     a closing date (events_in takes the opening date for a missing one, which a member's link shouldn't)."""
     found = {}
-    for block in SCRIPTS.findall(page_html or ""):
-        try:
-            data = json.loads(html.unescape(block.strip()) if "&quot;" in block else block.strip())
-        except ValueError:
-            continue
+    for data in _blocks(page_html):
         for o in _objects(data):
             if not (_is_event(o) and _text(o.get("name"))):
                 continue
@@ -166,8 +207,9 @@ def event_places(page_html: str) -> dict[str, dict]:
 
 # CC-134: the page's own title, which a visitor sees, against its event data, which can be out of date (Goodman's
 # "A Christmas Carol 2026" page calls its event "A Christmas Carol 2027")
-TITLE = re.compile(r"<title[^>]*>(.*?)</title>", re.S | re.I)
-OG_TITLE = re.compile(r'<meta[^>]+(?:property|name)=["\']og:title["\'][^>]*>', re.I)
+TITLE_OPEN, TITLE_CLOSE = re.compile("<title", re.I), re.compile("</title", re.I)
+META, OG_TITLE = re.compile("<meta", re.I), re.compile(r'(?:property|name)=["\']og:title["\']', re.I)
+MAX_TITLES, TITLE_CHARS = 10, 300  # CC-182: the page's few titles, each compared at the length a title is kept
 CONTENT = re.compile(r'content=["\']([^"\']*)["\']', re.I)
 SUFFIX = re.compile(r"\s+[-|–—]\s+[^-|–—]*$")  # " - Goodman Theatre"
 SAME_SHOW = 0.8  # how alike the two must be: a different year or a typo, not a list page's own title
@@ -175,13 +217,9 @@ SAME_SHOW = 0.8  # how alike the two must be: a different year or a typo, not a 
 
 def page_titles(page_html: str) -> list[str]:
     """The page's <title>, og:title, WebPage name and last breadcrumb, as written."""
-    found = [m.group(1) for m in TITLE.finditer(page_html or "")][:1]
-    found += [c.group(1) for m in OG_TITLE.finditer(page_html or "") if (c := CONTENT.search(m.group(0)))]
-    for block in SCRIPTS.findall(page_html or ""):
-        try:
-            data = json.loads(html.unescape(block.strip()) if "&quot;" in block else block.strip())
-        except ValueError:
-            continue
+    found = [content for _, content in _tags(page_html or "", TITLE_OPEN, TITLE_CLOSE)][:1]
+    found += [c.group(1) for tag, _ in _tags(page_html or "", META) if OG_TITLE.search(tag) and (c := CONTENT.search(tag))]
+    for data in _blocks(page_html):
         for o in _objects(data):
             if o.get("@type") == "WebPage":
                 found.append(o.get("name"))
@@ -190,7 +228,7 @@ def page_titles(page_html: str) -> list[str]:
                 if isinstance(last, dict):
                     item = last.get("item")
                     found.append(last.get("name") or (item.get("name") if isinstance(item, dict) else None))
-    return [t for t in (_text(f) for f in found if isinstance(f, str)) if t]
+    return [t for t in (_text(f[:5 * TITLE_CHARS])[:TITLE_CHARS] for f in found if isinstance(f, str)) if t][:MAX_TITLES]
 
 
 def visible_title(name: str, page_html: str) -> str:

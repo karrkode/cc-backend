@@ -9,6 +9,7 @@
 There is no logging in, no pretending to be a browser and no retrying around a refusal: a refused
 page is reported as blocked, for a person to check by hand.
 """
+import codecs
 import time
 import urllib.error
 import urllib.request
@@ -20,6 +21,9 @@ AI_AGENTS = {"claudebot", "anthropic-ai", "claude-web", "claude-searchbot"}
 TIMEOUT = 25
 MAX_BYTES = 6_000_000
 MIN_GAP_SECONDS = 3
+# CC-182: the charsets a page may name; any other is read as utf-8
+CHARSETS = {"utf-8", "iso8859-1", "cp1252", "ascii"}
+CHUNK = 64_000
 
 _robots: dict[str, "Robots"] = {}
 _last_hit: dict[str, float] = {}
@@ -118,10 +122,36 @@ def robots_for(url: str, check=None, timeout: float = TIMEOUT) -> Robots:
     return _robots[origin]
 
 
-def fetch(url: str, etag: str = "", last_modified: str = "", ai: bool = True, check=None, timeout: float = TIMEOUT) -> Page:
+def charset_of(name: str | None) -> str:
+    """CC-182: the codec for a page's named charset, if it's one we read; else utf-8."""
+    try:
+        codec = codecs.lookup(name or "utf-8").name
+    except (LookupError, TypeError, ValueError):
+        return "utf-8"
+    return codec if codec in CHARSETS else "utf-8"
+
+
+def _read(r, max_bytes: int, deadline: float | None) -> bytes:
+    """The body, up to max_bytes (FetchError beyond it), stopping at deadline (a time.monotonic() value)."""
+    parts, size = [], 0
+    while True:
+        if deadline is not None and time.monotonic() > deadline:
+            raise FetchError("the page took too long to load")
+        chunk = r.read1(min(CHUNK, max_bytes + 1 - size))  # what's arrived, not a full chunk, so the deadline is seen
+        if not chunk:
+            return b"".join(parts)
+        parts.append(chunk); size += len(chunk)
+        if size > max_bytes:
+            raise FetchError(f"page is larger than {max_bytes / 1_000_000:g} MB")
+
+
+def fetch(url: str, etag: str = "", last_modified: str = "", ai: bool = True, check=None, timeout: float = TIMEOUT,
+          deadline: float | None = None, max_bytes: int = MAX_BYTES, wait: bool = True) -> Page:
     """Get a page, or a 304 when it hasn't changed. ai=True means its text will go to Claude, so an
     AI opt-out in robots.txt counts as a refusal. check (CC-124, a member's link) is called with each address
-    asked for, redirects included, and raises Blocked for one we mustn't visit."""
+    asked for, redirects included, and raises Blocked for one we mustn't visit. CC-182: deadline (a
+    time.monotonic() value) bounds the whole download, not just each read; wait=False skips the gap between
+    requests to one site, for a single page a member is waiting on."""
     parts = urlsplit(url)
     if parts.scheme not in ("http", "https"):
         raise Blocked(f"not a web address: {url}")
@@ -131,9 +161,9 @@ def fetch(url: str, etag: str = "", last_modified: str = "", ai: bool = True, ch
     if not rules.allows(parts.path or "/"):
         raise Blocked("robots.txt asks crawlers not to read this page")
     gap = max(MIN_GAP_SECONDS, rules.crawl_delay)
-    wait = _last_hit.get(parts.netloc, 0) + gap - time.monotonic()
-    if wait > 0:
-        time.sleep(wait)
+    pause = _last_hit.get(parts.netloc, 0) + gap - time.monotonic()
+    if wait and pause > 0:
+        time.sleep(pause)
     headers = {}
     if etag:
         headers["If-None-Match"] = etag
@@ -141,11 +171,8 @@ def fetch(url: str, etag: str = "", last_modified: str = "", ai: bool = True, ch
         headers["If-Modified-Since"] = last_modified
     try:
         with _open(url, headers, check, timeout) as r:
-            body = r.read(MAX_BYTES + 1)
-            if len(body) > MAX_BYTES:
-                raise FetchError(f"page is larger than {MAX_BYTES // 1_000_000} MB")
-            charset = r.headers.get_content_charset() or "utf-8"
-            return Page(url=r.geturl(), status=r.status, text=body.decode(charset, "replace"),
+            body = _read(r, max_bytes, deadline)
+            return Page(url=r.geturl(), status=r.status, text=body.decode(charset_of(r.headers.get_content_charset()), "replace"),
                         etag=r.headers.get("ETag", ""), last_modified=r.headers.get("Last-Modified", ""),
                         content_type=r.headers.get("Content-Type", ""))
     except urllib.error.HTTPError as e:
