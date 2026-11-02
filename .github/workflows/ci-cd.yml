@@ -109,12 +109,15 @@ jobs:
         env:
           TAG: ${{ steps.image.outputs.tag }}
         run: |
+          # CC-183: the pinned Caddy image (Dependabot keeps it current); the server recreates Caddy when it changes.
+          CADDY_IMAGE=$(awk '/^FROM /{print $2}' infra/aws/server/caddy/Dockerfile)
+          [[ "$CADDY_IMAGE" =~ ^[a-z0-9./_-]+:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}$ ]] || { echo "Caddy isn't pinned by digest" >&2; exit 1; }
           CID=$(aws ssm send-command \
             --document-name AWS-RunShellScript \
             --targets Key=tag:Name,Values=culture-crew-api \
             --comment "Deploy $TAG from GitHub Actions run $GITHUB_RUN_ID" \
             --timeout-seconds 600 \
-            --parameters "commands=[\"/usr/local/bin/culture-crew-deploy $TAG\"],executionTimeout=[\"600\"]" \
+            --parameters "commands=[\"/usr/local/bin/culture-crew-deploy $TAG $CADDY_IMAGE\"],executionTimeout=[\"600\"]" \
             --query Command.CommandId --output text)
           echo "SSM command $CID"
           for _ in $(seq 1 120); do

@@ -8,7 +8,7 @@ updates:
       python:
         patterns: ["*"]
   - package-ecosystem: docker
-    directory: /
+    directories: ["/", "/infra/aws/server/caddy"] # the API image's base, and the server's Caddy pin (CC-183)
     schedule: { interval: weekly }
   - package-ecosystem: github-actions
     directory: /
