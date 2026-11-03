@@ -118,8 +118,9 @@ def already_confirmed_by(db: Session, raw: str) -> User | None:
 
 # ---- the emails ------------------------------------------------------------------
 
-# CC-185: subjects and opening lines are only ever our own wording. Text a member chose (a display
-# name, a crew name) comes lower down, labelled, on one line, without anything that reads as a link.
+# CC-185: opening lines are only ever our own wording. Text a member chose (a display name, a crew name)
+# comes lower down, labelled, on one line, without anything that reads as a link. The one exception is
+# the inviter's cleaned, capped name in the invite subject, so a friend's invite is recognisable.
 
 def verify_email(user: User, raw: str) -> Email:
     s = get_settings()
@@ -175,7 +176,7 @@ def crew_invite(to: str, inviter: str, crew: str, days: int) -> Email:
     s = get_settings()
     inviter, crew = plain_name(inviter, "A member"), plain_name(crew, "A crew", cap=60)
     confirm = " (a new account confirms its email address first)" if s.require_verified_email else ""
-    return Email(to, "You're invited to a crew on Culture Crew", f"""Hi,
+    return Email(to, f"{inviter} invited you to a crew on Culture Crew", f"""Hi,
 
 You've been invited to join a crew on Culture Crew, to find and plan Chicago culture outings together.
 

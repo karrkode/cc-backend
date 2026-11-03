@@ -26,9 +26,9 @@ def test_confirm_and_reset_emails_open_with_our_own_greeting():
         assert email.html == ""  # text only, so there's no HTML copy to differ from it
 
 
-def test_crew_invite_has_a_fixed_subject_and_labels_the_members_names():
+def test_crew_invite_has_a_cleaned_subject_and_labels_the_members_names():
     email = mail.crew_invite("ben@example.com", "Ana\nClick https://evil.example", "Claim prize at evil.example", 14)
-    assert email.subject == "You're invited to a crew on Culture Crew"
+    assert email.subject == "Ana Click invited you to a crew on Culture Crew"  # one line, no link, capped
     opening = email.text.split("Invited by:")[0]
     assert opening == "Hi,\n\nYou've been invited to join a crew on Culture Crew, to find and plan Chicago culture outings together.\n\n"
     assert "Invited by: Ana Click\nCrew: Claim prize at\n" in email.text
@@ -38,6 +38,7 @@ def test_crew_invite_has_a_fixed_subject_and_labels_the_members_names():
 
 def test_crew_invite_names_are_capped():
     email = mail.crew_invite("ben@example.com", "A" * 80, "B" * 200, 14)
+    assert email.subject == f"{'A' * 39}… invited you to a crew on Culture Crew"
     assert f"Invited by: {'A' * 39}…\n" in email.text and f"Crew: {'B' * 59}…\n" in email.text
 
 
@@ -48,7 +49,7 @@ def test_an_invite_sent_through_the_api_uses_the_fixed_wording(client):
     OUTBOX.clear()
     assert client.post(f"/crews/{crew['id']}/email-invites", json={"email": "ben@example.com"}, headers=ana).status_code == 202
     [email] = OUTBOX
-    assert email.subject == "You're invited to a crew on Culture Crew"
+    assert email.subject == "Ana C. invited you to a crew on Culture Crew"
     assert "Invited by: Ana C.\nCrew: Visit now\n" in email.text and "evil" not in email.text
 
 
@@ -63,6 +64,11 @@ def test_the_recap_keeps_reporters_text_on_one_line_and_escaped(db):
     assert "Mal lory <b> on -: Broken FAKE HEADING <i>" in email.text
     assert "Mal lory &lt;b&gt;" in email.html and "Broken FAKE HEADING &lt;i&gt;" in email.html
     assert "<b>" not in email.html.split("Sent by")[1].split("</table>")[0]
+
+
+def test_a_name_that_is_only_a_link_isnt_in_the_subject():
+    email = mail.crew_invite("ben@example.com", "URGENT:verify-at-evil.example", "Crew", 14)
+    assert email.subject == "A member invited you to a crew on Culture Crew"
 
 
 def test_plain_name():
