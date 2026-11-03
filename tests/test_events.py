@@ -234,7 +234,7 @@ def test_scheduled_list_shows_the_submitter(client, admin_token, make_event):
         "title": "Soon", "category": "Theater", "venue": {"name": "Goodman Theatre", "neighborhood": "Loop"},
         "publish": "later", "publish_at": later})
     [ev] = client.get("/admin/events/scheduled", headers=auth(admin_token)).json()
-    assert ev["submitted_by"]["display_name"] == "Admin"
+    assert ev["submitted_by"]["display_name"] == "Local Admin"
 
 
 def test_submitter_is_null_once_their_account_is_gone(client, user_token, admin_token, db):

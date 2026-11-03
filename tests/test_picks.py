@@ -11,8 +11,9 @@ T = date.today()
 
 
 def owner(client, db, email="owner@example.com", name="Andrew"):
-    token = register(client, email=email, name=name)
-    db.scalar(select(User).where(User.email == email)).dolphins = True
+    token = register(client, email=email, name="Owner")
+    user = db.scalar(select(User).where(User.email == email))
+    user.dolphins, user.display_name = True, name  # set by script, so it can be a reserved name (CC-185)
     db.commit()
     return token
 

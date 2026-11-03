@@ -16,6 +16,7 @@ Links carry the token in the URL fragment (#verify=..., #reset=...), which brows
 to a server, so tokens don't end up in CloudFront or API logs.
 """
 import logging
+import re
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -117,13 +118,12 @@ def already_confirmed_by(db: Session, raw: str) -> User | None:
 
 # ---- the emails ------------------------------------------------------------------
 
-def _greeting(user: User) -> str:
-    return f"Hi {user.display_name.strip()}," if user.display_name.strip() else "Hi,"
-
+# CC-185: subjects and opening lines are only ever our own wording. Text a member chose (a display
+# name, a crew name) comes lower down, labelled, on one line, without anything that reads as a link.
 
 def verify_email(user: User, raw: str) -> Email:
     s = get_settings()
-    return Email(user.email, "Confirm your email for Culture Crew", f"""{_greeting(user)}
+    return Email(user.email, "Confirm your email for Culture Crew", f"""Hi,
 
 Please confirm this is your email address for Culture Crew by opening this link:
 
@@ -139,7 +139,7 @@ Culture Crew
 
 def reset_password(user: User, raw: str) -> Email:
     s = get_settings()
-    return Email(user.email, "Reset your Culture Crew password", f"""{_greeting(user)}
+    return Email(user.email, "Reset your Culture Crew password", f"""Hi,
 
 Someone (hopefully you) asked to reset the password for your Culture Crew account.
 To choose a new one, open this link:
@@ -154,27 +154,41 @@ Culture Crew
 """)
 
 
-def _one_line(text: str) -> str:
-    return " ".join(text.split())  # a crew or member name never breaks the subject or a line
+# a scheme, "www.", an @, or a dot between letters ("evil.example", "x.co/y"): the whole word goes
+_LINKISH = re.compile(r"\S*(?:://|www\.|@|[^\W\d_]\.[^\W\d_]{2,})\S*", re.IGNORECASE)
+NAME_CAP = 40
+
+
+def plain_name(text: str, fallback: str, cap: int = NAME_CAP) -> str:
+    """A member's name as an email may show it: one line, no control characters, nothing link-like,
+    at most `cap` characters. Names saved before CC-185 may break those rules; they're cleaned here."""
+    text = "".join(c if c.isprintable() else " " for c in text or "")
+    text = " ".join(_LINKISH.sub(" ", text).split())
+    if len(text) > cap:
+        text = text[:cap - 1].rstrip() + "…"
+    return text or fallback
 
 
 def crew_invite(to: str, inviter: str, crew: str, days: int) -> Email:
     """CC-83: someone was invited to a crew by email. Says who and which crew, never who else is in it,
     and reads the same whether or not the address has an account."""
     s = get_settings()
-    inviter, crew = _one_line(inviter), _one_line(crew)
+    inviter, crew = plain_name(inviter, "A member"), plain_name(crew, "A crew", cap=60)
     confirm = " (a new account confirms its email address first)" if s.require_verified_email else ""
-    return Email(to, f"{inviter} wants you to be part of their crew!", f"""Hi,
+    return Email(to, "You're invited to a crew on Culture Crew", f"""Hi,
 
-{inviter} invited you to their crew "{crew}" on Culture Crew, to find and plan Chicago
-culture outings together.
+You've been invited to join a crew on Culture Crew, to find and plan Chicago culture outings together.
+
+Invited by: {inviter}
+Crew: {crew}
+(Members choose these names themselves.)
 
 To join, sign in or create an account with this email address{confirm}, then accept
 the invite under "Waiting for you":
 
 {s.site_url}/#account
 
-The invite waits for {days} days. If you don't know {inviter}, you can ignore this email.
+The invite waits for {days} days. If you don't know who invited you, you can ignore this email.
 
 Culture Crew
 {s.site_url}
