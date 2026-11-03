@@ -482,6 +482,20 @@ class CrewEmailInvite(Base):
     inviter: Mapped[User | None] = relationship(lazy="joined")
 
 
+class SentEmail(Base):
+    """CC-184: one email the site sent (or queued) because of something a member or visitor did, for the caps in
+    app/emailcaps.py. Nothing else deletes these rows, so cancelling an invite doesn't make room to send another."""
+    __tablename__ = "sent_emails"
+    __table_args__ = (Index("ix_sent_emails_email_sent_at", "email", "sent_at"),
+                      Index("ix_sent_emails_account_kind_sent_at", "account_id", "kind", "sent_at"))
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    email: Mapped[str] = mapped_column(String(320))  # lower-case, as users.email
+    kind: Mapped[str] = mapped_column(String(20))  # emailcaps.VERIFY, RESET or INVITE
+    account_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))  # who caused it
+    sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class PlanShare(Base):
     """CC-75: a plan shared with one of its owner's crews. Only that crew's members see it. Goes when the
     plan does (cleared, or "I've been"), when the crew does, and when its owner leaves the crew."""

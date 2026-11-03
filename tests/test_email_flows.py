@@ -12,7 +12,7 @@ from app.mail import OUTBOX
 from app.models import EmailToken, RefreshToken, User
 from app.routers.auth import COOKIE, FORGOT_REPLY
 
-from .conftest import auth, register
+from .conftest import age_sent_emails, auth, register
 
 PW, NEW = "correct-horse-1", "battery-staple-2"  # register()'s default password, and a new one
 
@@ -63,9 +63,10 @@ def test_bad_and_expired_links(client, db):
     assert r.status_code == 400 and r.json()["detail"] == "This link has expired or was already used"
 
 
-def test_resend_replaces_the_old_link(client):
+def test_resend_replaces_the_old_link(client, db):
     token = register(client)
     first = link_token("verify")
+    age_sent_emails(db, minutes=2)  # CC-184: one resend a minute
     r = client.post("/auth/verify-email/send", headers=auth(token))
     assert r.status_code == 200 and r.json()["detail"] == "We've sent a new link to ana@example.com."
     second = link_token("verify")
@@ -138,6 +139,7 @@ def test_reset_links_expire_are_replaced_and_follow_the_rules(client, db):
     register(client)
     client.post("/auth/forgot-password", json={"email": "ana@example.com"})
     first = link_token("reset")
+    age_sent_emails(db, minutes=2)  # CC-184: one resend a minute
     client.post("/auth/forgot-password", json={"email": "ana@example.com"})
     second = link_token("reset")
     assert client.post("/auth/reset-password", json={"token": first, "new_password": NEW}).status_code == 400

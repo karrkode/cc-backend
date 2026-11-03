@@ -4,7 +4,7 @@ from fastapi import APIRouter, BackgroundTasks, Cookie, Depends, HTTPException, 
 from sqlalchemy import delete, or_, select
 from sqlalchemy.exc import IntegrityError
 
-from .. import mail
+from .. import emailcaps, mail
 from ..config import get_settings
 from ..deps import DB, CurrentUser
 from ..models import EmailTokenPurpose, RefreshToken, Role, User
@@ -90,9 +90,11 @@ def register(body: RegisterIn, db: DB, response: Response, tasks: BackgroundTask
     if body.join_source is not None:  # CC-121: a sign-up from the join page, counted by source with the account
         j = body.join_source
         record_join_signup(db, today_in_chicago(), source_of(j.utm_source, j.utm_medium, j.utm_campaign, j.ref))
-    email = _verification_email(db, user)
+    # CC-184: over a cap the account is still made, just without the email (a resend can come later)
+    email = _verification_email(db, user) if emailcaps.may_send(db, user.email, emailcaps.VERIFY, user.id) else None
     out = _issue(db, user, response)  # commits the account and its link together
-    tasks.add_task(mail.send, email)
+    if email is not None:
+        tasks.add_task(mail.send, email)
     return out
 
 
@@ -176,7 +178,8 @@ def update_me(body: ProfilePatch, db: DB, user: CurrentUser, tasks: BackgroundTa
     except IntegrityError:
         db.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, "An account with that email already exists")
-    email = _verification_email(db, user) if new_email else None  # also voids links sent to the old address
+    email = (_verification_email(db, user)  # also voids links sent to the old address
+             if new_email and emailcaps.may_send(db, user.email, emailcaps.VERIFY, user.id) else None)
     db.commit()
     if email is not None:
         tasks.add_task(mail.send, email)
@@ -208,9 +211,10 @@ def resend_verification(db: DB, user: CurrentUser, tasks: BackgroundTasks):
     """Email a new confirm-your-email link to the signed-in account (earlier links stop working)."""
     if user.email_verified:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Your email address is already confirmed")
-    email = _verification_email(db, user)
-    db.commit()
-    tasks.add_task(mail.send, email)
+    if emailcaps.may_send(db, user.email, emailcaps.VERIFY, user.id, resend=True):  # CC-184: else the same reply, no email
+        email = _verification_email(db, user)
+        db.commit()
+        tasks.add_task(mail.send, email)
     return MessageOut(detail=f"We've sent a new link to {user.email}.")
 
 
@@ -242,7 +246,7 @@ def forgot_password(body: ForgotPasswordIn, db: DB, tasks: BackgroundTasks):
     """Email a password-reset link. Always answers the same way, so it can't be used to find
     out who has an account; the email itself goes out after the response."""
     user = db.scalar(select(User).where(User.email == body.email.lower()))
-    if user is not None:
+    if user is not None and emailcaps.may_send(db, user.email, emailcaps.RESET, user.id, resend=True):  # CC-184
         raw = mail.issue_token(db, user, EmailTokenPurpose.reset_password,
                                timedelta(minutes=get_settings().reset_link_minutes))
         db.commit()

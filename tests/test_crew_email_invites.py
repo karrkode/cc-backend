@@ -2,6 +2,7 @@
 telling the inviter whether an address has an account."""
 from datetime import UTC, datetime, timedelta
 
+from app import emailcaps
 from app.models import CrewEmailInvite
 from app.routers import crews as crews_router
 
@@ -129,7 +130,7 @@ def test_one_address_gets_at_most_three_invite_emails_a_day(client):
     OUTBOX.clear()
     for c in crews:
         assert send(client, ana, c, "cy@example.com").status_code == 202
-    assert len(OUTBOX) == crews_router.INVITE_EMAILS_PER_ADDRESS_PER_DAY
+    assert len(OUTBOX) == emailcaps.INVITES_TO_ADDRESS_PER_DAY
     assert len(client.get("/crews", headers=ana).json()) == 5  # the fourth invite still waits, just without an email
 
 

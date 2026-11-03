@@ -84,6 +84,14 @@ def auth(token):
     return {"Authorization": f"Bearer {token}"}
 
 
+def age_sent_emails(db, **delta):
+    """CC-184: move every recorded email back in time, e.g. age_sent_emails(db, minutes=2), to get past a cap."""
+    from app.models import SentEmail
+    for e in db.scalars(select(SentEmail)):
+        e.sent_at = e.sent_at - timedelta(**delta)
+    db.commit()
+
+
 @pytest.fixture
 def user_token(client):
     return register(client)
