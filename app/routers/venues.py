@@ -5,8 +5,10 @@ from sqlalchemy import delete, func, select, update
 
 from ..areas import area_of, region_of
 from ..deps import DB, AdminUser
-from ..models import Event, SubmissionRule, Venue
-from ..schemas import VenueAdminOut, VenueIn, VenueMergeOut, VenueOut, VenuePatch
+from ..models import Event, SubmissionRule, Venue, VenueWebsiteDismissal
+from ..schemas import (VenueAdminOut, VenueIn, VenueMergeOut, VenueOut, VenuePatch, WebsiteChoice,
+                       WebsiteSuggestionOut)
+from ..websites import suggestions
 
 router = APIRouter(prefix="/venues", tags=["venues"])
 
@@ -55,7 +57,7 @@ def _admin_out(venue: Venue, counts: dict[int, int]) -> VenueAdminOut:
                          open_hours_by=venue.open_hours_by or "", show_times=venue.show_times or {},
                          show_times_by=venue.show_times_by or "", standard_cost=venue.standard_cost or "",
                          standard_min_price=None if venue.standard_min_price is None else float(venue.standard_min_price),
-                         category=venue.category, opera=venue.opera)
+                         category=venue.category, opera=venue.opera, website=venue.website or "")
 
 
 @router.get("/manage", response_model=list[VenueAdminOut])
@@ -67,6 +69,34 @@ def manage_list(db: DB, _: AdminUser, q: Annotated[str | None, Query(max_length=
     venues = db.scalars(stmt).all()
     counts = _counts(db)
     return [_admin_out(v, counts) for v in venues]
+
+
+# ---- websites (admins, CC-213) -----------------------------------------------------------
+
+@router.get("/website-suggestions", response_model=list[WebsiteSuggestionOut])
+def website_suggestions(db: DB, _: AdminUser):
+    """Suggested websites for venues that have none. Nothing is saved until an admin confirms one."""
+    return suggestions(db)
+
+
+@router.post("/{venue_id}/website", response_model=VenueAdminOut)
+def confirm_website(venue_id: int, body: WebsiteChoice, db: DB, _: AdminUser):
+    """Confirm a suggestion (as suggested, or edited). Never replaces a website already set: change that on the venue."""
+    venue = _venue(db, venue_id)
+    if venue.website:
+        raise HTTPException(status.HTTP_409_CONFLICT, "This venue already has a website. Edit it on the venue instead.")
+    venue.website = body.url
+    db.commit()
+    return _admin_out(venue, _counts(db, [venue.id]))
+
+
+@router.post("/{venue_id}/website/dismiss", status_code=status.HTTP_204_NO_CONTENT)
+def dismiss_website(venue_id: int, body: WebsiteChoice, db: DB, _: AdminUser):
+    """Don't suggest this address for this venue again."""
+    venue = _venue(db, venue_id)
+    if not db.get(VenueWebsiteDismissal, (venue.id, body.url)):
+        db.add(VenueWebsiteDismissal(venue_id=venue.id, url=body.url))
+        db.commit()
 
 
 @router.patch("/{venue_id}", response_model=VenueAdminOut)
@@ -98,6 +128,8 @@ def update_venue(venue_id: int, body: VenuePatch, db: DB, _: AdminUser):
             value = {day: (list(v) if isinstance(v, tuple) else v) for day, v in changes[field].items()}
             setattr(venue, field, value)
             setattr(venue, field + "_by", "admin" if value else "")
+    if changes.get("website") is not None:  # CC-213: typed by an admin; "" clears it
+        venue.website = changes["website"]
     if changes.get("standard_cost") is not None:  # CC-89: set together; the price goes with the words
         venue.standard_cost = changes["standard_cost"].strip()
         venue.standard_min_price = changes.get("standard_min_price") if venue.standard_cost else None
@@ -133,6 +165,8 @@ def merge_venue(venue_id: int, other_id: int, db: DB, _: AdminUser):
             setattr(into, field + "_by", getattr(venue, field + "_by"))
     if not into.standard_cost and venue.standard_cost:  # CC-89: and its standard cost
         into.standard_cost, into.standard_min_price = venue.standard_cost, venue.standard_min_price
+    if not into.website and venue.website:  # CC-213: and its website
+        into.website = venue.website
     db.delete(venue)
     db.commit()
     return VenueMergeOut(moved=moved, into=into)

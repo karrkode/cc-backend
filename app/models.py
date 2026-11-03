@@ -238,6 +238,18 @@ class Venue(Base):
     # CC-125: the category new events here start with (null: none yet), and whether they start as opera
     category: Mapped[str | None] = mapped_column(String(40))
     opera: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    # CC-213: the venue's own site, normalised (app/websites.py); "" = none. Admin-only for now: only the admin
+    # venue routes read or write it, and it's set only by an admin (typed in, or a confirmed suggestion).
+    website: Mapped[str] = mapped_column(String(500), default="", server_default="")
+
+
+class VenueWebsiteDismissal(Base):
+    """CC-213: a suggested website an admin dismissed for a venue, so it isn't suggested again."""
+    __tablename__ = "venue_website_dismissals"
+
+    venue_id: Mapped[int] = mapped_column(ForeignKey("venues.id", ondelete="CASCADE"), primary_key=True)
+    url: Mapped[str] = mapped_column(String(500), primary_key=True)
+    dismissed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class Event(Base):
