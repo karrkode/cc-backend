@@ -772,6 +772,8 @@ class DiscoveredItemOut(ORM):
     min_price: Decimal | None
     dates_listed: int = 0  # how many performance dates and times the source listed
     dates_timed: bool = False  # CC-88: some of those dates have start times
+    # CC-212: for one on for under a week, its listed dates and times in that run, to start the form's fixed run with
+    short_dates: list[dict] = []
     weekly: dict = {}  # CC-88: the show days and times the source gave
     weeks: dict = {}  # and which of those days are on some weeks of the month only
     venue_show_times: dict = {}  # the venue's usual show times, to start the form with

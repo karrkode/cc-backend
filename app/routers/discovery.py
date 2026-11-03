@@ -16,7 +16,7 @@ from ..discovery.rules import norm_title
 from ..discovery.store import matching_rule, possible_duplicates, rule_reason, sync_performances, venue_for
 from ..models import DiscoveredItem, DiscoveryCheck, DiscoverySource, Event, SkipRule, Venue
 from ..schemas import (BudgetIn, DiscoveredItemOut, DiscoveredPage, DiscoveryOverview, DiscoverySourceOut, DiscoverySourcePatch,
-                       EventIn, EventRef, FoundChange, RejectIn, RejectOut, SkipRuleOut, UnreadableSource)
+                       EventIn, EventRef, FoundChange, RUN_DATES_MAX, RejectIn, RejectOut, SkipRuleOut, UnreadableSource)
 from .events import new_event
 
 router = APIRouter(prefix="/admin/discovery", tags=["discovery"])
@@ -157,6 +157,9 @@ def _item_out(db: DB, item: DiscoveredItem, dups: dict | None = None) -> Discove
             out.neighborhood = item.source.neighborhood
     out.dates_listed = len(item.performances or [])
     out.dates_timed = any(p.get("time") for p in item.performances or [])
+    if item.begin_date and item.end_date and 0 <= (item.end_date - item.begin_date).days < SHORT_RUN_DAYS:
+        first, last = item.begin_date.isoformat(), item.end_date.isoformat()
+        out.short_dates = [p for p in item.performances or [] if first <= (p.get("date") or "") <= last][:RUN_DATES_MAX]
     out.venue_show_times = venue.show_times if venue is not None else {}
     if venue is not None:  # CC-125: the approve form starts with the venue's default category
         out.venue_category, out.venue_opera = venue.category, venue.opera
@@ -197,6 +200,9 @@ def items(db: DB, _: AdminUser, show: Show = "waiting", source: int | None = Non
                                                        last_checked_at=s.last_checked_at) for s in bad])
 
 
+SHORT_RUN_DAYS = 6  # CC-212: on for under a week (opening to closing within 6 days); the site's SHORT_RUN_DAYS too
+
+
 @router.get("/items.csv")
 def items_csv(db: DB, _: AdminUser, show: Show = "waiting", source: int | None = None, price: Has = "any", dates: Has = "any"):
     """The same list as a spreadsheet."""
@@ -217,8 +223,10 @@ def still_needs(db: DB, item: DiscoveredItem, body: EventIn) -> str:
     """What the event as it would be approved is missing (CC-88): the item, with what the admin gave."""
     venue = db.get(Venue, body.venue_id) if body.venue_id is not None else None
     category = body.category or (venue.category if venue else None)  # CC-125: left out, the venue's default
+    # CC-212: a one-day event's start time comes as a one-date run, and gives a show its time
+    given = [{"date": r.date.isoformat(), "time": r.time} for r in body.run_dates]
     as_approved = SimpleNamespace(kind=item.kind, category=category, begin_date=body.begin_date, end_date=body.end_date,
-                                  open_run=body.open_run, performances=item.performances, weekly=body.weekly)
+                                  open_run=body.open_run, performances=(item.performances or []) + given, weekly=body.weekly)
     return needs(as_approved, venue)
 
 
