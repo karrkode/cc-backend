@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Response, status
 from sqlalchemy import func, select
 
-from .. import mail
+from .. import emailcaps, mail
 from ..config import get_settings
 from ..crewplans import crew_board, unshare, unshare_been
 from ..deps import DB, CurrentUser, OptionalUser
@@ -31,7 +31,6 @@ MAX_OWNED = 10  # crews one person can start
 INVITE_DAYS = 7
 EMAIL_INVITE_DAYS = 14  # CC-59: long enough for someone to get round to registering
 INVITES_PER_HOUR = 20
-INVITE_EMAILS_PER_ADDRESS_PER_DAY = 3  # CC-83: from all crews together, so one inbox can't be flooded
 invite_limiter = SlidingWindowLimiter(window_seconds=3600)
 
 
@@ -221,8 +220,9 @@ def hand_over(crew_id: int, body: OwnerIn, db: DB, user: CurrentUser):
 
 # ---- invites by email address (CC-59) --------------------------------------------------
 # Any member can invite an address. It shows to the account with that address on sign-in (now, or once someone
-# registers with it within 14 days). CC-83: it's also emailed, once per address per crew while it waits. The
-# inviter is never told whether the address has an account, or whether that person is already in the crew.
+# registers with it within 14 days). CC-83: it's also emailed, once per address per crew while it waits, within the
+# caps in app/emailcaps.py (CC-184). The inviter is never told whether the address has an account, or whether that
+# person is already in the crew.
 SENT = "Invite sent. We've emailed them, and they'll see it when they sign in."
 
 
@@ -245,18 +245,15 @@ def invite_by_email(crew_id: int, body: EmailInviteIn, db: DB, user: CurrentUser
         db.delete(waiting)  # an old one that ran out: start again
         db.flush()
         waiting = None
-    if email not in member_emails and waiting is None:  # already in, or already invited: say the same, change nothing
-        now = datetime.now(UTC)
-        # Invites made in the last day still have more than 13 of their 14 days left.
-        today = db.scalar(select(func.count()).select_from(CrewEmailInvite).where(
-            CrewEmailInvite.email == email,
-            CrewEmailInvite.expires_at > now + timedelta(days=EMAIL_INVITE_DAYS - 1))) or 0
+    if waiting is None and email != user.email:  # already invited: say the same, change nothing
+        # CC-184: an address already in the crew gets a waiting invite too, so the inviter's list looks the same either
+        # way. It's never emailed, and its owner doesn't see it (_pending skips crews they're in).
         db.add(CrewEmailInvite(crew_id=crew.id, email=email, invited_by=user.id,
-                               expires_at=now + timedelta(days=EMAIL_INVITE_DAYS)))
-        db.commit()
+                               expires_at=datetime.now(UTC) + timedelta(days=EMAIL_INVITE_DAYS)))
         confirmed = user.email_verified or not get_settings().require_verified_email  # unconfirmed inviters email nobody
-        if confirmed and today < INVITE_EMAILS_PER_ADDRESS_PER_DAY:
+        if email not in member_emails and confirmed and emailcaps.may_send(db, email, emailcaps.INVITE, user.id):
             tasks.add_task(mail.send, mail.crew_invite(email, short_name(user.display_name), crew.name, EMAIL_INVITE_DAYS))
+        db.commit()
     return {"message": SENT}
 
 
