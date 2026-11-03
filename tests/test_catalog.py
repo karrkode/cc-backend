@@ -58,7 +58,7 @@ def test_paging_reports_the_full_total(client, make_event):
 def test_facets(client, make_event):
     make_event("Hamlet", neighborhood="Loop")
     make_event("Bug", venue_name="Steppenwolf", neighborhood="Lincoln Park")
-    make_event("Joke night", venue_name="Annoyance", neighborhood="Lakeview", category="Comedy")
+    make_event("Joke night", venue_name="Lakeview Comedy Club", neighborhood="Lakeview", category="Comedy")
     make_event("Old show", venue_name="Old Venue", neighborhood="Pilsen", begin=T - timedelta(days=60),
                end=T - timedelta(days=30))
     make_event("Hidden", venue_name="Secret", neighborhood="Hidden Hood", status=EventStatus.pending)

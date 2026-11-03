@@ -32,12 +32,12 @@ def withdrawn(make_event, db, title, reason, **kw):
 
 def test_the_review_lists_whats_withdrawn_and_brings_one_back_with_a_category(client, admin_token, user_token, make_event, db):
     musical = withdrawn(make_event, db, "Improvised Musical", "Comedy", venue_name="iO", category="Comedy")
-    withdrawn(make_event, db, "Mainstage Revue", "The Second City", venue_name="The Second City", category="Theater")
+    withdrawn(make_event, db, "Mainstage Revue", "Lakeview Comedy Club", venue_name="Lakeview Comedy Club", category="Theater")
     make_event("Old sheet show", status=EventStatus.withdrawn)  # withdrawn before, for another reason: not on the list
     h = auth(admin_token)
     r = client.get("/admin/events/removed", headers=h)
     assert [(e["title"], e["withdrawn_reason"]) for e in r.json()] == [("Improvised Musical", "Comedy"),
-                                                                       ("Mainstage Revue", "The Second City")]
+                                                                       ("Mainstage Revue", "Lakeview Comedy Club")]
     assert client.get("/admin/events/removed", headers=auth(user_token)).status_code == 403
     assert client.get("/admin/events/other-types", headers=h).json() == []  # not on CC-125's list as well
 
@@ -50,16 +50,16 @@ def test_the_review_lists_whats_withdrawn_and_brings_one_back_with_a_category(cl
     assert r.status_code == 200 and r.json()["category"] == "Theater"
     assert client.get(f"/events/{musical.id}").status_code == 200
     assert [e["title"] for e in client.get("/admin/events/removed", headers=h).json()] == ["Mainstage Revue"]
-    # a Theater event at The Second City comes back as it is
+    # a Theater event at Lakeview Comedy Club comes back as it is
     revue = next(e for e in client.get("/admin/events/removed", headers=h).json())
     assert client.patch(f"/events/{revue['id']}", json={"status": "approved"}, headers=h).status_code == 200
     assert client.get("/admin/events/removed", headers=h).json() == []
 
 
 def test_a_withdrawn_event_stays_in_the_members_journal(client, user_token, make_event, db):
-    ev = make_event("Mainstage Revue", venue_name="The Second City")
+    ev = make_event("Mainstage Revue", venue_name="Lakeview Comedy Club")
     assert client.put(f"/me/attended/{ev.id}", headers=auth(user_token)).status_code in (200, 201)
-    ev.status, ev.withdrawn_reason = EventStatus.withdrawn, "The Second City"; db.commit()
+    ev.status, ev.withdrawn_reason = EventStatus.withdrawn, "Lakeview Comedy Club"; db.commit()
     assert "Mainstage Revue" not in [e["title"] for e in client.get("/events").json()["items"]]
     assert client.get(f"/events/{ev.id}").status_code == 404
     assert [a["event"]["title"] for a in client.get("/me/attended", headers=auth(user_token)).json()] == ["Mainstage Revue"]
@@ -118,6 +118,7 @@ def test_discovery_leaves_out_comedy_and_educational(db):
 
 @pytest.mark.skipif(not IS_POSTGRES, reason="migrations target Postgres; set TEST_DATABASE_URL to run")
 def test_cc133_migration_withdraws_by_category_and_venue(engine):
+    # CC-133's migration finds these two theatres by name, so this test alone keeps the real names
     with engine.begin() as conn:
         Base.metadata.drop_all(conn)
         conn.execute(text("DROP TABLE IF EXISTS alembic_version"))

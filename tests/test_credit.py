@@ -5,7 +5,7 @@ from app.models import User
 
 from .conftest import auth, register
 
-VENUE = {"name": "Annoyance", "neighborhood": "Lakeview"}
+VENUE = {"name": "Schubas", "neighborhood": "Lakeview"}
 
 
 def submit(client, token, title, **extra):

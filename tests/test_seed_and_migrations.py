@@ -28,12 +28,12 @@ def test_seed_is_repeatable(Session, db, monkeypatch, tmp_path):
         {"id": "a1", "title": "Hamlet", "venue": "Goodman Theatre", "begin": "2030-01-01", "end": "2030-02-01",
          "openRun": False, "beginTbd": False, "hood": "Loop", "area": "City", "cost": "$35+", "min": 35.0,
          "type": "Theater", "url": "https://goodman.example/hamlet"},
-        {"id": "a2", "title": "Show", "venue": "The Second City", "begin": None, "end": "2030-03-01",
-         "openRun": False, "beginTbd": True, "hood": "Old Town", "area": "City", "cost": "TBD", "min": None,
-         "type": "Comedy", "url": "https://secondcity.example/show"},
-        {"id": "a3", "title": "Show", "venue": "The Second City", "begin": None, "end": "2030-03-01",
-         "openRun": False, "beginTbd": True, "hood": "Gold Coast", "area": "City", "cost": "Free", "min": 0,
-         "type": "Comedy", "url": "https://secondcity.example/show2"},
+        {"id": "a2", "title": "Show", "venue": "Lakeview Comedy Club", "begin": None, "end": "2030-03-01",
+         "openRun": False, "beginTbd": True, "hood": "Lakeview", "area": "City", "cost": "TBD", "min": None,
+         "type": "Comedy", "url": "https://comedyclub.example/show"},
+        {"id": "a3", "title": "Show", "venue": "Lakeview Comedy Club", "begin": None, "end": "2030-03-01",
+         "openRun": False, "beginTbd": True, "hood": "Old Town", "area": "City", "cost": "Free", "min": 0,
+         "type": "Comedy", "url": "https://comedyclub.example/show2"},
         {"id": "bad", "title": "Backwards", "venue": "X", "begin": "2030-02-01", "end": "2030-01-01",
          "openRun": False, "beginTbd": False, "hood": "Loop", "area": "City", "cost": "", "min": None,
          "type": "Theater", "url": ""},
@@ -50,7 +50,7 @@ def test_seed_is_repeatable(Session, db, monkeypatch, tmp_path):
     assert (again["added"], again["updated"], again["unchanged"], again["venues_added"]) == (0, 1, 2, 0)
 
     assert db.scalar(select(func.count(Event.id))) == 3
-    assert db.scalar(select(func.count(Venue.id))) == 3  # Second City in two neighborhoods = two venues
+    assert db.scalar(select(func.count(Venue.id))) == 3  # the comedy club in two neighborhoods = two venues
     hamlet = db.scalar(select(Event).where(Event.source_id == "a1"))
     assert hamlet.title == "Hamlet (extended)" and hamlet.status == EventStatus.approved
 
