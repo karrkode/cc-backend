@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 
-from ..deps import DB, AdminUser, CurrentUser
+from ..deps import DB, AdminUser, CurrentUser, require_verified_email
 from ..models import IssueReport, User
 from ..ratelimit import SlidingWindowLimiter
 from ..schemas import IssueAdminOut, IssueIn, IssueKind, IssueOut, IssuePage, IssuePatch, IssueReporter, IssueStatus
@@ -22,6 +22,7 @@ report_limiter = SlidingWindowLimiter(window_seconds=3600)
 @router.post("/issues", response_model=IssueOut, status_code=status.HTTP_201_CREATED)
 def report(body: IssueIn, db: DB, user: CurrentUser):
     """Report a problem, or request a feature. Signed-in members only; 5 an hour, both kinds together."""
+    require_verified_email(user, "sending reports")  # CC-186
     if not report_limiter.hit(str(user.id), REPORTS_PER_HOUR):
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Thanks for all the reports! Try again in an hour.")
     for attempt in range(3):  # two reports at once could take the same number: the second tries the next one
