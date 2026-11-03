@@ -8,6 +8,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
 from .models import Area, EventStatus, PlanStatus, Region, Role
+from .websites import normalize_website
 
 # CC-125: the categories (app.categories.CATEGORIES); Concert became Music. CC-133: Comedy and Educational went.
 Category = Literal["Theater", "Music", "Visual Art"]
@@ -174,6 +175,12 @@ class VenuePatch(BaseModel):
     # CC-125: the default category for new events here (null clears it); opera sets it to Music. Its events keep theirs.
     category: Category | None = None
     opera: bool | None = None
+    website: str | None = Field(default=None, max_length=600)  # CC-213: http(s) only, stored normalised; "" clears it
+
+    @field_validator("website")
+    @classmethod
+    def _website(cls, v):
+        return None if v is None else normalize_website(v)
 
 
 class VenueAdminOut(VenueOut):
@@ -183,6 +190,27 @@ class VenueAdminOut(VenueOut):
     open_hours_by: str = ""  # "" | discovery | admin
     show_times: dict = {}
     show_times_by: str = ""
+    website: str = ""  # CC-213: admin-only, so it's here and never in VenueOut
+
+
+class WebsiteSuggestionOut(BaseModel):
+    """CC-213: a website suggested for a venue that has none, for an admin to confirm, edit or dismiss."""
+    venue_id: int
+    venue_name: str
+    neighborhood: str
+    url: str
+    source: Literal["discovery", "cc205"]  # the venue's discovery source's site, or the CC-205 report
+
+
+class WebsiteChoice(BaseModel):
+    url: str = Field(min_length=1, max_length=600)
+
+    @field_validator("url")
+    @classmethod
+    def _website(cls, v):
+        if not (v := normalize_website(v)):
+            raise ValueError("Enter a web address")
+        return v
 
 
 class VenueMergeOut(BaseModel):
