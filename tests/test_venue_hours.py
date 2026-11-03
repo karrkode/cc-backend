@@ -98,8 +98,8 @@ def test_a_source_is_linked_once_its_venue_exists(db):
     assert not link_venue(db, s)  # no such venue yet
     v = Venue(name="Field Museum", neighborhood="South Loop"); db.add(v); db.commit()
     assert link_venue(db, s) and s.venue_id == v.id
-    other = DiscoverySource(name="Second City", kind=SourceKind.comedy, pages=[], reader="claude", venue_name="The Second City",
+    other = DiscoverySource(name="Lakeview Comedy Club", kind=SourceKind.comedy, pages=[], reader="claude", venue_name="Lakeview Comedy Club",
                             every_days=14, page_state={}, venue_hours={}, unchanged_streak=0, last_status="", last_error="")
-    db.add_all([other, Venue(name="The Second City", neighborhood="Old Town"), Venue(name="The Second City", neighborhood="Gold Coast")])
+    db.add_all([other, Venue(name="Lakeview Comedy Club", neighborhood="Lakeview"), Venue(name="Lakeview Comedy Club", neighborhood="Old Town")])
     db.commit()
     assert not link_venue(db, other) and other.venue_id is None  # two places by that name: an admin decides
