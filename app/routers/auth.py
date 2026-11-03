@@ -7,10 +7,10 @@ from sqlalchemy.exc import IntegrityError
 from .. import mail
 from ..config import get_settings
 from ..deps import DB, CurrentUser
-from ..models import EmailTokenPurpose, RefreshToken, User
+from ..models import EmailTokenPurpose, RefreshToken, Role, User
 from ..ratelimit import limit_auth_attempts
 from ..schemas import (ForgotPasswordIn, LoginIn, MessageOut, PasswordChangeIn, ProfilePatch, RegisterIn,
-                       ResetPasswordIn, TokenIn, TokenOut, UserOut)
+                       ResetPasswordIn, TokenIn, TokenOut, UserOut, RESERVED_NAMES, name_key)
 from ..security import (create_access_token, hash_password, hash_refresh_token, new_refresh_token,
                         verify_password)
 from ..stats import record_active, today_in_chicago
@@ -25,6 +25,19 @@ REUSE_GRACE_SECONDS = 30
 
 def _utc(dt: datetime) -> datetime:
     return dt if dt.tzinfo else dt.replace(tzinfo=UTC)  # SQLite hands back naive datetimes
+
+
+def _check_name_free(db: DB, name: str, user: User | None = None) -> None:
+    """CC-185: members can't call themselves by the site's own names, or by the name of an admin or of
+    an account whose picks the site shows (CC-61). Those accounts themselves can use any name."""
+    key = name_key(name)
+    if not key or (user is not None and (user.role == Role.admin or user.dolphins)):
+        return
+    admins = select(User.display_name).where(or_(User.role == Role.admin, User.dolphins.is_(True)))
+    if user is not None:
+        admins = admins.where(User.id != user.id)
+    if key in RESERVED_NAMES or any(name_key(a) == key for a in db.scalars(admins)):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "That name is reserved. Choose another.")
 
 
 def _issue(db: DB, user: User, response: Response) -> TokenOut:
@@ -65,6 +78,7 @@ def _clear_cookie(response: Response):
              dependencies=[Depends(limit_auth_attempts)])
 def register(body: RegisterIn, db: DB, response: Response, tasks: BackgroundTasks):
     """Create an account and sign in. A link to confirm the address is emailed after the response."""
+    _check_name_free(db, body.display_name)
     user = User(email=body.email.lower(), password_hash=hash_password(body.password),
                 display_name=body.display_name.strip())
     db.add(user)
@@ -147,6 +161,8 @@ def update_me(body: ProfilePatch, db: DB, user: CurrentUser, tasks: BackgroundTa
     - other sessions stay signed in; tokens carry the account id, not the email
     - role and id can't be changed here
     """
+    if body.display_name is not None and body.display_name.strip() != user.display_name:
+        _check_name_free(db, body.display_name, user)  # an existing name can stay as it is
     new_email = body.email is not None and body.email.lower() != user.email
     if new_email:
         if not body.current_password or not verify_password(body.current_password, user.password_hash):

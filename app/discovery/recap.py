@@ -20,7 +20,7 @@ from html import escape
 from sqlalchemy import func, select
 
 from ..config import get_settings
-from ..mail import Email
+from ..mail import Email, plain_name
 from ..models import DiscoveredItem, DiscoveryCheck, DiscoverySource, IssueReport, WentPhoto
 from ..stats import CHICAGO
 from .budget import budget_state
@@ -169,8 +169,10 @@ def gather(db, now: datetime) -> Week:
     w.checks, w.pages, w.week_cost = checks, int(pages), cost_usd(int(tin), int(tout))
     w.state, w.spent, w.budget = budget_state(db, now)
     for i in db.scalars(select(IssueReport).where(IssueReport.created_at >= since).order_by(IssueReport.created_at)):
-        who = (i.reporter.display_name.strip() if i.reporter else "") or ("A member" if i.reporter else "A deleted account")
-        what = i.what_happened if len(i.what_happened) <= 140 else i.what_happened[:137].rstrip() + "..."
+        # CC-185: on one line, so a member's text can't add lines of its own to the recap
+        who = plain_name(i.reporter.display_name, "A member") if i.reporter else "A deleted account"
+        what = " ".join(i.what_happened.split())
+        what = what if len(what) <= 140 else what[:137].rstrip() + "..."
         w.issues.append((i.key, who, i.page or "-", what))
     w.photos_waiting = db.scalar(select(func.count()).select_from(WentPhoto).where(WentPhoto.status == "waiting")) or 0
     w.issues_open = db.scalar(select(func.count()).select_from(IssueReport).where(IssueReport.status.in_(["new", "looking"]))) or 0

@@ -1,4 +1,5 @@
 """Request and response shapes. FastAPI validates against these and builds /docs from them."""
+import re
 import uuid
 from datetime import date, date as date_, datetime
 from decimal import Decimal
@@ -25,6 +26,25 @@ def _bcrypt_limit(v: str) -> str:
     return v
 
 
+# CC-185: names are one line of plain text. They show on takes, crew pages and in emails, so no line
+# breaks, control characters or direction overrides. Reserved names are checked in routers/auth.py.
+_NOT_IN_NAMES = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029\u202a-\u202e\u2066-\u2069]")
+RESERVED_NAMES = {"culturecrew", "chiculturecrew", "chicagoculturecrew", "admin", "administrator", "support"}
+
+
+def name_key(name: str) -> str:
+    """"Culture-Crew" and "culture crew" are the same name to a reader."""
+    return "".join(c for c in name.casefold() if c.isalnum())
+
+
+def _plain_name(v: str | None) -> str | None:
+    if v is None:
+        return v
+    if _NOT_IN_NAMES.search(v):
+        raise ValueError("Use one line of plain text")
+    return v.strip()
+
+
 class JoinSourceIn(BaseModel):
     """CC-121: where a visit that came by the join page came from (CC-110's tags or the referring domain).
     Cleaned by traffic.source_of; only counted, never kept with the account."""
@@ -41,6 +61,7 @@ class RegisterIn(BaseModel):
     join_source: JoinSourceIn | None = None  # CC-121: sent only for a sign-up in a visit that came by /join
 
     _password_fits_bcrypt = field_validator("password")(_bcrypt_limit)
+    _plain_display_name = field_validator("display_name")(_plain_name)
 
 
 class LoginIn(BaseModel):
@@ -65,6 +86,8 @@ class ProfilePatch(BaseModel):
     display_name: str | None = Field(default=None, max_length=80)
     email: EmailStr | None = None
     current_password: str | None = Field(default=None, max_length=200)
+
+    _plain_display_name = field_validator("display_name")(_plain_name)
 
 
 class UserOut(ORM):
@@ -826,10 +849,14 @@ class CrewIn(BaseModel):
     def _trim(cls, v: str) -> str:
         return v.strip()
 
+    _plain_crew_name = field_validator("name")(_plain_name)
+
 
 class CrewPatch(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=60)
     description: str | None = Field(default=None, max_length=200)
+
+    _plain_crew_name = field_validator("name")(_plain_name)
 
 
 class CrewMemberOut(BaseModel):

@@ -91,7 +91,7 @@ def user_token(client):
 
 @pytest.fixture
 def admin_token(client, db):
-    token = register(client, email="admin@example.com", name="Admin")
+    token = register(client, email="admin@example.com", name="Local Admin")  # CC-185: "Admin" alone is reserved
     user = db.scalar(select(User).where(User.email == "admin@example.com"))
     user.role = Role.admin
     db.commit()
