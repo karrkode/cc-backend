@@ -7,7 +7,7 @@ from sqlalchemy import case, delete, select
 from starlette.concurrency import run_in_threadpool
 
 from .. import photos
-from ..deps import DB, CurrentUser
+from ..deps import DB, CurrentUser, require_verified_email
 from ..models import Attended, Event, Plan, PlanStatus, WentPhoto
 from ..crewplans import attach_crew_plans, my_crew_ids, share_been, share_plan, shared_with, unshare
 from ..picks import attach_picks
@@ -63,6 +63,7 @@ async def add_photo(event_id: int, request: Request, db: DB, user: CurrentUser):
     """CC-76: add (or replace) your photo from an event you've been to. The body is the photo itself,
     JPEG or WebP, as the browser shrank it. Checked by Amazon Rekognition before it's stored; it then
     waits for an approver."""
+    require_verified_email(user, "sending photos")  # CC-186: before the photo is read
     if int(request.headers.get("content-length") or 0) > photos.MAX_BYTES:
         raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, "That photo is too big. Try a smaller one.")
     data = bytearray()
@@ -121,6 +122,8 @@ def share_journal(event_id: int, body: ShareIn, db: DB, user: CurrentUser):
     mark = db.get(Attended, (user.id, event_id))
     if mark is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Mark it \u201cI've been\u201d first")
+    if body.shared:  # CC-186: stopping sharing is always allowed
+        require_verified_email(user, "sharing on an event\u2019s page")
     if body.shared and not mark.words:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Save your three words first")
     if not body.shared:

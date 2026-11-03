@@ -7,8 +7,7 @@ from sqlalchemy import and_, case, func, or_, select, true
 
 from ..areas import area_of, region_of
 from ..categories import CATEGORIES, OPERA_IS, REMOVED, category_condition
-from ..config import get_settings
-from ..deps import DB, AdminUser, CurrentUser, OptionalUser
+from ..deps import DB, AdminUser, CurrentUser, OptionalUser, require_verified_email
 from .. import photos
 from ..autoreject import reject_if_caught
 from .. import fromlink
@@ -185,9 +184,7 @@ def get_event(event_id: int, db: DB, user: OptionalUser):
 def create_event(body: EventIn, db: DB, user: CurrentUser):
     """Everyone's submissions wait for review, except that admins can choose to publish
     now or at a set time (publish / publish_at)."""
-    if get_settings().require_verified_email and user.role != Role.admin and not user.email_verified:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Confirm your email address before sending in events. "
-                            "Use the link we emailed you, or send a new one from your account page.")
+    require_verified_email(user, "sending in events")
     _no_past_run_dates(body.run_dates)
     event = new_event(db, body, user)
     if user.role != Role.admin:
@@ -202,6 +199,7 @@ def create_event(body: EventIn, db: DB, user: CurrentUser):
 def from_link(body: LinkIn, db: DB, user: CurrentUser):
     """CC-124: read an event's page and send back a draft for the Suggest form. Saves no event. 422 when the
     link isn't a public web page or the page can't be read, with a message to show."""
+    require_verified_email(user, "reading events from a link")  # CC-186: before the limits, so it uses none
     key = str(user.id)
     if not fromlink.minute_limiter.hit(key, fromlink.PER_MINUTE):
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "That's a lot of links at once. Wait a minute and try again.")
