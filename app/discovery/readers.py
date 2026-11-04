@@ -15,7 +15,8 @@ from .fetch import USER_AGENT, TIMEOUT
 
 MODEL = "claude-haiku-5-5"
 # Claude Haiku 5.5 list price per million tokens (prompts up to 100K tokens), for estimates only; the
-# Anthropic Console has the exact bill.
+# Anthropic Console has the exact bill. CC-211: the budget, its 80% alert and the source ordering all use
+# these two numbers through cost_usd, so a correction here is the only change needed.
 PRICE_IN, PRICE_OUT = 0.10, 0.50
 
 
