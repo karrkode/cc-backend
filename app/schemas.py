@@ -5,7 +5,7 @@ from datetime import date, date as date_, datetime
 from decimal import Decimal
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
 from .models import Area, EventStatus, PlanStatus, Region, Role
 from .websites import normalize_website
@@ -143,10 +143,21 @@ class VenueOut(ORM):
     opera: bool = False  # and whether they start as opera
 
 
+def _not_out_of_town(v):
+    if v is not None and v.value == "out_of_town":
+        raise ValueError("Out of town is no longer an option: the site covers Chicago and its suburbs")
+    return v
+
+
+# CC-217: what a new or edited venue can be. VenueOut still reads the old value until the clean-up has been run.
+AreaChoice = Annotated[Area, AfterValidator(_not_out_of_town)]
+RegionChoice = Annotated[Region, AfterValidator(_not_out_of_town)]
+
+
 class VenueIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     neighborhood: str = Field(default="", max_length=120)
-    area: Area | None = None  # worked out from the neighborhood when left out
+    area: AreaChoice | None = None  # worked out from the neighborhood when left out
 
 
 # CC-78: a venue's opening hours and usual show times. Times are 24-hour HH:MM; a closing time earlier
@@ -164,8 +175,8 @@ class VenuePatch(BaseModel):
     gets the area worked out from it."""
     name: str | None = Field(default=None, min_length=1, max_length=200)
     neighborhood: str | None = Field(default=None, max_length=120)
-    area: Area | None = None
-    region: Region | None = None  # CC-73: send null to clear; left out, it's worked out again when the venue moves
+    area: AreaChoice | None = None
+    region: RegionChoice | None = None  # CC-73: send null to clear; left out, it's worked out again when the venue moves
     # CC-78: set by an admin, discovery leaves them alone from then on; {} clears them (discovery may fill them again)
     open_hours: OpenHours | None = None
     show_times: ShowTimes | None = None
@@ -191,6 +202,26 @@ class VenueAdminOut(VenueOut):
     show_times: dict = {}
     show_times_by: str = ""
     website: str = ""  # CC-213: admin-only, so it's here and never in VenueOut
+
+
+class OutOfTownSource(BaseModel):
+    id: int
+    name: str
+
+
+class OutOfTownVenue(BaseModel):
+    id: int
+    name: str
+    neighborhood: str
+    events: int  # any status: a venue can only go once none are left
+    sources: list[OutOfTownSource]  # its discovery sources that are still on
+
+
+class OutOfTownOut(BaseModel):
+    """CC-217: what the clean-up on the Venues page has left to do."""
+    venues: list[OutOfTownVenue]
+    event_ids: list[int]
+    waiting: int  # found events from their sources still waiting for review
 
 
 class WebsiteSuggestionOut(BaseModel):
