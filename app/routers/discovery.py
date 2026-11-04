@@ -12,11 +12,13 @@ from ..deps import DB, AdminUser
 from ..discovery.budget import budget_state, set_monthly_budget
 from ..discovery.needs import needs
 from ..discovery.readers import cost_usd
+from ..discovery.recap import _md, budget_note, gather, next_send
 from ..discovery.rules import norm_title
 from ..discovery.store import matching_rule, possible_duplicates, rule_reason, sync_performances, venue_for
 from ..models import DiscoveredItem, DiscoveryCheck, DiscoverySource, Event, SkipRule, Venue
 from ..schemas import (BudgetIn, DiscoveredItemOut, DiscoveredPage, DiscoveryOverview, DiscoverySourceOut, DiscoverySourcePatch,
-                       EventIn, EventRef, FoundChange, RUN_DATES_MAX, RejectIn, RejectOut, SkipRuleOut, UnreadableSource)
+                       EventIn, EventRef, FoundChange, RUN_DATES_MAX, RejectIn, RejectOut, SkipRuleOut, SourcingCount, SourcingSummary,
+                       SourcingUnreadable, UnreadableSource)
 from .events import new_event
 
 router = APIRouter(prefix="/admin/discovery", tags=["discovery"])
@@ -54,6 +56,20 @@ def sources(db: DB, _: AdminUser):
     state, spent, budget = budget_state(db)
     return DiscoveryOverview(sources=[_out(s, waiting, checks) for s in listed], tokens_in_30d=int(tin), tokens_out_30d=int(tout),
                              cost_30d_usd=cost_usd(int(tin), int(tout)), spent_month_usd=spent, budget_usd=budget, budget_state=state)
+
+
+@router.get("/summary", response_model=SourcingSummary)
+def summary(db: DB, _: AdminUser):
+    """What the Event Sourcing page shows (CC-206): what needs the admin, then the week and the budget."""
+    now = datetime.now(UTC)
+    w = gather(db, now)
+    return SourcingSummary(new_waiting=w.new_waiting, updates_waiting=w.updates_waiting,
+                           waiting_by_source=[SourcingCount(name=name, n=n) for name, n in w.waiting_by_source],
+                           unreadable=[SourcingUnreadable(id=sid, name=name, reason=reason) for sid, name, _page, reason, _tried in w.unreadable],
+                           by_hand=[name for name, _page in w.by_hand], period=f"{_md(w.first)} to {_md(w.last)}",
+                           found_total=w.found_total, left_out=w.left_out, checks=w.checks, week_cost_usd=w.week_cost,
+                           next_recap=next_send(now), sources=len(w.sources), spent_month_usd=w.spent, budget_usd=w.budget,
+                           budget_state=w.state, budget_note=budget_note(w))
 
 
 @router.put("/budget", response_model=DiscoveryOverview)

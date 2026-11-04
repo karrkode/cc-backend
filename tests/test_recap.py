@@ -7,7 +7,7 @@ from app import mail
 from app.discovery.readers import FoundEvent
 from app.discovery.recap import build_recap
 from app.discovery.store import record
-from app.models import DiscoveryCheck, DiscoveredItem, SkipRule
+from app.models import DiscoveryCheck, DiscoveredItem, DiscoverySource, SkipRule, SourceKind
 from scripts import recap as recap_script
 
 from .test_discovery import make_source, pages  # noqa: F401 - pages is a fixture
@@ -93,3 +93,58 @@ def test_the_script_sends_and_fails_loudly(db, Session, monkeypatch, capsys):
     with pytest.raises(SystemExit) as stop:
         recap_script.main()
     assert stop.value.code == 1 and "SES said no" in capsys.readouterr().err
+
+
+# ---- CC-206: the Event Sourcing page shows the recap's own numbers ----
+
+def test_summary_matches_the_recap(client, db, admin_token):
+    from .conftest import auth
+    s = make_source(db)
+    record(db, s, found("Hamlet"), "")
+    record(db, s, found("Macbeth"), "")
+    record(db, s, found("Acting 101", kind="class"), "a class or workshop")
+    db.add(DiscoverySource(name="Court", kind=SourceKind.theater, pages=["https://court.example/"], reader="claude", every_days=30,
+                           venue_name="Court Theatre", neighborhood="Hyde Park", page_state={}, venue_hours={}, unchanged_streak=0,
+                           last_status="", last_error="", manual=True))
+    s.last_status, s.last_error, s.last_checked_at = "blocked", "the site refused the request (HTTP 403)", datetime.now(UTC)
+    db.add(DiscoveryCheck(source_id=s.id, status="ok", pages_read=3, input_tokens=100_000, output_tokens=20_000))
+    db.commit()
+
+    r = client.get("/admin/discovery/summary", headers=auth(admin_token))
+    assert r.status_code == 200
+    b = r.json()
+    t = build_recap(db).text
+    assert f"Waiting for review: {b['new_waiting'] + b['updates_waiting']} ({b['new_waiting']} new" in t
+    assert f"NEW EVENTS FOUND THIS WEEK: {b['found_total']}" in t
+    assert f"LEFT OUT AUTOMATICALLY: {b['left_out']}" in t
+    assert f"CHECKS THIS WEEK: {b['checks']} check" in t
+    assert f"({b['period']})" in t
+    assert b["new_waiting"] == 2 and b["left_out"] == 1 and b["sources"] == 2
+    assert b["waiting_by_source"] == [{"name": "Goodman", "n": 2}]
+    assert b["unreadable"] == [{"id": s.id, "name": "Goodman", "reason": "the site refused the request (HTTP 403)"}]
+    assert b["by_hand"] == ["Court"]
+    assert b["budget_usd"] == 10 and b["budget_state"] == "ok" and b["budget_note"] == ""
+
+
+def test_summary_with_nothing_to_do(client, db, admin_token):
+    from .conftest import auth
+    b = client.get("/admin/discovery/summary", headers=auth(admin_token)).json()
+    assert b["new_waiting"] == b["updates_waiting"] == b["found_total"] == 0
+    assert b["waiting_by_source"] == [] and b["unreadable"] == [] and b["by_hand"] == []
+
+
+def test_summary_is_for_admins(client, db, user_token):
+    from .conftest import auth
+    assert client.get("/admin/discovery/summary").status_code == 401
+    assert client.get("/admin/discovery/summary", headers=auth(user_token)).status_code == 403
+
+
+@pytest.mark.parametrize("now, sends", [
+    (datetime(2026, 11, 4, 18, tzinfo=UTC), "2026-11-10"),   # a Wednesday
+    (datetime(2026, 11, 10, 15, tzinfo=UTC), "2026-11-10"),  # Tuesday, 9 AM in Chicago: today
+    (datetime(2026, 11, 10, 16, tzinfo=UTC), "2026-11-17"),  # Tuesday, 10 AM in Chicago: it's gone
+    (datetime(2026, 11, 11, 3, tzinfo=UTC), "2026-11-17"),   # still Tuesday evening in Chicago
+])
+def test_next_recap(now, sends):
+    from app.discovery.recap import next_send
+    assert next_send(now).isoformat() == sends
