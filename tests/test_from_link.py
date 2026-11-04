@@ -29,16 +29,15 @@ def web_pages(monkeypatch):
     """Pages by url; every host is public unless a test says otherwise; robots.txt allows everything."""
     served = {}
 
-    def fake_fetch(url, etag="", last_modified="", ai=True, check=None, timeout=25, **limits):
-        if check:
-            check(url)
+    def fake_fetch(url, etag="", last_modified="", ai=True, timeout=25, **limits):
+        web.check_public(url)
         got = served[url]
         if isinstance(got, Exception):
             raise got
         return Page(url=url, status=200, text=got)
     monkeypatch.setattr(web, "fetch", fake_fetch)
-    monkeypatch.setattr(web, "robots_for", lambda url, check=None, timeout=25: Robots([], [], 0.0, served.get("ai_opt_out", False)))
-    monkeypatch.setattr(fromlink, "_addresses", lambda host, port: ["93.184.215.14"])
+    monkeypatch.setattr(web, "robots_for", lambda url, timeout=25: Robots([], [], 0.0, served.get("ai_opt_out", False)))
+    monkeypatch.setattr(web, "_addresses", lambda host, port: ["93.184.215.14"])
     monkeypatch.setattr(fromlink, "bounded_read", fromlink.fetch_and_read)  # in this process, so the fakes apply (CC-182)
     return served
 
@@ -130,17 +129,10 @@ def test_unreadable_pages_say_so(client, user_token, db, web_pages, claude):
     ("ftp://files.example/x", "93.184.215.14"), ("https://site.example:8443/", "93.184.215.14"),
     ("https://user:pw@site.example/", "93.184.215.14"), ("file:///etc/passwd", "127.0.0.1")])
 def test_private_and_odd_links_are_refused(client, user_token, monkeypatch, url, addr):
-    monkeypatch.setattr(fromlink, "_addresses", lambda host, port: [addr])
+    monkeypatch.setattr(web, "_addresses", lambda host, port: [addr])
     monkeypatch.setattr(web, "fetch", lambda *a, **k: pytest.fail("fetched a refused link"))
     r = ask(client, user_token, url)
     assert r.status_code == 422 and r.json()["detail"].startswith("We can't read that link")
-
-
-def test_a_redirect_to_a_private_address_is_refused(monkeypatch):
-    monkeypatch.setattr(fromlink, "_addresses", lambda host, port: ["10.0.0.1" if host == "inside.example" else "93.184.215.14"])
-    hop = web._CheckedRedirects(fromlink.check_public)
-    with pytest.raises(fromlink.PrivateAddress):
-        hop.redirect_request(None, None, 302, "Found", {}, "http://inside.example/secret")
 
 
 def test_signed_in_and_rate_limited(client, user_token, web_pages, claude, monkeypatch):

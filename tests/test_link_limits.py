@@ -15,6 +15,7 @@ from app.discovery.pagetext import page_text
 
 from . import link_workers
 from .conftest import auth
+from .fake_net import route
 from .test_from_link import LD_PAGE, web_pages  # noqa: F401 - fixture
 
 SIZE = 3_000_000  # fromlink.MAX_BYTES: the most of a member's page that's downloaded
@@ -112,11 +113,12 @@ class _Slow(BaseHTTPRequestHandler):
 
 
 @pytest.fixture
-def slow_site():
+def slow_site(monkeypatch):
     server = ThreadingHTTPServer(("127.0.0.1", 0), _Slow)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     web._robots.clear()
-    yield f"http://127.0.0.1:{server.server_port}"
+    route(monkeypatch, server.server_port)
+    yield "http://slow.example"
     server.shutdown()
     web._robots.clear()
 
@@ -179,7 +181,7 @@ def test_too_many_reads_at_once_are_turned_away(monkeypatch):
 
 
 def test_the_api_answers_while_a_link_is_read(client, user_token, monkeypatch, short_deadline):
-    monkeypatch.setattr(fromlink, "_addresses", lambda host, port: ["93.184.215.14"])
+    monkeypatch.setattr(web, "_addresses", lambda host, port: ["93.184.215.14"])
     monkeypatch.setattr(fromlink, "bounded_read", partial(fromlink.bounded_read, work=link_workers.spin))
     got = {}
     reading = threading.Thread(target=lambda: got.update(r=client.post("/events/from-link", json={"url": "https://x.example/"},
@@ -203,7 +205,7 @@ def test_the_reader_process_refuses_private_addresses(url):
 
 
 def test_a_redirect_to_a_private_address_is_refused_in_the_reader(web_pages, monkeypatch):  # noqa: F811
-    monkeypatch.setattr(fromlink, "_addresses", lambda host, port: ["127.0.0.1"] if host == "inside.example" else ["93.184.215.14"])
+    monkeypatch.setattr(web, "_addresses", lambda host, port: ["127.0.0.1"] if host == "inside.example" else ["93.184.215.14"])
     web_pages["https://x.example/go"] = fromlink.PrivateAddress("redirected")
     assert fromlink.fetch_and_read("https://inside.example/")[0] == "private"
 

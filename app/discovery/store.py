@@ -8,6 +8,7 @@
 - An item seen again just has its details refreshed (unless an admin has already decided on it).
 - A new item matching one of the admin's skip rules (CC-71) is rejected quietly, and the rule counts it.
 - CC-217: an item whose venue is out of town is left out (status "skipped"): the site covers Chicago and its suburbs.
+- CC-189: an event's link is kept only if it's http(s) on the source's own site: a page can name any address.
 - CC-79: an item that is a catalog event (listed or approved) passes its performance dates and times on
   to that event, for the planner. That's the one thing discovery changes on an event by itself: the
   dates aren't shown on cards, and admins don't edit them.
@@ -15,6 +16,7 @@
 from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
 from types import SimpleNamespace
+from urllib.parse import urlsplit
 
 from sqlalchemy import func, select
 
@@ -39,6 +41,21 @@ def _price(v) -> Decimal | None:
         return None if v is None else Decimal(str(v)).quantize(Decimal("0.01"))
     except InvalidOperation:
         return None
+
+
+def _site(host: str | None) -> str:
+    """The last two parts of a host name, so www., tickets. and api. of one domain are one site."""
+    return ".".join((host or "").lower().rstrip(".").split(".")[-2:])
+
+
+def on_source_site(url: str | None, source: DiscoverySource) -> bool:
+    """CC-189: whether url is an http(s) address on the same site as one of the source's pages."""
+    try:
+        parts = urlsplit(url or "")
+        return parts.scheme.lower() in ("http", "https") and bool(parts.hostname) and \
+            _site(parts.hostname) in {_site(urlsplit(p).hostname) for p in source.pages or []}
+    except ValueError:
+        return False
 
 
 def key_for(e: FoundEvent) -> str:
@@ -219,6 +236,8 @@ def sync_performances(db, item: DiscoveredItem) -> None:
 
 def record(db, source: DiscoverySource, found: FoundEvent, skip: str) -> str:
     """Store one found event. Returns what it was: new | update | skipped | seen."""
+    if not on_source_site(found.url, source):
+        found.url = None
     what = _record(db, source, found, skip)
     item = db.scalar(select(DiscoveredItem).where(DiscoveredItem.source_id == source.id, DiscoveredItem.key == key_for(found)))
     if item is not None:
