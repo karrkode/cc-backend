@@ -3,7 +3,10 @@
 area_of() keeps the rules of area_of() in the old app.py; region_of() is CC-73."""
 import re
 
-from .models import Area, Region
+from fastapi import HTTPException, status
+from sqlalchemy import or_
+
+from .models import Area, Region, Venue
 
 FAR_IL = {"Rockford, IL"}       # Illinois, but not a Chicago suburb
 SUBURB_NO_STATE = {"Niles"}     # suburbs entered without ", IL"
@@ -50,3 +53,21 @@ def region_of(neighborhood: str, area: Area | None = None) -> Region | None:
     if area == Area.out_of_town:
         return Region.out_of_town
     return CITY_REGIONS.get((neighborhood or "").strip().lower())
+
+
+# CC-217: the site covers Chicago and its suburbs. Rows marked out of town are still read until an admin has run the
+# clean-up on the Venues page, but nothing new gets the mark. A later migration removes the enum values.
+OUT_OF_TOWN = or_(Venue.area == Area.out_of_town, Venue.region == Region.out_of_town)
+
+
+def is_out_of_town(venue: Venue) -> bool:
+    return venue.area == Area.out_of_town or venue.region == Region.out_of_town
+
+
+def nearby_area(neighborhood: str, area: Area | None = None) -> Area:
+    """The area for a new or moved venue: the one chosen, else worked out. Refuses a place outside the suburbs."""
+    area = area or area_of(neighborhood)
+    if area == Area.out_of_town:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
+                            f"We only list Chicago and its suburbs, so we can't add a venue in {neighborhood.strip()}.")
+    return area

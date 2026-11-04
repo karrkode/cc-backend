@@ -5,7 +5,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import and_, case, func, or_, select, true
 
-from ..areas import area_of, region_of
+from ..areas import nearby_area, region_of
 from ..categories import CATEGORIES, OPERA_IS, REMOVED, category_condition
 from ..deps import DB, AdminUser, CurrentUser, OptionalUser, require_verified_email
 from .. import photos
@@ -27,7 +27,7 @@ def get_or_create_venue(db: DB, v: VenueIn) -> Venue:
     venue = db.scalar(select(Venue).where(func.lower(Venue.name) == name.lower(),
                                           func.lower(Venue.neighborhood) == hood.lower()))
     if venue is None:
-        area = v.area or area_of(hood)
+        area = nearby_area(hood, v.area)
         venue = Venue(name=name, neighborhood=hood, area=area, region=region_of(hood, area))
         db.add(venue)
         db.flush()

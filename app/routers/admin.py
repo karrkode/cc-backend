@@ -5,12 +5,13 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, select
 
+from ..areas import OUT_OF_TOWN
 from ..categories import CATEGORIES, REMOVED
 from ..deps import DB, AdminUser
 from ..discovery.rules import norm_title
 from .. import roundups
-from ..models import Attended, Event, EventStatus, SubmissionRule, Venue
-from ..schemas import (EventAdminOut, EventAdminPage, EventInterestOut, RoundupIntroIn, RoundupOut, StatsOut, SubmissionRuleIn, SubmissionRuleOut,
+from ..models import Attended, DiscoveredItem, DiscoverySource, Event, EventStatus, SubmissionRule, Venue
+from ..schemas import (EventAdminOut, EventAdminPage, EventInterestOut, OutOfTownOut, RoundupIntroIn, RoundupOut, StatsOut, SubmissionRuleIn, SubmissionRuleOut,
                        TakeHideIn, TrafficOut)
 from ..photos import CHECK_USD, checks_this_month
 from ..stats import event_interest, today_in_chicago, weekly_stats
@@ -51,6 +52,22 @@ def removed(db: DB, _: AdminUser):
     by title, for an admin to bring back with Theater, Music or Visual Art (PATCH /events/<id>) or delete."""
     return db.scalars(select(Event).where(Event.status == EventStatus.withdrawn, Event.withdrawn_reason != "")
                       .order_by(Event.title, Event.id)).all()
+
+
+@router.get("/out-of-town", response_model=OutOfTownOut)
+def out_of_town(db: DB, _: AdminUser):
+    """CC-217: what's left to clean up. Read only: the page deletes through DELETE /events/<id> (photos leave storage
+    too) and DELETE /venues/<id>, and turns sources off through PATCH /admin/discovery/sources/<id>."""
+    venues = db.scalars(select(Venue).where(OUT_OF_TOWN).order_by(func.lower(Venue.name), Venue.id)).all()
+    ids = [v.id for v in venues]
+    events = db.execute(select(Event.id, Event.venue_id).where(Event.venue_id.in_(ids)).order_by(Event.id)).all()
+    linked = db.scalars(select(DiscoverySource).where(DiscoverySource.venue_id.in_(ids)).order_by(DiscoverySource.name)).all()
+    waiting = db.scalar(select(func.count(DiscoveredItem.id)).where(
+        DiscoveredItem.status == "new", DiscoveredItem.source_id.in_([s.id for s in linked])))
+    return {"event_ids": [e.id for e in events], "waiting": waiting,
+            "venues": [{"id": v.id, "name": v.name, "neighborhood": v.neighborhood,
+                        "events": sum(e.venue_id == v.id for e in events),
+                        "sources": [s for s in linked if s.venue_id == v.id and s.active]} for v in venues]}
 
 
 @router.get("/events/scheduled", response_model=list[EventAdminOut])

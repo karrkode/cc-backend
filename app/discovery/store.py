@@ -7,15 +7,18 @@
   ("update", with the changes), for an admin to accept or dismiss. Nothing is changed by itself.
 - An item seen again just has its details refreshed (unless an admin has already decided on it).
 - A new item matching one of the admin's skip rules (CC-71) is rejected quietly, and the rule counts it.
+- CC-217: an item whose venue is out of town is left out (status "skipped"): the site covers Chicago and its suburbs.
 - CC-79: an item that is a catalog event (listed or approved) passes its performance dates and times on
   to that event, for the planner. That's the one thing discovery changes on an event by itself: the
   dates aren't shown on cards, and admins don't edit them.
 """
 from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
+from types import SimpleNamespace
 
 from sqlalchemy import func, select
 
+from ..areas import is_out_of_town
 from ..categories import BY_SOURCE_KIND, REMOVED
 from ..models import DiscoveredItem, DiscoverySource, Event, SkipRule, Venue
 from .readers import FoundEvent
@@ -235,6 +238,10 @@ def _record(db, source: DiscoverySource, found: FoundEvent, skip: str) -> str:
     f["category"], f["opera"] = (category if opera else f["category"] or category), opera
     if f["category"] in REMOVED and not skip:  # CC-133: Comedy and Educational aren't listed
         skip = f"{f['category']}, which isn't listed"
+    if not skip:  # CC-217
+        place = venue_for(db, source, SimpleNamespace(venue_name=f["venue_name"]))
+        if place is not None and is_out_of_town(place):
+            skip = "out of town"
     if item is None:
         item = DiscoveredItem(source_id=source.id, key=key, first_seen_at=now, last_seen_at=now, changes={}, detail_checks=[], **f)
         db.add(item)

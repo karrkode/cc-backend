@@ -3,7 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import delete, func, select, update
 
-from ..areas import area_of, region_of
+from ..areas import nearby_area, region_of
 from ..deps import DB, AdminUser
 from ..models import Event, SubmissionRule, Venue, VenueWebsiteDismissal
 from ..schemas import (VenueAdminOut, VenueIn, VenueMergeOut, VenueOut, VenuePatch, WebsiteChoice,
@@ -28,7 +28,7 @@ def create_venue(body: VenueIn, db: DB, _: AdminUser):
                                               func.lower(Venue.neighborhood) == hood.lower()))
     if exists:
         raise HTTPException(status.HTTP_409_CONFLICT, "That venue already exists")
-    area = body.area or area_of(hood)
+    area = nearby_area(hood, body.area)
     venue = Venue(name=name, neighborhood=hood, area=area, region=region_of(hood, area))
     db.add(venue)
     db.commit()
@@ -115,7 +115,7 @@ def update_venue(venue_id: int, body: VenuePatch, db: DB, _: AdminUser):
         raise HTTPException(status.HTTP_409_CONFLICT,
                             "Another venue already has that name and neighborhood. Merge this one into it instead.")
     if hood != venue.neighborhood and changes.get("area") is None:
-        venue.area = area_of(hood)
+        venue.area = nearby_area(hood)
     if changes.get("area") is not None:
         venue.area = changes["area"]
     if "region" in changes:  # set (or cleared) by an admin

@@ -33,8 +33,8 @@ def test_rename_and_move(client, admin_token, make_event, db):
     assert r.status_code == 200, r.text
     assert (r.json()["name"], r.json()["neighborhood"], r.json()["area"], r.json()["events"]) == \
         ("The Goodman", "Evanston, IL", "suburbs", 1)  # area worked out from the new neighborhood
-    r = client.patch(f"/venues/{v.id}", json={"area": "out_of_town"}, headers=auth(admin_token))
-    assert r.json()["area"] == "out_of_town" and r.json()["name"] == "The Goodman"
+    r = client.patch(f"/venues/{v.id}", json={"area": "city"}, headers=auth(admin_token))
+    assert r.json()["area"] == "city" and r.json()["name"] == "The Goodman"
     assert client.get("/events").json()["items"][0]["venue"]["name"] == "The Goodman"
 
 
