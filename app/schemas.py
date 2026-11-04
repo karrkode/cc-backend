@@ -585,6 +585,37 @@ class DiscoveryOverview(BaseModel):
     budget_state: str = "ok"
 
 
+class SourcingCount(BaseModel):
+    name: str
+    n: int
+
+
+class SourcingUnreadable(BaseModel):
+    id: int
+    name: str
+    reason: str
+
+
+class SourcingSummary(BaseModel):
+    """CC-206: the Event Sourcing page. The weekly recap's own numbers (recap.gather), so the two can't disagree."""
+    new_waiting: int
+    updates_waiting: int
+    waiting_by_source: list[SourcingCount]
+    unreadable: list[SourcingUnreadable]
+    by_hand: list[str]
+    period: str  # "Oct 28 to Nov 3": the seven days the recap covers
+    found_total: int
+    left_out: int
+    checks: int
+    week_cost_usd: float  # an estimate, like spent_month_usd; the Anthropic Console has the exact bill
+    next_recap: date
+    sources: int  # active sources
+    spent_month_usd: float
+    budget_usd: float
+    budget_state: str
+    budget_note: str
+
+
 class BudgetIn(BaseModel):
     usd: float = Field(ge=1, le=100)  # dollars a month for reading pages with Claude
 

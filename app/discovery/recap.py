@@ -29,6 +29,7 @@ from .readers import cost_usd
 from .store import venue_for
 
 DAYS = 7
+SEND_WEEKDAY, SEND_HOUR = 1, 10  # Tuesday, 10 AM Chicago time
 CHANGE_NAMES = {"cost_text": "Price", "min_price": "Lowest price", "begin_date": "Opens", "end_date": "Closes", "weekly": "Show days", "weeks": "Weeks of the month"}
 EVERY = {7: "Every week", 14: "Every 2 weeks", 30: "Every month", 60: "Every 2 months"}
 MAX_UPDATES = 20
@@ -91,6 +92,7 @@ class Week:
     name: str
     new_waiting: int = 0
     updates_waiting: int = 0
+    waiting_by_source: list[tuple[str, int]] = field(default_factory=list)  # CC-206: all new items, most first
     found_by_source: list[tuple[str, int]] = field(default_factory=list)
     found_total: int = 0
     updates: list[tuple[str, str, str, str, str]] = field(default_factory=list)  # event, source, change, was, now
@@ -110,6 +112,10 @@ class Week:
     issues_open: int = 0  # new or being looked into, all time
     photos_waiting: int = 0  # CC-91: "I've been" photos waiting for an approver
     needs: int = 0  # CC-88: new events still missing a date or show days
+
+    @property
+    def left_out(self) -> int:
+        return sum(n for _, n in self.by_rule + self.built_in)
 
     @property
     def quiet(self) -> bool:
@@ -145,6 +151,9 @@ def gather(db, now: datetime) -> Week:
     waiting = dict(db.execute(select(DiscoveredItem.status, func.count()).where(DiscoveredItem.status.in_(["new", "update"]))
                               .group_by(DiscoveredItem.status)).all())
     w.new_waiting, w.updates_waiting = waiting.get("new", 0), waiting.get("update", 0)
+    by_source = db.execute(select(DiscoveredItem.source_id, func.count()).where(DiscoveredItem.status == "new")
+                           .group_by(DiscoveredItem.source_id)).all()
+    w.waiting_by_source = Counter({names.get(sid, "a deleted source"): n for sid, n in by_source}).most_common()
     w.needs = sum(1 for i in db.scalars(select(DiscoveredItem).where(DiscoveredItem.status == "new"))
                   if needs(i, venue_for(db, i.source, i)))
 
@@ -177,6 +186,16 @@ def gather(db, now: datetime) -> Week:
     w.photos_waiting = db.scalar(select(func.count()).select_from(WentPhoto).where(WentPhoto.status == "waiting")) or 0
     w.issues_open = db.scalar(select(func.count()).select_from(IssueReport).where(IssueReport.status.in_(["new", "looking"]))) or 0
     return w
+
+
+def next_send(now: datetime) -> date:
+    """The day the next recap goes out (CC-206), for the Event Sourcing page. The schedule itself is in
+    infra/aws/discovery.tf."""
+    here = now.astimezone(CHICAGO)
+    ahead = (SEND_WEEKDAY - here.weekday()) % 7
+    if ahead == 0 and here.hour >= SEND_HOUR:
+        ahead = 7
+    return here.date() + timedelta(days=ahead)
 
 
 def subject_of(w: Week) -> str:
@@ -221,7 +240,7 @@ def as_text(w: Week) -> str:
     lines += [f"PROPOSED UPDATES: {len(w.updates) + w.more_updates}"]
     lines += _cols([(f"{e} ({src})", ch, f"{was} -> {now}") for e, src, ch, was, now in w.updates]) or ["  None."]
     lines += [f"  ...and {w.more_updates} more."] if w.more_updates else []
-    lines += ["", f"LEFT OUT AUTOMATICALLY: {sum(n for _, n in w.by_rule + w.built_in)}"]
+    lines += ["", f"LEFT OUT AUTOMATICALLY: {w.left_out}"]
     if w.by_rule:
         lines += ["  By your skip rules:"] + _cols([(f"“{p}”", n) for p, n in w.by_rule], "    ") + [f"    Review: {w.link('found/rejected')}"]
     if w.built_in:
