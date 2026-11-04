@@ -27,6 +27,7 @@ from sqlalchemy.exc import IntegrityError
 from .config import get_settings
 from .models import (TrafficCount, TrafficJoinSignup, TrafficJoinVisit, TrafficSourceCount, TrafficSourceVisit,
                      TrafficVisitor, TrafficVisitorDay)
+from .ratelimit import SlidingWindowLimiter
 
 VIEWS = ("home", "join", "catalog", "event", "plan", "submit", "account", "review", "venues", "stats", "reset", "verify")
 KINDS = ("view", "ticket", "outing")
@@ -74,6 +75,48 @@ def visitor_key(vid: str | None, day: date, address: str, user_agent: str) -> tu
     if vid:
         return hashlib.sha256(f"{secret}|vid|{vid}".encode()).hexdigest()[:40], True
     return "d:" + hashlib.sha256(f"{secret}|day|{day}|{address}|{user_agent}".encode()).hexdigest()[:38], False
+
+
+def address_key(day: date, address: str) -> str:
+    """CC-190: what the limits below know an address by, so that not even memory keeps the address itself."""
+    return hashlib.sha256(f"{get_settings().jwt_secret}|address|{day}|{address}".encode()).hexdigest()[:40]
+
+
+class PingLimits:
+    """CC-190: keeps a script from inflating the stats. In memory like the other limiters, so one API process only,
+    and a deploy clears it. Everything is dropped when the day changes, so it can't grow past a day's addresses."""
+
+    def __init__(self):
+        self._minute = SlidingWindowLimiter()
+        self._day: date | None = None
+        self._visitors: dict[str, set[str]] = {}
+
+    def reset(self) -> None:
+        self._minute.reset()
+        self._visitors.clear()
+
+    def _turn_to(self, day: date) -> None:
+        if day != self._day:
+            self._day = day
+            self.reset()
+
+    def ping_allowed(self, day: date, address: str) -> bool:
+        self._turn_to(day)
+        return self._minute.hit(address, get_settings().traffic_pings_per_minute)
+
+    def visitor_allowed(self, day: date, address: str, visitor: str) -> bool:
+        """False for a visitor new to this address today, once it has had its share. Visitors without a browser ID
+        count too: theirs is a hash that changes with the browser string, which a script can vary as easily."""
+        self._turn_to(day)
+        seen = self._visitors.setdefault(address, set())
+        if visitor not in seen:
+            if len(seen) >= get_settings().traffic_new_visitors_per_day:
+                return False
+            seen.add(visitor)
+        return True
+
+
+ping_limits = PingLimits()
 
 
 def _bump(db, day: date, kind: str, name: str) -> None:

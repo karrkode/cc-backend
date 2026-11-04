@@ -4,8 +4,10 @@ from datetime import timedelta
 
 from sqlalchemy import select
 
+from app.config import get_settings
 from app.models import TrafficVisitor, TrafficVisitorDay
 from app.stats import today_in_chicago
+from app.traffic import PingLimits, address_key
 
 from .conftest import auth
 
@@ -191,3 +193,72 @@ def test_invite_page_visits_and_sign_ups_by_link_and_qr(client, admin_token):
     j = summary(client, admin_token, days=7)["join"]
     assert [(r["source"], r["medium"], r["visits"], r["signups"]) for r in j["sources"]] == [
         ("invite", "qr", 2, 1), ("invite", "link", 1, 0)]
+
+
+# CC-190: a script can't inflate the stats, and the page never notices.
+def vid(n):
+    return f"{n:032d}"
+
+
+def from_address(address):
+    return {**BROWSER, "X-Forwarded-For": address}
+
+
+def test_pings_past_the_limit_a_minute_are_ignored(client, admin_token):
+    limit = get_settings().traffic_pings_per_minute
+    answers = {ping(client, from_address("203.0.113.1"), view="home", vid=VID_A).status_code for _ in range(limit + 5)}
+    assert answers == {204}
+    assert summary(client, admin_token, days=1)["by_view"] == {"home": limit}
+
+
+def test_the_limit_a_minute_is_a_sliding_window(client, admin_token, monkeypatch):
+    now = [1000.0]
+    monkeypatch.setattr("app.ratelimit.time.monotonic", lambda: now[0])
+    limit = get_settings().traffic_pings_per_minute
+    for _ in range(limit + 1):
+        ping(client, from_address("203.0.113.1"), view="home", vid=VID_A)
+    now[0] += 61
+    ping(client, from_address("203.0.113.1"), view="home", vid=VID_A)
+    assert summary(client, admin_token, days=1)["by_view"] == {"home": limit + 1}
+
+
+def test_each_address_has_its_own_limit(client, admin_token):
+    limit = get_settings().traffic_pings_per_minute
+    for _ in range(limit + 1):
+        ping(client, from_address("203.0.113.1"), view="home", vid=VID_A)
+    ping(client, from_address("203.0.113.2, 10.0.0.1"), view="home", vid=VID_A)  # the first address is the client's
+    assert summary(client, admin_token, days=1)["by_view"] == {"home": limit + 1}
+
+
+def test_new_visitors_past_the_daily_limit_are_ignored(client, admin_token):
+    limit = get_settings().traffic_new_visitors_per_day
+    for n in range(limit + 5):
+        assert ping(client, from_address("203.0.113.1"), view="home", vid=vid(n), utm_source="probe").status_code == 204
+    s = summary(client, admin_token, days=1)
+    assert s["visitors"] == limit and s["by_view"] == {"home": limit}
+    assert [r["visitors"] for r in s["sources"]] == [limit]
+
+    ping(client, from_address("203.0.113.1"), view="catalog", vid=vid(0))  # someone already counted carries on
+    ping(client, from_address("203.0.113.2"), view="home", vid=vid(99))  # and another address is unaffected
+    s = summary(client, admin_token, days=1)
+    assert s["visitors"] == limit + 1 and s["by_view"] == {"home": limit + 1, "catalog": 1}
+
+
+def test_visitors_without_a_browser_id_count_toward_the_daily_limit(client, admin_token):
+    limit = get_settings().traffic_new_visitors_per_day
+    for n in range(limit + 5):
+        ping(client, {**from_address("203.0.113.1"), "User-Agent": f"Mozilla/5.0 Safari/{n}"}, view="home")
+    assert summary(client, admin_token, days=1)["visitors"] == limit
+
+
+def test_the_limits_start_again_each_day():
+    limits, today = PingLimits(), TODAY
+    allowed = get_settings().traffic_new_visitors_per_day
+    assert all(limits.visitor_allowed(today, "a", str(n)) for n in range(allowed))
+    assert not limits.visitor_allowed(today, "a", "one more")
+    assert limits.visitor_allowed(today + timedelta(days=1), "a", "one more")
+
+
+def test_the_limits_keep_no_address():
+    assert "203.0.113.1" not in address_key(TODAY, "203.0.113.1")
+    assert address_key(TODAY, "203.0.113.1") != address_key(TODAY + timedelta(days=1), "203.0.113.1")
