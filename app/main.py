@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
+from .bodylimit import BodyLimit
 from .config import get_settings
 from .deps import DB
 from .routers import admin, approvals, auth, crews, discovery, events, issues, me, photos, seo, traffic, venues
@@ -14,6 +15,7 @@ app = FastAPI(
     description="Chicago arts events, accounts, and event submissions for chiculturecrew.com.",
 )
 
+app.add_middleware(BodyLimit)  # CC-190: added first, so it runs inside CORS and the site can read its 413
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,

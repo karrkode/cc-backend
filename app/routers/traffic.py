@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from ..deps import DB
 from ..stats import today_in_chicago
-from ..traffic import VIEWS, is_bot, record, source_of, visitor_key
+from ..traffic import VIEWS, address_key, is_bot, ping_limits, record, source_of, visitor_key
 
 router = APIRouter(prefix="/traffic", tags=["traffic"])
 
@@ -28,6 +28,12 @@ class Ping(BaseModel):
 async def ping(request: Request, db: DB):
     """CC-68: count one view, ticket click or planned outing. Anyone may send it; it never fails the page.
     The site sends it as text/plain JSON so the browser needs no preflight request."""
+    address = (request.headers.get("x-forwarded-for", "").split(",")[0].strip()  # set by Caddy, the only way in
+               or (request.client.host if request.client else ""))
+    day = today_in_chicago()
+    limited = address_key(day, address)
+    if not ping_limits.ping_allowed(day, limited):  # CC-190: the page never notices, so it's still a 204
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
     body = (await request.body())[:1000]
     try:
         p = Ping.model_validate(json.loads(body or b"{}"))
@@ -36,10 +42,9 @@ async def ping(request: Request, db: DB):
     agent = request.headers.get("user-agent", "")
     if is_bot(agent) or (p.kind == "view" and p.view not in VIEWS):
         return Response(status_code=status.HTTP_204_NO_CONTENT)
-    address = (request.headers.get("x-forwarded-for", "").split(",")[0].strip()  # set by Caddy, the only way in
-               or (request.client.host if request.client else ""))
-    day = today_in_chicago()
     visitor, lasting = visitor_key(p.vid, day, address, agent)
+    if not ping_limits.visitor_allowed(day, limited, visitor):
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
     source = source_of(p.utm_source, p.utm_medium, p.utm_campaign, p.ref)
 
     def save():  # the database calls are blocking: keep them off the event loop

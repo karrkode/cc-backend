@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     cookie_domain: str | None = None  # ".chiculturecrew.com" in prod so the API and page share it
 
     login_attempts_per_minute: int = 10
+    # CC-190: visitor stats. Pings past either limit still get a 204; they just aren't counted.
+    traffic_pings_per_minute: int = 60  # per address
+    traffic_new_visitors_per_day: int = 10  # per address: a household, or a few friends on one Wi-Fi
 
     # Account emails (CC-44): address verification and password reset. See app/email.py.
     # email_backend: ses (send through Amazon SES), log (write the email to the log; local),

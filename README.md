@@ -192,6 +192,9 @@ applies new migrations when it starts.
   effect immediately rather than when their token expires.
 - Login and register are limited to 10 tries a minute per IP. The counter is in memory,
   which is right for one server; several servers would need a shared store such as Redis.
+- Request bodies over 1 MB are refused (`app/bodylimit.py`), except a photo upload, which has its own 3 MB limit. Caddy
+  stops anything over 4 MB first.
+- `POST /traffic` always answers 204, but counts at most 60 pings a minute and 10 new visitors a day per address.
 
 ## Layout
 
