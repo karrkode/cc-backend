@@ -28,7 +28,7 @@ from .needs import look_again, needs
 from .pagetext import page_text, text_hash
 from .readers import read_aic, read_page
 from .rules import apply_rules, norm_title
-from .store import record, venue_for
+from .store import on_source_site, record, venue_for
 
 STRETCH_AFTER = 3
 MAX_GAP_DAYS = 60
@@ -146,6 +146,8 @@ def read_event_page(db, client, item: DiscoveredItem, today: date, mark: str) ->
     """Read one found event's own page (its schema.org data first, Claude only when that's incomplete) and store what it says."""
     source, out = db.get(DiscoverySource, item.source_id), Outcome(status="ok")
     try:
+        if not on_source_site(item.url, source):  # CC-189: a link stored before these were limited to the source's site
+            raise web.Blocked("this event's link isn't on the source's site")
         page = web.fetch(item.url)
         data = events_in(page.text, page.url, source.kind.value)
         same = [e for e in data if norm_title(e.title) == norm_title(item.title)] or (data if len(data) == 1 else [])

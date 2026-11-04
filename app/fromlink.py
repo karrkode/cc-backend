@@ -4,15 +4,13 @@ draft for the Suggest form; nothing is saved but a line in the discovery log.
 - Discovery's own reader: the robots.txt-aware fetch, the page's structured event data (JSON-LD) first, and
   Claude only when that finds no event. A Claude read is logged as a discovery check, so it counts toward the
   monthly budget; once the budget is used up, only structured data is tried.
-- Only http(s) links to public hosts, checked again on every redirect: no localhost, private networks or the
-  cloud's internal addresses (SSRF).
+- Only http(s) links to public hosts: no localhost, private networks or the cloud's internal addresses (SSRF).
+  CC-189: the shared fetch makes sure of that for every request and redirect; check_public is the early answer.
 - A few links a minute and a few dozen a day per member.
 - CC-182: the page is fetched and read in a process of its own, stopped at DEADLINE, so no page can hold up the
   API's other requests. Only Claude's read (when there's no event data) runs in the request itself.
 """
-import ipaddress
 import multiprocessing
-import socket
 import threading
 from datetime import date
 from functools import lru_cache
@@ -22,6 +20,7 @@ from urllib.parse import urlsplit
 from .config import get_settings
 from .discovery import fetch as web
 from .discovery.budget import budget_state
+from .discovery.fetch import PrivateAddress, check_public
 from .discovery.jsonld import event_places, events_in, visible_title
 from .discovery.pagetext import page_text
 from .discovery.readers import FoundEvent, read_page
@@ -45,40 +44,10 @@ WHY = {"blocked": "That site doesn't let us read its pages automatically.",
        "busy": "We're reading a lot of links right now. Try again in a minute."}
 
 
-class PrivateAddress(web.Blocked):
-    """The link (or a redirect) points somewhere that isn't a public web host."""
-
-
 class Unreadable(Exception):
     def __init__(self, why: str, detail: str = ""):
         super().__init__(detail or why)
         self.why = why
-
-
-def _addresses(host: str, port: int) -> list[str]:
-    return [info[4][0] for info in socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)]
-
-
-def check_public(url: str) -> None:
-    """Raise PrivateAddress unless url is http(s) on the usual port, at a host whose every address is public."""
-    parts = urlsplit(url)
-    if parts.scheme not in ("http", "https") or not parts.hostname or parts.username or parts.password:
-        raise PrivateAddress("only http and https links to public websites can be read")
-    try:
-        port = parts.port
-    except ValueError as e:
-        raise PrivateAddress("that link has a port we can't read") from e
-    if port not in (None, 80, 443):
-        raise PrivateAddress("only links on the usual web ports can be read")
-    try:
-        found = _addresses(parts.hostname, port or (443 if parts.scheme == "https" else 80))
-    except (socket.gaierror, UnicodeError) as e:
-        raise web.FetchError(f"there's no website at {parts.hostname}") from e
-    for a in found:
-        ip = ipaddress.ip_address(a.split("%", 1)[0])
-        ip = ip.ipv4_mapped or ip if ip.version == 6 else ip
-        if not ip.is_global:  # loopback, private, link-local (169.254.169.254), carrier-grade NAT, reserved...
-            raise PrivateAddress("that link points to a private or local address")
 
 
 @lru_cache(maxsize=1)
@@ -123,11 +92,11 @@ def fetch_and_read(url: str) -> tuple[str, object]:
     event data, or its text for Claude. ("ok", what was read) or (why, detail); run in its own process."""
     started = monotonic()
     try:
-        page = web.fetch(url, ai=False, check=check_public, timeout=TIMEOUT, deadline=started + DEADLINE - 1,
-                         max_bytes=MAX_BYTES, wait=False)
+        page = web.fetch(url, ai=False, timeout=TIMEOUT, deadline=started + DEADLINE - 1, max_bytes=MAX_BYTES,
+                         wait=False)
         events = events_in(page.text, page.url, "")
         got = {"url": page.url, "others": max(len(events) - 1, 0),
-               "ai_opt_out": web.robots_for(page.url, check_public, TIMEOUT).ai_opt_out}  # already fetched: no request
+               "ai_opt_out": web.robots_for(page.url, TIMEOUT).ai_opt_out}  # already fetched: no request
         if events:
             found = _pick(events, page.url)
             got["place"] = event_places(page.text).get(norm_title(found.title), {})
