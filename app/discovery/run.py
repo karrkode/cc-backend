@@ -9,6 +9,7 @@ Reading as little as possible (agreed with the product owner):
   or whose price and showtimes are already known)
 - CC-80: a page's own structured event data (schema.org) is used instead of Claude when it's complete
 - CC-80: a monthly budget (budget.py): from 80% event pages wait; at 100% only Check now runs
+- CC-211: from 80%, admins get an email and the sources with the most approved events per dollar go first
 - CC-88: a found event missing a date or show days has its own page read the day after it's found,
   then weekly for 4 weeks (needs.py); these come first within the 10 event pages per run
 """
@@ -21,7 +22,7 @@ from sqlalchemy import select
 from ..models import DiscoveredItem, DiscoveryCheck, DiscoverySource
 from ..stats import chicago_day
 from . import fetch as web
-from .budget import budget_state
+from .budget import alert_if_short, best_first, budget_state
 from .hours import apply_open_hours, apply_show_times, link_venue
 from .jsonld import complete, events_in
 from .needs import look_again, needs
@@ -232,7 +233,10 @@ def run(db, client, today: date, only: int | None = None, force: bool = False) -
     """Check what's due, within the monthly budget (CC-80). force (the command line's --now) and
     Check now (source.check_requested) still run when the budget is used up."""
     results = []
-    for source in due(db, today, only, force):
+    sources = due(db, today, only, force)
+    if budget_state(db)[0] != "ok":  # CC-211: what's left goes to the best sources
+        sources = best_first(db, sources)
+    for source in sources:
         state, spent, budget = budget_state(db)
         if state == "paused" and not (force or source.check_requested):
             results.append((source.name, Outcome(status="waiting", notes=[
@@ -248,10 +252,11 @@ def run(db, client, today: date, only: int | None = None, force: bool = False) -
         if state != "ok":
             results.append(("Event pages", Outcome(status="waiting", notes=[
                 f"${spent:.2f} of the ${budget:.2f} monthly budget is spent, so event pages wait for next month"])))
-            return results
-        missing = check_missing(db, client, today)
-        for source, out in missing + check_details(db, client, today, DETAIL_LIMIT - len(missing)):
-            log(db, source, out, what="detail")
-            db.commit()
-            results.append((source.name + " (event page)", out))
+        else:
+            missing = check_missing(db, client, today)
+            for source, out in missing + check_details(db, client, today, DETAIL_LIMIT - len(missing)):
+                log(db, source, out, what="detail")
+                db.commit()
+                results.append((source.name + " (event page)", out))
+    alert_if_short(db)
     return results

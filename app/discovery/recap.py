@@ -207,13 +207,13 @@ def subject_of(w: Week) -> str:
         + ([f"{len(w.unreadable)} to check by hand"] if w.unreadable else []) \
         + ([f"{iss} {'issue' if iss == 1 else 'issues'} reported"] if iss else []) \
         + ([f"{fr} {'feature' if fr == 1 else 'features'} requested"] if fr else []) \
-        + (["budget used up"] if w.state == "paused" else [])
+        + (["budget used up"] if w.state == "paused" else ["over 80% of the budget spent"] if w.state == "saving" else [])
     return "Event discovery: " + ", ".join(bits)
 
 
 def budget_note(w: Week) -> str:
     if w.state == "saving":
-        return "Over 80% of the budget: event pages wait until next month. Sources are still checked."
+        return "Over 80% of the budget: event pages wait until next month. Sources are still checked, the most approved events per dollar first."
     if w.state == "paused":
         return "The budget is used up: only Check now runs until next month. Raise it on Event sources if needed."
     return ""
