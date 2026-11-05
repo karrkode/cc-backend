@@ -246,6 +246,8 @@ class Venue(Base):
     address: Mapped[str] = mapped_column(String(200), default="", server_default="")
     city: Mapped[str] = mapped_column(String(120), default="", server_default="")
     zip_code: Mapped[str] = mapped_column(String(10), default="", server_default="")
+    # CC-188: added by a member's submission and not yet accepted by an admin (app/venuereview.py)
+    pending: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
 
 
 class VenueWebsiteDismissal(Base):

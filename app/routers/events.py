@@ -17,18 +17,19 @@ from ..picks import attach_picks, pick_condition
 from ..schemas import EventFacets, EventIn, EventOut, EventPage, EventPatch, LinkDraft, LinkIn, RunDate, VenueIn
 from ..stats import today_in_chicago
 from ..takes import attach_takes
+from ..venuereview import accept_venue, drop_if_unused
 from ..visibility import live_condition, utcnow, visible_to
 
 router = APIRouter(prefix="/events", tags=["events"])
 
 
-def get_or_create_venue(db: DB, v: VenueIn) -> Venue:
+def get_or_create_venue(db: DB, v: VenueIn, pending: bool = False) -> Venue:
     name, hood = v.name.strip(), v.neighborhood.strip()
     venue = db.scalar(select(Venue).where(func.lower(Venue.name) == name.lower(),
                                           func.lower(Venue.neighborhood) == hood.lower()))
     if venue is None:
         area = nearby_area(hood, v.area)
-        venue = Venue(name=name, neighborhood=hood, area=area, region=region_of(hood, area))
+        venue = Venue(name=name, neighborhood=hood, area=area, region=region_of(hood, area), pending=pending)
         db.add(venue)
         db.flush()
     return venue
@@ -227,11 +228,13 @@ def new_event(db: DB, body: EventIn, user) -> Event:
             status_, publish_at = EventStatus.approved, body.publish_at.astimezone(UTC)
     if body.venue_id is not None:
         venue = db.get(Venue, body.venue_id)
-        if venue is None:
+        if venue is None or (venue.pending and user.role != Role.admin):  # CC-188: the event would show its details
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "No venue with that venue_id")
     else:
-        venue = get_or_create_venue(db, body.venue)
+        venue = get_or_create_venue(db, body.venue, pending=user.role != Role.admin)
     category, opera = category_for(body, venue, user)
+    if status_ == EventStatus.approved:
+        accept_venue(venue, category, opera)
     return Event(**body.model_dump(exclude={"venue_id", "venue", "publish", "publish_at", "run_dates", "category", "opera"}),
                  category=category, opera=opera, venue_id=venue.id, submitted_by=user.id, status=status_,
                  publish_at=publish_at, run_dates=_run_dates_of(body.run_dates))
@@ -240,15 +243,13 @@ def new_event(db: DB, body: EventIn, user) -> Event:
 def category_for(body: EventIn, venue: Venue, user) -> tuple[str, bool]:
     """CC-125: the new event's category and opera flag. Left out, the venue's default; an event can differ from its
     venue (an Educational talk at a Visual Art venue). Only admins mark opera; left out, a Music event at an opera
-    venue is one. A venue with no default yet takes this event's."""
+    venue is one."""
     if body.opera and user.role != Role.admin:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Only admins can mark an event as opera")
     category = body.category or venue.category
     if category is None:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Choose a type")
     opera = body.opera if body.opera is not None else venue.opera and category == OPERA_IS
-    if venue.category is None:
-        venue.category, venue.opera = category, opera
     return category, opera
 
 
@@ -258,6 +259,7 @@ def update_event(event_id: int, body: EventPatch, db: DB, _: AdminUser):
     if event is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Event not found")
     changes = body.model_dump(exclude_unset=True)
+    old_venue_id, old_status = event.venue_id, event.status
     if "venue_id" in changes and db.get(Venue, changes["venue_id"]) is None:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "No venue with that venue_id")
     if changes.get("publish_at") is not None:
@@ -287,6 +289,11 @@ def update_event(event_id: int, body: EventPatch, db: DB, _: AdminUser):
         event.weeks = {d: sorted(set(w)) for d, w in (event.weeks or {}).items() if d in (event.weekly or {})}
     if event.begin_date and event.end_date and event.end_date < event.begin_date:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "end_date is before begin_date")
+    # CC-188: the edit form approves too. Only on a change, so editing an event doesn't refill a default an admin cleared
+    if event.status == EventStatus.approved and (old_status != event.status or old_venue_id != event.venue_id):
+        accept_venue(db.get(Venue, event.venue_id), event.category, event.opera)
+    if event.venue_id != old_venue_id:
+        drop_if_unused(db, old_venue_id)
     db.commit()
     db.refresh(event)
     return event
@@ -298,5 +305,7 @@ def delete_event(event_id: int, db: DB, _: AdminUser):
     if event is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Event not found")
     photos.remove(db, db.scalars(select(WentPhoto).where(WentPhoto.event_id == event_id)))  # CC-76: from storage too
+    venue_id = event.venue_id
     db.delete(event)
+    drop_if_unused(db, venue_id)  # CC-188
     db.commit()

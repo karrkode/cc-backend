@@ -5,8 +5,8 @@ from sqlalchemy import delete, func, select, update
 
 from ..addresses import suggestions as address_suggestions
 from ..areas import nearby_area, region_of
-from ..deps import DB, AdminUser
-from ..models import Event, SubmissionRule, Venue, VenueAddressSuggestion, VenueWebsiteDismissal
+from ..deps import DB, AdminUser, OptionalUser
+from ..models import Event, Role, SubmissionRule, Venue, VenueAddressSuggestion, VenueWebsiteDismissal
 from ..schemas import (AddressChoice, AddressPick, AddressSuggestionOut, VenueAdd, VenueAdminOut, VenueIn, VenueMergeOut, VenueOut,
                        VenuePatch, WebsiteChoice, WebsiteSuggestionOut)
 from ..visibility import utcnow
@@ -16,8 +16,10 @@ router = APIRouter(prefix="/venues", tags=["venues"])
 
 
 @router.get("", response_model=list[VenueOut])
-def list_venues(db: DB, q: Annotated[str | None, Query(max_length=100)] = None):
+def list_venues(db: DB, user: OptionalUser, q: Annotated[str | None, Query(max_length=100)] = None):
     stmt = select(Venue).order_by(Venue.name, Venue.neighborhood)
+    if user is None or user.role != Role.admin:  # CC-188: admins pick pending venues while reviewing their events
+        stmt = stmt.where(Venue.pending.is_(False))
     if q:
         stmt = stmt.where(Venue.name.icontains(q, autoescape=True))
     return db.scalars(stmt).all()
@@ -221,6 +223,7 @@ def merge_venue(venue_id: int, other_id: int, db: DB, _: AdminUser):
         into.website = venue.website
     if not into.address and venue.address:  # CC-218: and its address
         into.address, into.city, into.zip_code = venue.address, venue.city, venue.zip_code
+    into.pending = into.pending and venue.pending  # CC-188: a live venue's events can't end up at a hidden one
     db.delete(venue)
     db.commit()
     return VenueMergeOut(moved=moved, into=into)

@@ -142,13 +142,15 @@ def venue_ids_of(db, source: DiscoverySource | None) -> set[int]:
 def venue_for(db, source: DiscoverySource | None, item: DiscoveredItem) -> Venue | None:
     """The venue to file an item under: the source's own venue unless the item names another (the
     CSO plays in Wheaton too), then a known venue with that name. None: an admin picks or adds it.
-    CC-133: an item whose source was deleted goes by the venue it names."""
+    CC-133: an item whose source was deleted goes by the venue it names. CC-188: never a pending venue, or approving
+    the item would accept a member's venue without an admin seeing that it was one."""
     named = _place(item.venue_name)
+    known = select(Venue).where(Venue.pending.is_(False)).order_by(Venue.id)
     if source is None:
-        return next((v for v in db.scalars(select(Venue).order_by(Venue.id)) if named and _place(v.name) == named), None)
+        return next((v for v in db.scalars(known) if named and _place(v.name) == named), None)
     if not named or named in {_place(source.venue_name), _place(source.venue.name if source.venue else "")}:
         return source.venue
-    return next((v for v in db.scalars(select(Venue).order_by(Venue.id)) if _place(v.name) == named), None)
+    return next((v for v in db.scalars(known) if _place(v.name) == named), None)
 
 
 def note_addresses(db, source: DiscoverySource, page_html: str) -> None:

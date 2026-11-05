@@ -203,14 +203,15 @@ def _draft(db, e: FoundEvent, url: str, place: dict, how: str, today: date, othe
     venue_name, town, ld_category = place.get("venue", ""), place.get("town", ""), place.get("category")
     venue_name = (e.venue_name or venue_name).strip()
     source = _source_for(db, url)
-    if source and not (venue_name and db.query(Venue).filter(Venue.name.ilike(venue_name)).first()):
+    named = db.query(Venue).filter(Venue.name.ilike(venue_name), Venue.pending.is_(False))  # CC-188: members don't see pending ones
+    if source and not (venue_name and named.first()):
         # a venue's own site whose page names a stage ("Albert Theatre") or nothing: discovery knows the venue
         venue_name = source.venue.name if source.venue else source.venue_name or venue_name
         town = "" if source.venue or source.neighborhood else town
     begin, end = e.begin_date, e.end_date if place.get("end_given", True) else None
     if (end or begin or "9999") < today.isoformat():  # over, or a placeholder date (Goodman's pages give 1970-01-01)
         begin = end = None
-    known = [v for v in db.query(Venue).filter(Venue.name.ilike(venue_name)).all()] if venue_name else []
+    known = db.query(Venue).filter(Venue.name.ilike(venue_name), Venue.pending.is_(False)).all() if venue_name else []
     hoods = {v.neighborhood for v in known if v.neighborhood.strip()}
     if len(hoods) == 1:
         hood = hoods.pop()
