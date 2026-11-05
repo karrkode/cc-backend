@@ -18,8 +18,8 @@ router = APIRouter(prefix="/venues", tags=["venues"])
 @router.get("", response_model=list[VenueOut])
 def list_venues(db: DB, user: OptionalUser, q: Annotated[str | None, Query(max_length=100)] = None):
     stmt = select(Venue).order_by(Venue.name, Venue.neighborhood)
-    if user is None or user.role != Role.admin:  # CC-188: admins pick pending venues while reviewing their events
-        stmt = stmt.where(Venue.pending.is_(False))
+    if user is None or user.role != Role.admin:  # CC-188, CC-219: admins pick these venues while reviewing or editing events
+        stmt = stmt.where(Venue.pending.is_(False), Venue.hidden.is_(False))
     if q:
         stmt = stmt.where(Venue.name.icontains(q, autoescape=True))
     return db.scalars(stmt).all()
@@ -73,7 +73,8 @@ def _admin_out(venue: Venue, counts: dict[int, int]) -> VenueAdminOut:
                          show_times_by=venue.show_times_by or "", standard_cost=venue.standard_cost or "",
                          standard_min_price=None if venue.standard_min_price is None else float(venue.standard_min_price),
                          category=venue.category, opera=venue.opera, website=venue.website or "",
-                         address=venue.address or "", city=venue.city or "", zip_code=venue.zip_code or "")
+                         address=venue.address or "", city=venue.city or "", zip_code=venue.zip_code or "",
+                         pending=venue.pending, hidden=venue.hidden)
 
 
 @router.get("/manage", response_model=list[VenueAdminOut])
@@ -199,6 +200,24 @@ def update_venue(venue_id: int, body: VenuePatch, db: DB, _: AdminUser):
             venue.opera = False
     db.commit()
     return _admin_out(venue, _counts(db, [venue.id]))
+
+
+def _set_hidden(db: DB, venue_id: int, hidden: bool) -> VenueAdminOut:
+    venue = _venue(db, venue_id)
+    venue.hidden = hidden
+    db.commit()
+    return _admin_out(venue, _counts(db, [venue.id]))
+
+
+@router.post("/{venue_id}/hide", response_model=VenueAdminOut)
+def hide_venue(venue_id: int, db: DB, _: AdminUser):
+    """CC-219: out of the public venue list, for a venue that can't be deleted. Its events stay listed."""
+    return _set_hidden(db, venue_id, True)
+
+
+@router.post("/{venue_id}/unhide", response_model=VenueAdminOut)
+def unhide_venue(venue_id: int, db: DB, _: AdminUser):
+    return _set_hidden(db, venue_id, False)
 
 
 @router.post("/{venue_id}/merge-into/{other_id}", response_model=VenueMergeOut)

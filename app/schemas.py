@@ -273,6 +273,8 @@ class VenueAdminOut(VenueOut):
     show_times: dict = {}
     show_times_by: str = ""
     website: str = ""  # CC-213: admin-only, so it's here and never in VenueOut
+    pending: bool = False  # CC-219: waiting for an admin to approve one of its events (CC-188)
+    hidden: bool = False  # CC-219: an admin took it out of the public venue list
 
 
 class OutOfTownSource(BaseModel):

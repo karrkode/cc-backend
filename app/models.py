@@ -248,6 +248,9 @@ class Venue(Base):
     zip_code: Mapped[str] = mapped_column(String(10), default="", server_default="")
     # CC-188: added by a member's submission and not yet accepted by an admin (app/venuereview.py)
     pending: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    # CC-219: an admin took it out of the public venue list. Not pending: approving an event ends pending, but only an
+    # admin ends this. Its events stay listed, and discovery and submissions still file events under it.
+    hidden: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
 
 
 class VenueWebsiteDismissal(Base):
