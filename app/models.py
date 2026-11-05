@@ -241,6 +241,11 @@ class Venue(Base):
     # CC-213: the venue's own site, normalised (app/websites.py); "" = none. Admin-only for now: only the admin
     # venue routes read or write it, and it's set only by an admin (typed in, or a confirmed suggestion).
     website: Mapped[str] = mapped_column(String(500), default="", server_default="")
+    # CC-218: the public address (app/addresses.py): the street, city and ZIP, all three or none ("" = none). Optional
+    # here because discovery and members' suggestions add venues without one. Set only by an admin: discovery can only suggest.
+    address: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    city: Mapped[str] = mapped_column(String(120), default="", server_default="")
+    zip_code: Mapped[str] = mapped_column(String(10), default="", server_default="")
 
 
 class VenueWebsiteDismissal(Base):
@@ -250,6 +255,20 @@ class VenueWebsiteDismissal(Base):
     venue_id: Mapped[int] = mapped_column(ForeignKey("venues.id", ondelete="CASCADE"), primary_key=True)
     url: Mapped[str] = mapped_column(String(500), primary_key=True)
     dismissed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class VenueAddressSuggestion(Base):
+    """CC-218: a street address seen in a page's event data, for an admin to confirm. Unlike a website it can't be
+    worked out when asked for, since it comes from pages read earlier. A dismissed one stays, so it isn't added again."""
+    __tablename__ = "venue_address_suggestions"
+
+    venue_id: Mapped[int] = mapped_column(ForeignKey("venues.id", ondelete="CASCADE"), primary_key=True)
+    address: Mapped[str] = mapped_column(String(200), primary_key=True)  # the street
+    city: Mapped[str] = mapped_column(String(120), default="", server_default="")  # "" = the page didn't say
+    zip_code: Mapped[str] = mapped_column(String(10), default="", server_default="")
+    source: Mapped[str] = mapped_column(String(200), default="", server_default="")  # the discovery source's name
+    seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    dismissed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Event(Base):

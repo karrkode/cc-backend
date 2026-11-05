@@ -25,6 +25,9 @@ SCRIPT_OPEN, SCRIPT_CLOSE = re.compile("<script", re.I), re.compile("</script", 
 LD_TYPE = re.compile(r'type=["\']application/ld\+json["\']', re.I)
 MAX_TAG = 4_000  # an opening tag longer than this isn't one we read
 MAX_DATA = 1_000_000
+MAX_STREET = 400  # CC-218: longer than any street; app/addresses.py holds the real limit
+# CC-218: "78 E Washington St, Chicago, IL 60602" (the state and ZIP may be missing)
+WHOLE_ADDRESS = re.compile(r"([^,]+),\s*([^,\d]+?)(?:,\s*[A-Za-z]{2})?(?:\s+(\d{5}(?:-\d{4})?))?(?:,\s*(?:US|USA))?")
 CANCELLED = ("EventCancelled", "EventPostponed")
 # by source kind: (kind, category); CC-125: opera is Music (and marked opera when stored), museums Visual Art
 BY_SOURCE = {"theater": ("production", "Theater"), "opera": ("production", "Music"), "music": ("concert", "Music"),
@@ -179,14 +182,41 @@ BY_EVENT_TYPE = {"TheaterEvent": "Theater", "ComedyEvent": "Comedy", "MusicEvent
                  "ExhibitionEvent": "Visual Art", "VisualArtsEvent": "Visual Art", "EducationEvent": "Educational"}
 
 
-def _place(location) -> tuple[str, str]:
-    """(name, town) of an event's location: the first Place, with its address's locality."""
+def _address(addr) -> tuple[str, str, str]:
+    """CC-218: (street, city, ZIP) of a schema.org address, which is a PostalAddress or plain text. Some pages put the
+    whole address in the street field, so that's read like plain text ("78 E Washington St, Chicago, IL 60602")."""
+    addr = addr[0] if isinstance(addr, list) and addr else addr
+    if isinstance(addr, dict):
+        line, city, zip_code = _text(addr.get("streetAddress"))[:MAX_STREET], _text(addr.get("addressLocality")), _text(addr.get("postalCode"))
+    elif isinstance(addr, str):
+        line, city, zip_code = _text(addr)[:MAX_STREET], "", ""
+    else:
+        return "", "", ""
+    if m := WHOLE_ADDRESS.fullmatch(line):
+        return m.group(1), city or m.group(2), zip_code[:10] or m.group(3) or ""
+    return line.split(",")[0] if isinstance(addr, str) else line, city[:120], zip_code[:10]
+
+
+def _place(location) -> tuple[str, str, tuple[str, str, str]]:
+    """(name, town, (street, city, ZIP)) of an event's location: the first Place, with its address."""
     for loc in location if isinstance(location, list) else [location]:
         if isinstance(loc, dict) and _text(loc.get("name")):
             addr = loc.get("address")
-            town = _text(addr.get("addressLocality")) if isinstance(addr, dict) else ""
-            return _text(loc.get("name"))[:200], town[:120]
-    return "", ""
+            town = _text(addr.get("addressLocality"))[:120] if isinstance(addr, dict) else ""
+            return _text(loc.get("name"))[:200], town, _address(addr)
+    return "", "", ("", "", "")
+
+
+def event_addresses(page_html: str) -> list[tuple[str, str, str, str]]:
+    """CC-218: (location name, street, city, ZIP) for each different place the page's events give a street for, in page order."""
+    found = {}
+    for data in _blocks(page_html):
+        for o in _objects(data):
+            if _is_event(o):
+                name, _, address = _place(o.get("location"))
+                if address[0]:
+                    found[(name, *address)] = True
+    return list(found)
 
 
 def event_places(page_html: str) -> dict[str, dict]:
@@ -199,7 +229,7 @@ def event_places(page_html: str) -> dict[str, dict]:
                 continue
             types = o.get("@type") if isinstance(o.get("@type"), list) else [o.get("@type")]
             category = next((BY_EVENT_TYPE[t] for t in types if t in BY_EVENT_TYPE), None)
-            venue, town = _place(o.get("location"))
+            venue, town, _ = _place(o.get("location"))
             found.setdefault(norm_title(_text(o.get("name"))[:300]), {"venue": venue, "town": town, "category": category,
                                                                        "end_given": bool(_when(o.get("endDate"))[0])})
     return found

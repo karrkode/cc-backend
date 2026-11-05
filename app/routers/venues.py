@@ -3,11 +3,13 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import delete, func, select, update
 
+from ..addresses import suggestions as address_suggestions
 from ..areas import nearby_area, region_of
 from ..deps import DB, AdminUser
-from ..models import Event, SubmissionRule, Venue, VenueWebsiteDismissal
-from ..schemas import (VenueAdminOut, VenueIn, VenueMergeOut, VenueOut, VenuePatch, WebsiteChoice,
-                       WebsiteSuggestionOut)
+from ..models import Event, SubmissionRule, Venue, VenueAddressSuggestion, VenueWebsiteDismissal
+from ..schemas import (AddressChoice, AddressPick, AddressSuggestionOut, VenueAdd, VenueAdminOut, VenueIn, VenueMergeOut, VenueOut,
+                       VenuePatch, WebsiteChoice, WebsiteSuggestionOut)
+from ..visibility import utcnow
 from ..websites import suggestions
 
 router = APIRouter(prefix="/venues", tags=["venues"])
@@ -21,18 +23,29 @@ def list_venues(db: DB, q: Annotated[str | None, Query(max_length=100)] = None):
     return db.scalars(stmt).all()
 
 
-@router.post("", response_model=VenueOut, status_code=status.HTTP_201_CREATED)
-def create_venue(body: VenueIn, db: DB, _: AdminUser):
+def _add(db: DB, body: VenueIn, **address: str) -> Venue:
     name, hood = body.name.strip(), body.neighborhood.strip()
     exists = db.scalar(select(Venue.id).where(func.lower(Venue.name) == name.lower(),
                                               func.lower(Venue.neighborhood) == hood.lower()))
     if exists:
         raise HTTPException(status.HTTP_409_CONFLICT, "That venue already exists")
     area = nearby_area(hood, body.area)
-    venue = Venue(name=name, neighborhood=hood, area=area, region=region_of(hood, area))
+    venue = Venue(name=name, neighborhood=hood, area=area, region=region_of(hood, area), **address)
     db.add(venue)
     db.commit()
     return venue
+
+
+@router.post("", response_model=VenueOut, status_code=status.HTTP_201_CREATED)
+def create_venue(body: VenueAdd, db: DB, _: AdminUser):
+    """CC-218: the Add a venue form. The address is required here, and only here."""
+    return _add(db, body, address=body.address, city=body.city, zip_code=body.zip_code)
+
+
+@router.post("/from-event", response_model=VenueOut, status_code=status.HTTP_201_CREATED)
+def create_venue_from_event(body: VenueIn, db: DB, _: AdminUser):
+    """A new venue typed while editing an event or approving a found one: no address asked for at that point."""
+    return _add(db, body)
 
 
 # ---- managing venues (admins, CC-57) ---------------------------------------------------
@@ -57,7 +70,8 @@ def _admin_out(venue: Venue, counts: dict[int, int]) -> VenueAdminOut:
                          open_hours_by=venue.open_hours_by or "", show_times=venue.show_times or {},
                          show_times_by=venue.show_times_by or "", standard_cost=venue.standard_cost or "",
                          standard_min_price=None if venue.standard_min_price is None else float(venue.standard_min_price),
-                         category=venue.category, opera=venue.opera, website=venue.website or "")
+                         category=venue.category, opera=venue.opera, website=venue.website or "",
+                         address=venue.address or "", city=venue.city or "", zip_code=venue.zip_code or "")
 
 
 @router.get("/manage", response_model=list[VenueAdminOut])
@@ -99,6 +113,37 @@ def dismiss_website(venue_id: int, body: WebsiteChoice, db: DB, _: AdminUser):
         db.commit()
 
 
+# ---- street addresses (admins, CC-218) ---------------------------------------------------
+
+@router.get("/address-suggestions", response_model=list[AddressSuggestionOut])
+def list_address_suggestions(db: DB, _: AdminUser):
+    """Addresses seen for venues that have none. Nothing reaches a venue until an admin confirms one."""
+    return address_suggestions(db)
+
+
+@router.post("/{venue_id}/address", response_model=VenueAdminOut)
+def confirm_address(venue_id: int, body: AddressChoice, db: DB, _: AdminUser):
+    """Confirm a suggestion (as suggested, or edited). Never replaces an address already set: change that on the venue."""
+    venue = _venue(db, venue_id)
+    if venue.address:
+        raise HTTPException(status.HTTP_409_CONFLICT, "This venue already has an address. Edit it on the venue instead.")
+    venue.address, venue.city, venue.zip_code = body.address, body.city, body.zip_code
+    db.commit()
+    return _admin_out(venue, _counts(db, [venue.id]))
+
+
+@router.post("/{venue_id}/address/dismiss", status_code=status.HTTP_204_NO_CONTENT)
+def dismiss_address(venue_id: int, body: AddressPick, db: DB, _: AdminUser):
+    """Don't suggest this address for this venue again."""
+    venue = _venue(db, venue_id)
+    row = db.get(VenueAddressSuggestion, (venue.id, body.address))
+    if row is None:
+        row = VenueAddressSuggestion(venue_id=venue.id, address=body.address)
+        db.add(row)
+    row.dismissed_at = row.dismissed_at or utcnow()
+    db.commit()
+
+
 @router.patch("/{venue_id}", response_model=VenueAdminOut)
 def update_venue(venue_id: int, body: VenuePatch, db: DB, _: AdminUser):
     venue = _venue(db, venue_id)
@@ -130,6 +175,13 @@ def update_venue(venue_id: int, body: VenuePatch, db: DB, _: AdminUser):
             setattr(venue, field + "_by", "admin" if value else "")
     if changes.get("website") is not None:  # CC-213: typed by an admin; "" clears it
         venue.website = changes["website"]
+    # CC-218: typed by an admin; all three, or "" for all three to clear it
+    parts = {f: changes[f] if changes.get(f) is not None else getattr(venue, f)
+             for f in ("address", "city", "zip_code")}
+    if any(parts.values()) and not all(parts.values()):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "An address needs the street, city and ZIP together")
+    for field, value in parts.items():
+        setattr(venue, field, value)
     if changes.get("standard_cost") is not None:  # CC-89: set together; the price goes with the words
         venue.standard_cost = changes["standard_cost"].strip()
         venue.standard_min_price = changes.get("standard_min_price") if venue.standard_cost else None
@@ -167,6 +219,8 @@ def merge_venue(venue_id: int, other_id: int, db: DB, _: AdminUser):
         into.standard_cost, into.standard_min_price = venue.standard_cost, venue.standard_min_price
     if not into.website and venue.website:  # CC-213: and its website
         into.website = venue.website
+    if not into.address and venue.address:  # CC-218: and its address
+        into.address, into.city, into.zip_code = venue.address, venue.city, venue.zip_code
     db.delete(venue)
     db.commit()
     return VenueMergeOut(moved=moved, into=into)

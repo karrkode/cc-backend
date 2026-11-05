@@ -33,15 +33,15 @@ def overview(client, token):
 
 def test_a_new_venue_cant_be_out_of_town(client, admin_token, db):
     h = auth(admin_token)
-    assert client.post("/venues", json={"name": "Museum", "neighborhood": "Evanston, IL", "area": "out_of_town"}, headers=h).status_code == 422
-    r = client.post("/venues", json={"name": "Museum", "neighborhood": "Milwaukee, WI"}, headers=h)  # worked out from the place
+    assert client.post("/venues/from-event", json={"name": "Museum", "neighborhood": "Evanston, IL", "area": "out_of_town"}, headers=h).status_code == 422
+    r = client.post("/venues/from-event", json={"name": "Museum", "neighborhood": "Milwaukee, WI"}, headers=h)  # worked out from the place
     assert r.status_code == 422 and "Chicago and its suburbs" in r.json()["detail"]
-    assert client.post("/venues", json={"name": "Museum", "neighborhood": "Rockford, IL"}, headers=h).status_code == 422
+    assert client.post("/venues/from-event", json={"name": "Museum", "neighborhood": "Rockford, IL"}, headers=h).status_code == 422
     assert db.scalar(select(func.count(Venue.id))) == 0
-    r = client.post("/venues", json={"name": "Museum", "neighborhood": "Evanston, IL"}, headers=h)
+    r = client.post("/venues/from-event", json={"name": "Museum", "neighborhood": "Evanston, IL"}, headers=h)
     assert r.status_code == 201 and r.json()["area"] == "suburbs"
     # an admin who knows better can still choose: this one is just over the state line
-    r = client.post("/venues", json={"name": "Theatre", "neighborhood": "Hammond, IN", "area": "suburbs"}, headers=h)
+    r = client.post("/venues/from-event", json={"name": "Theatre", "neighborhood": "Hammond, IN", "area": "suburbs"}, headers=h)
     assert r.status_code == 201 and (r.json()["area"], r.json()["region"]) == ("suburbs", "suburbs")
 
 

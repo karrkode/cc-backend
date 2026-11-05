@@ -15,6 +15,7 @@ from datetime import date
 from html import escape
 from xml.sax.saxutils import escape as xml_escape
 
+from .addresses import full_address, locality, map_url
 from .categories import label
 from .config import get_settings
 from .models import Area, Event
@@ -82,16 +83,6 @@ def place_text(event: Event) -> str:
     return f"{v.name} · {where}" if where else v.name
 
 
-def _locality(event: Event) -> tuple[str, str]:
-    """(town, state): "Oak Park, IL" -> ("Oak Park", "IL"), "Racine, WI" -> ("Racine", "WI"); the city is Chicago."""
-    v = event.venue
-    where = v.neighborhood.strip()
-    if v.area == Area.city or not where:
-        return "Chicago", "IL"
-    m = re.fullmatch(r"(.+?),\s*([A-Z]{2})", where)
-    return (m.group(1), m.group(2)) if m else (where, "IL")
-
-
 def description(event: Event, today: date) -> str:
     lead = f"{label(event.category, event.opera)} at {place_text(event).replace(' · ', ' in ')}."
     if is_closed(event, today):
@@ -107,7 +98,8 @@ def json_ld(event: Event, today: date) -> dict | None:
     if start is None:
         return None
     site = get_settings().site_url
-    town, state = _locality(event)
+    town, state = locality(event.venue.area, event.venue.neighborhood)
+    town = event.venue.city or town  # CC-218
     data = {
         "@context": "https://schema.org",
         "@type": "Event",
@@ -125,6 +117,10 @@ def json_ld(event: Event, today: date) -> dict | None:
         "image": [site + PREVIEW_IMAGE],
         "url": site + path_for(event),
     }
+    if event.venue.address:  # CC-218
+        data["location"]["address"]["streetAddress"] = event.venue.address
+        if event.venue.zip_code:
+            data["location"]["address"]["postalCode"] = event.venue.zip_code
     if event.end_date:
         data["endDate"] = event.end_date.isoformat()
     if event.min_price is not None or event.url:
@@ -305,7 +301,11 @@ def render_event(event: Event, today: date, takes: list[dict] = ()) -> str:
             f'<div class="poster {cat_class(event)}"><div class="poster-in">'
             f'<p class="poster-k">{e(label(event.category, event.opera))}</p><h1>{e(event.title)}</h1>'
             f'<p class="poster-where">{e(place_text(event))}</p></div></div>', '<div class="ev-main">']
-    body.append('<dl class="facts">' + "".join(f"<dt>{e(k)}</dt><dd>{e(v)}</dd>" for k, v in rows) + "</dl>")
+    facts = "".join(f"<dt>{e(k)}</dt><dd>{e(v)}</dd>" for k, v in rows)
+    v = event.venue
+    if full := full_address(v.address, v.city, v.zip_code, v.area, v.neighborhood):  # CC-218: with neither address nor link when there's none
+        facts += f'<dt>Address</dt><dd>{e(full)} · <a href="{e(map_url(full))}" rel="noopener">Map ↗</a></dd>'
+    body.append(f'<dl class="facts">{facts}</dl>')
     if closed:
         body.append('<p class="closed">This run has closed</p>')
     # CC-151: the main button opens the event in the site; its tickets page comes second
