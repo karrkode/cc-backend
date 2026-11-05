@@ -29,6 +29,8 @@ from .readers import cost_usd
 from .store import venue_for
 
 DAYS = 7
+GRAPH_WEEKS = 12  # CC-207: the Event Sourcing page's graph of new events found
+FOUND_STATUSES = ("new", "approved", "rejected", "hidden")  # CC-207: hiding an event doesn't unfind it
 SEND_WEEKDAY, SEND_HOUR = 1, 10  # Tuesday, 10 AM Chicago time
 CHANGE_NAMES = {"cost_text": "Price", "min_price": "Lowest price", "begin_date": "Opens", "end_date": "Closes", "weekly": "Show days", "weeks": "Weeks of the month"}
 EVERY = {7: "Every week", 14: "Every 2 weeks", 30: "Every month", 60: "Every 2 months"}
@@ -92,7 +94,7 @@ class Week:
     name: str
     new_waiting: int = 0
     updates_waiting: int = 0
-    waiting_by_source: list[tuple[str, int]] = field(default_factory=list)  # CC-206: all new items, most first
+    waiting_by_source: list[tuple[int | None, str, int]] = field(default_factory=list)  # CC-206: all new items, most first (CC-207: with the source's id)
     found_by_source: list[tuple[str, int]] = field(default_factory=list)
     found_total: int = 0
     updates: list[tuple[str, str, str, str, str]] = field(default_factory=list)  # event, source, change, was, now
@@ -125,6 +127,11 @@ class Week:
         return f"{self.site}/#{where}"
 
 
+def counts_as_found(status: str, skip_reason: str) -> bool:
+    """The recap's rule for a new event found (CC-207 shares it with the graph): not one a skip rule caught."""
+    return status in FOUND_STATUSES and not (status == "rejected" and skip_reason.startswith("skip rule"))
+
+
 def gather(db, now: datetime) -> Week:
     s = get_settings()
     since = now - timedelta(days=DAYS)
@@ -135,7 +142,7 @@ def gather(db, now: datetime) -> Week:
 
     week = db.scalars(select(DiscoveredItem).where(DiscoveredItem.first_seen_at >= since)).all()
     rule_caught = [i for i in week if i.status == "rejected" and i.skip_reason.startswith("skip rule")]
-    found = [i for i in week if i.status in ("new", "approved", "rejected") and i not in rule_caught]
+    found = [i for i in week if counts_as_found(i.status, i.skip_reason)]
     w.found_total = len(found)
     w.found_by_source = Counter(names.get(i.source_id, "a deleted source") for i in found).most_common()
     w.by_rule = Counter(i.skip_reason.removeprefix("skip rule: ").strip("\u201c\u201d") for i in rule_caught).most_common()
@@ -153,7 +160,7 @@ def gather(db, now: datetime) -> Week:
     w.new_waiting, w.updates_waiting = waiting.get("new", 0), waiting.get("update", 0)
     by_source = db.execute(select(DiscoveredItem.source_id, func.count()).where(DiscoveredItem.status == "new")
                            .group_by(DiscoveredItem.source_id)).all()
-    w.waiting_by_source = Counter({names.get(sid, "a deleted source"): n for sid, n in by_source}).most_common()
+    w.waiting_by_source = sorted(((sid, names.get(sid, "Deleted source"), n) for sid, n in by_source), key=lambda r: (-r[2], r[1].lower()))
     w.needs = sum(1 for i in db.scalars(select(DiscoveredItem).where(DiscoveredItem.status == "new"))
                   if needs(i, venue_for(db, i.source, i)))
 
@@ -186,6 +193,25 @@ def gather(db, now: datetime) -> Week:
     w.photos_waiting = db.scalar(select(func.count()).select_from(WentPhoto).where(WentPhoto.status == "waiting")) or 0
     w.issues_open = db.scalar(select(func.count()).select_from(IssueReport).where(IssueReport.status.in_(["new", "looking"]))) or 0
     return w
+
+
+def found_by_week(db, now: datetime, weeks: int = GRAPH_WEEKS) -> list[tuple[date, date, int]]:
+    """CC-207: (first day, last day, new events found) for the last weeks, oldest first. Weeks are the recap's: seven days
+    back from now, so the latest is what the recap would say today. Weeks that ended before discovery began are left out."""
+    week = timedelta(days=DAYS)
+    began = [_aware(t) for t in (db.scalar(select(func.min(DiscoveredItem.first_seen_at))),
+                                 db.scalar(select(func.min(DiscoveryCheck.checked_at)))) if t]
+    if not began:
+        return []
+    counts = [0] * weeks
+    rows = db.execute(select(DiscoveredItem.first_seen_at, DiscoveredItem.status, DiscoveredItem.skip_reason)
+                      .where(DiscoveredItem.first_seen_at >= now - weeks * week)).all()
+    for seen, status, reason in rows:
+        ago = max(-(-(now - _aware(seen)) // week) - 1, 0)  # exactly seven days ago is still in the recap's week
+        if counts_as_found(status, reason) and ago < weeks:
+            counts[ago] += 1
+    return [((now - (ago + 1) * week).astimezone(CHICAGO).date(), (now - ago * week - timedelta(days=1)).astimezone(CHICAGO).date(), counts[ago])
+            for ago in reversed(range(weeks)) if now - ago * week > min(began)]
 
 
 def next_send(now: datetime) -> date:

@@ -670,7 +670,14 @@ class DiscoveryOverview(BaseModel):
 
 
 class SourcingCount(BaseModel):
+    id: int | None  # CC-207: null: its source was deleted (GET /items takes source=0 for these)
     name: str
+    n: int
+
+
+class SourcingWeek(BaseModel):
+    first: date
+    last: date
     n: int
 
 
@@ -687,11 +694,9 @@ class SourcingSummary(BaseModel):
     waiting_by_source: list[SourcingCount]
     unreadable: list[SourcingUnreadable]
     by_hand: list[str]
-    period: str  # "Oct 28 to Nov 3": the seven days the recap covers
-    found_total: int
-    left_out: int
-    checks: int
-    week_cost_usd: float  # an estimate, like spent_month_usd; the Anthropic Console has the exact bill
+    hidden: int  # CC-207: not sure yet; not counted as waiting
+    found_total: int  # the seven days the recap covers
+    found_weeks: list[SourcingWeek]  # CC-207: the graph, oldest first; the last one is found_total
     next_recap: date
     sources: int  # active sources
     spent_month_usd: float
@@ -927,7 +932,7 @@ class DiscoveredItemOut(ORM):
     id: int
     source_id: int | None  # CC-133: null once its source is deleted
     source_name: str = ""
-    status: str  # new | update | listed | approved | rejected | skipped
+    status: str  # new | update | listed | approved | rejected | skipped | hidden
     skip_reason: str
     title: str
     url: str
