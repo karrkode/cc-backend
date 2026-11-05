@@ -11,6 +11,7 @@ which of the owner's categories an event belongs in. The leave-out rules still a
 import html
 import json
 import re
+from collections import deque
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from difflib import SequenceMatcher
@@ -217,6 +218,71 @@ def event_addresses(page_html: str) -> list[tuple[str, str, str, str]]:
                 if address[0]:
                     found[(name, *address)] = True
     return list(found)
+
+
+# CC-222: the schema.org types a venue's site describes itself with. Anything else is left to Claude, which costs a
+# fraction of a cent, rather than filling the form with a person's or a product's address.
+VENUE_TYPES = {"Organization", "LocalBusiness", "Place", "PerformingArtsTheater", "MovieTheater", "Museum", "MusicVenue",
+               "ArtGallery", "EventVenue", "CivicStructure", "TouristAttraction", "LandmarksOrHistoricalBuildings",
+               "EntertainmentBusiness", "ComedyClub", "NightClub", "BarOrPub", "Restaurant", "Brewery", "Winery",
+               "PerformingGroup", "TheaterGroup", "DanceGroup", "MusicGroup", "NGO", "Library", "PlaceOfWorship", "Church",
+               "EducationalOrganization", "CollegeOrUniversity", "StadiumOrArena", "Park", "Zoo", "Aquarium"}
+VENUE_NESTED = ("publisher", "mainEntity", "about", "location", "department", "parentOrganization")
+STATE_IN_TEXT = re.compile(r",\s*([A-Z]{2})(?:\s+\d{5}(?:-\d{4})?)?(?:,\s*(?:US|USA))?\s*$")
+
+
+def _is_venue(obj: dict) -> bool:
+    types = obj.get("@type")
+    types = types if isinstance(types, list) else [types]
+    return any(isinstance(t, str) and t.rsplit("/", 1)[-1] in VENUE_TYPES for t in types)
+
+
+def _venues(data):
+    """The venues in a ld+json block, including ones inside a WebPage or an Organization, top level first. An event's
+    location isn't one of them: event_addresses reads that."""
+    todo = deque([data])
+    while todo:
+        for o in _objects(todo.popleft()):
+            if not _is_event(o):
+                todo.extend(o[key] for key in VENUE_NESTED if key in o)
+                if _is_venue(o):
+                    yield o
+
+
+def _state(addr) -> str:
+    """The two-letter state of a schema.org address, if it gives one."""
+    addr = addr[0] if isinstance(addr, list) and addr else addr
+    if isinstance(addr, dict):
+        region = _text(addr.get("addressRegion"))
+        if region.lower() == "illinois":
+            return "IL"
+        if re.fullmatch(r"[A-Za-z]{2}", region):
+            return region.upper()
+        addr = addr.get("streetAddress")
+    m = STATE_IN_TEXT.search(_text(addr)[:MAX_STREET]) if isinstance(addr, str) else None
+    return m.group(1) if m else ""
+
+
+def venue_in(page_html: str) -> dict[str, str]:
+    """CC-222: what a page's structured data says about its own venue: name, street, city, state and zip_code, each
+    "" if it doesn't say. The first venue with a name and a street wins. Otherwise the name and street may come from
+    two objects (a theater company and its hall), and a page all of whose events are in one place gives that place."""
+    places = []
+    for data in _blocks(page_html):
+        for o in _venues(data):
+            places.append((_text(o.get("name"))[:200], _address(o.get("address")), _state(o.get("address"))))
+    whole = next((p for p in places if p[0] and p[1][0]), None)
+    name = whole[0] if whole else next((p[0] for p in places if p[0]), "")
+    located = whole or next((p for p in places if p[1][0]), None)
+    if located:
+        (street, city, zip_code), state = located[1], located[2]
+    else:
+        street = city = zip_code = state = ""
+        streets = event_addresses(page_html)
+        if len({s[1] for s in streets}) == 1:
+            place, street, city, zip_code = streets[0]
+            name = name or place
+    return {"name": name, "street": street, "city": city, "state": state, "zip_code": zip_code}
 
 
 def event_places(page_html: str) -> dict[str, dict]:

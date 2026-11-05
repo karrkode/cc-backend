@@ -81,29 +81,33 @@ def _pick(events: list[FoundEvent], url: str) -> FoundEvent | None:
     return next((e for e in events if bare(e.url) == bare(url)), events[0] if events else None)
 
 
-def _log(db, status: str, url: str, tin: int = 0, tout: int = 0, note: str = "") -> None:
+def _log(db, status: str, url: str, tin: int = 0, tout: int = 0, note: str = "", who: str = "a member's link") -> None:
     db.add(DiscoveryCheck(source_id=None, what="link", status=status, pages_read=1 if tin else 0,
-                          input_tokens=tin, output_tokens=tout, note=f"a member's link: {url}{' - ' + note if note else ''}"[:2000]))
+                          input_tokens=tin, output_tokens=tout, note=f"{who}: {url}{' - ' + note if note else ''}"[:2000]))
     db.commit()
 
 
-def fetch_and_read(url: str) -> tuple[str, object]:
-    """CC-182: everything the page itself decides: fetching it (robots.txt and redirects included) and reading its
-    event data, or its text for Claude. ("ok", what was read) or (why, detail); run in its own process."""
+def _event_data(page) -> dict:
+    events = events_in(page.text, page.url, "")
+    got = {"url": page.url, "others": max(len(events) - 1, 0),
+           "ai_opt_out": web.robots_for(page.url, TIMEOUT).ai_opt_out}  # already fetched: no request
+    if events:
+        found = _pick(events, page.url)
+        got["place"] = event_places(page.text).get(norm_title(found.title), {})
+        got["found"] = found.model_copy(update={"title": visible_title(found.title, page.text)}).model_dump()
+    else:
+        got["text"] = page_text(page.text, page.url)[0]
+    return got
+
+
+def fetch_and_read(url: str, read=_event_data) -> tuple[str, object]:
+    """CC-182: everything the page itself decides: fetching it (robots.txt and redirects included) and reading it
+    (its event data, or its text for Claude). ("ok", what was read) or (why, detail); run in its own process."""
     started = monotonic()
     try:
         page = web.fetch(url, ai=False, timeout=TIMEOUT, deadline=started + DEADLINE - 1, max_bytes=MAX_BYTES,
                          wait=False)
-        events = events_in(page.text, page.url, "")
-        got = {"url": page.url, "others": max(len(events) - 1, 0),
-               "ai_opt_out": web.robots_for(page.url, TIMEOUT).ai_opt_out}  # already fetched: no request
-        if events:
-            found = _pick(events, page.url)
-            got["place"] = event_places(page.text).get(norm_title(found.title), {})
-            got["found"] = found.model_copy(update={"title": visible_title(found.title, page.text)}).model_dump()
-        else:
-            got["text"] = page_text(page.text, page.url)[0]
-        return "ok", got
+        return "ok", read(page)
     except PrivateAddress as e:
         return "private", str(e)
     except web.Blocked as e:
@@ -118,7 +122,7 @@ def fetch_and_read(url: str) -> tuple[str, object]:
 def _workers():
     """Processes forked from a small server process that has the reader loaded, not from the API itself."""
     ctx = multiprocessing.get_context("forkserver")
-    ctx.set_forkserver_preload(["app.fromlink"])
+    ctx.set_forkserver_preload(["app.fromlink", "app.venuelink"])
     return ctx
 
 

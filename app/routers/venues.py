@@ -3,12 +3,13 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import delete, func, select, update
 
+from .. import fromlink, venuelink
 from ..addresses import suggestions as address_suggestions
 from ..areas import nearby_area, region_of
 from ..deps import DB, AdminUser, OptionalUser
 from ..models import Event, Role, SubmissionRule, Venue, VenueAddressSuggestion, VenueWebsiteDismissal
 from ..schemas import (AddressChoice, AddressPick, AddressSuggestionOut, VenueAdd, VenueAdminOut, VenueIn, VenueMergeOut, VenueOut,
-                       VenuePatch, WebsiteChoice, WebsiteSuggestionOut)
+                       VenuePatch, VenueSiteDraft, WebsiteChoice, WebsiteSuggestionOut)
 from ..visibility import utcnow
 from ..websites import suggestions
 
@@ -40,8 +41,19 @@ def _add(db: DB, body: VenueIn, **address: str) -> Venue:
 
 @router.post("", response_model=VenueOut, status_code=status.HTTP_201_CREATED)
 def create_venue(body: VenueAdd, db: DB, _: AdminUser):
-    """CC-218: the Add a venue form. The address is required here, and only here."""
-    return _add(db, body, address=body.address, city=body.city, zip_code=body.zip_code)
+    """CC-218: the Add a venue form. The address is required here, and only here. CC-222: so is the website accepted."""
+    return _add(db, body, address=body.address, city=body.city, zip_code=body.zip_code, website=body.website)
+
+
+@router.post("/from-website", response_model=VenueSiteDraft)
+def venue_from_website(body: WebsiteChoice, db: DB, user: AdminUser):
+    """CC-222: read a venue's website for the Add a venue form. Saves no venue. The limits are the Suggest form's."""
+    key = str(user.id)
+    if not fromlink.minute_limiter.hit(key, fromlink.PER_MINUTE):
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "That's a lot of links at once. Wait a minute and try again.")
+    if not fromlink.day_limiter.hit(key, fromlink.PER_DAY):
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "That's today's links. Enter the venue yourself, or try again tomorrow.")
+    return venuelink.read_site(db, body.url)
 
 
 @router.post("/from-event", response_model=VenueOut, status_code=status.HTTP_201_CREATED)
