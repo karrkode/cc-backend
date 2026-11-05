@@ -14,10 +14,11 @@ def accept_venue(venue: Venue, category: str, opera: bool) -> None:
 
 
 def drop_if_unused(db, venue_id: int) -> None:
-    """An event left this venue: remove it if it's still pending and nothing else uses it."""
+    """An event left this venue: remove it if it's still pending and nothing else uses it. CC-219: not if an admin hid
+    it, which is a decision about the venue: going, it would come back visible the next time a member names it."""
     db.flush()
     venue = db.get(Venue, venue_id)
-    if venue is None or not venue.pending:
+    if venue is None or not venue.pending or venue.hidden:
         return
     users = (select(Event.id).where(Event.venue_id == venue_id), select(DiscoverySource.id).where(DiscoverySource.venue_id == venue_id),
              select(SubmissionRule.id).where(SubmissionRule.venue_id == venue_id))
