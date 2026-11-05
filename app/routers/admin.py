@@ -16,6 +16,7 @@ from ..schemas import (EventAdminOut, EventAdminPage, EventInterestOut, OutOfTow
 from ..photos import CHECK_USD, checks_this_month
 from ..stats import event_interest, today_in_chicago, weekly_stats
 from ..traffic import summary as traffic_summary
+from ..venuereview import accept_venue
 from ..visibility import utcnow
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -87,6 +88,8 @@ def _set_status(db: DB, event_id: int, new: EventStatus) -> Event:
     event.withdrawn_reason = ""
     event.reject_reason = ""  # CC-100: an admin decided, so it's no longer one a rule caught
     event.publish_at = None  # approving publishes now, including a scheduled event
+    if new == EventStatus.approved:
+        accept_venue(event.venue, event.category, event.opera)  # CC-188
     db.commit()
     db.refresh(event)
     return event

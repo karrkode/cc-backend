@@ -30,10 +30,12 @@ def test_a_suggestion_starts_with_the_venues_default_and_can_differ(client, user
     assert client.post("/events", json={"title": "X", "venue_id": bare.id}, headers=auth(user_token)).status_code == 422
 
 
-def test_a_new_venue_takes_its_first_events_category(client, user_token, db):
+def test_a_new_venue_takes_its_first_approved_events_category(client, user_token, admin_token, db):
     body = {"title": "Set", "category": "Music", "venue": {"name": "New Club", "neighborhood": "Lakeview"}}
     r = client.post("/events", json=body, headers=auth(user_token))
-    assert r.status_code == 201 and r.json()["venue"]["category"] == "Music"
+    assert r.status_code == 201 and r.json()["venue"]["category"] is None  # CC-188: not while it waits for review
+    r = client.post(f"/admin/events/{r.json()['id']}/approve", headers=auth(admin_token))
+    assert r.status_code == 200 and r.json()["venue"]["category"] == "Music"
 
 
 def test_unknown_categories_are_rejected(client, user_token, admin_token, make_event):
