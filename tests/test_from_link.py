@@ -1,4 +1,5 @@
 """CC-124: suggesting an event by its link: a draft from the page's event data, or Claude's reading of it."""
+import socket
 from datetime import timedelta
 
 import pytest
@@ -120,6 +121,17 @@ def test_unreadable_pages_say_so(client, user_token, db, web_pages, claude):
     web_pages["https://blog.example/post"] = "<p>Ten things to do this fall</p>"
     r = ask(client, user_token, "https://blog.example/post")
     assert r.status_code == 422 and "couldn't find an event" in r.json()["detail"]
+
+
+def test_a_host_that_doesnt_exist_is_a_page_we_couldnt_open(client, user_token, db, web_pages, claude, monkeypatch):
+    def no_such_host(host, port):
+        raise socket.gaierror(socket.EAI_NONAME, "Name or service not known")
+    monkeypatch.setattr(web, "_addresses", no_such_host)
+    r = ask(client, user_token, "https://no-such-host.example/e")
+    assert r.status_code == 422 and r.json()["detail"] == "We couldn't open that page."
+    check = db.scalar(select(DiscoveryCheck))
+    assert check.status == "error" and "there's no website at no-such-host.example" in check.note
+    assert claude.calls == 0
 
 
 @pytest.mark.parametrize("url,addr", [
