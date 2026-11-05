@@ -273,7 +273,8 @@ def drop_passed_hidden(db, today: date) -> int:
               if (last := last_date(i)) is not None and last < today]
     for item in passed:
         item.status, item.skip_reason = "rejected", PASSED_REASON
-    db.commit()
+    if passed:
+        db.commit()
     return len(passed)
 
 
