@@ -29,7 +29,7 @@ from .needs import look_again, needs
 from .pagetext import page_text, text_hash
 from .readers import read_aic, read_page
 from .rules import apply_rules, norm_title
-from .store import on_source_site, record, venue_for
+from .store import note_addresses, on_source_site, record, venue_for
 
 STRETCH_AFTER = 3
 MAX_GAP_DAYS = 60
@@ -99,6 +99,7 @@ def check_source(db, source: DiscoverySource, client, today: date) -> Outcome:
                 if digest == prev.get("hash"):
                     state[url] = {**prev, "etag": page.etag, "last_modified": page.last_modified}
                     continue
+                note_addresses(db, source, page.text)  # CC-218: free, whoever reads the events
                 listed = events_in(page.text, page.url, source.kind.value)
                 if sum(complete(e) for e in listed) >= MIN_LISTED:  # the page's own event data: no AI needed
                     _store(db, source, listed, out)
@@ -150,6 +151,7 @@ def read_event_page(db, client, item: DiscoveredItem, today: date, mark: str) ->
         if not on_source_site(item.url, source):  # CC-189: a link stored before these were limited to the source's site
             raise web.Blocked("this event's link isn't on the source's site")
         page = web.fetch(item.url)
+        note_addresses(db, source, page.text)  # CC-218
         data = events_in(page.text, page.url, source.kind.value)
         same = [e for e in data if norm_title(e.title) == norm_title(item.title)] or (data if len(data) == 1 else [])
         if same and complete(same[0]):  # the page's own event data: no AI needed

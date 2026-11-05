@@ -264,7 +264,7 @@ def test_submitter_details_never_leave_the_admin_routes(client, user_token, admi
 
 
 def test_venues(client, admin_token, user_token):
-    body = {"name": "Steppenwolf Theatre", "neighborhood": "Lincoln Park"}
+    body = {"name": "Steppenwolf Theatre", "neighborhood": "Lincoln Park", "address": "1 Test St", "city": "Chicago", "zip_code": "60601"}
     assert client.post("/venues", json=body, headers=auth(user_token)).status_code == 403
     r = client.post("/venues", json=body, headers=auth(admin_token))
     assert r.status_code == 201 and r.json()["area"] == "city"

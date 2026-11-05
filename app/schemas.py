@@ -5,8 +5,10 @@ from datetime import date, date as date_, datetime
 from decimal import Decimal
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
+from pydantic import (AfterValidator, BaseModel, ConfigDict, EmailStr, Field, computed_field, field_validator,
+                      model_validator)
 
+from .addresses import full_address, map_url, normalize_address, normalize_city, normalize_zip
 from .models import Area, EventStatus, PlanStatus, Region, Role
 from .websites import normalize_website
 
@@ -141,6 +143,19 @@ class VenueOut(ORM):
     standard_min_price: float | None = None  # its lowest price in dollars (0 = free)
     category: str | None = None  # CC-125: the category new events here start with (null: none set)
     opera: bool = False  # and whether they start as opera
+    address: str = ""  # CC-218: the street, public ("" = none)
+    city: str = ""
+    zip_code: str = ""
+
+    @computed_field
+    @property
+    def full_address(self) -> str:  # with its town and state, for the event page
+        return full_address(self.address, self.city, self.zip_code, self.area, self.neighborhood)
+
+    @computed_field
+    @property
+    def map_url(self) -> str:  # a maps search for that; "" with no address
+        return map_url(self.full_address)
 
 
 def _not_out_of_town(v):
@@ -158,6 +173,43 @@ class VenueIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     neighborhood: str = Field(default="", max_length=120)
     area: AreaChoice | None = None  # worked out from the neighborhood when left out
+
+
+class AddressPick(BaseModel):
+    """CC-218: a suggestion, by its street."""
+    address: str = Field(min_length=1, max_length=400)
+
+    @field_validator("address")
+    @classmethod
+    def _address(cls, v):
+        if not (v := normalize_address(v)):
+            raise ValueError("Enter a street address")
+        return v
+
+
+class AddressChoice(AddressPick):
+    """CC-218: a whole address, as a venue keeps it."""
+    city: str = Field(min_length=1, max_length=240)
+    zip_code: str = Field(min_length=1, max_length=20)
+
+    @field_validator("city")
+    @classmethod
+    def _city(cls, v):
+        if not (v := normalize_city(v)):
+            raise ValueError("Enter a city")
+        return v
+
+    @field_validator("zip_code")
+    @classmethod
+    def _zip(cls, v):
+        if not (v := normalize_zip(v)):
+            raise ValueError("Enter a ZIP code")
+        return v
+
+
+class VenueAdd(VenueIn, AddressChoice):
+    """CC-218: an admin adding a venue directly, so the address is required. Venues added along the way (a member's
+    suggestion, an event being edited or approved) use VenueIn and go on the no-address list instead."""
 
 
 # CC-78: a venue's opening hours and usual show times. Times are 24-hour HH:MM; a closing time earlier
@@ -187,11 +239,30 @@ class VenuePatch(BaseModel):
     category: Category | None = None
     opera: bool | None = None
     website: str | None = Field(default=None, max_length=600)  # CC-213: http(s) only, stored normalised; "" clears it
+    # CC-218: the street, city and ZIP, all three or none; "" clears one
+    address: str | None = Field(default=None, max_length=400)
+    city: str | None = Field(default=None, max_length=240)
+    zip_code: str | None = Field(default=None, max_length=20)
 
     @field_validator("website")
     @classmethod
     def _website(cls, v):
         return None if v is None else normalize_website(v)
+
+    @field_validator("address")
+    @classmethod
+    def _address(cls, v):
+        return None if v is None else normalize_address(v)
+
+    @field_validator("city")
+    @classmethod
+    def _city(cls, v):
+        return None if v is None else normalize_city(v)
+
+    @field_validator("zip_code")
+    @classmethod
+    def _zip(cls, v):
+        return None if v is None else normalize_zip(v)
 
 
 class VenueAdminOut(VenueOut):
@@ -231,6 +302,17 @@ class WebsiteSuggestionOut(BaseModel):
     neighborhood: str
     url: str
     source: Literal["discovery", "cc205"]  # the venue's discovery source's site, or the CC-205 report
+
+
+class AddressSuggestionOut(BaseModel):
+    """CC-218: a street address seen for a venue that has none, for an admin to confirm, edit or dismiss."""
+    venue_id: int
+    venue_name: str
+    neighborhood: str
+    address: str
+    city: str
+    zip_code: str  # "" when the page didn't give one: the admin adds it before saving
+    source: str  # the discovery source whose page gave it
 
 
 class WebsiteChoice(BaseModel):

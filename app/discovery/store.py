@@ -9,6 +9,7 @@
 - A new item matching one of the admin's skip rules (CC-71) is rejected quietly, and the rule counts it.
 - CC-217: an item whose venue is out of town is left out (status "skipped"): the site covers Chicago and its suburbs.
 - CC-189: an event's link is kept only if it's http(s) on the source's own site: a page can name any address.
+- CC-218: a street address in a page's event data becomes a suggestion for an admin. It never reaches the venue itself.
 - CC-79: an item that is a catalog event (listed or approved) passes its performance dates and times on
   to that event, for the planner. That's the one thing discovery changes on an event by itself: the
   dates aren't shown on cards, and admins don't edit them.
@@ -20,13 +21,16 @@ from urllib.parse import urlsplit
 
 from sqlalchemy import func, select
 
+from ..addresses import found_address
 from ..areas import is_out_of_town
 from ..categories import BY_SOURCE_KIND, REMOVED
-from ..models import DiscoveredItem, DiscoverySource, Event, SkipRule, Venue
+from ..models import DiscoveredItem, DiscoverySource, Event, SkipRule, Venue, VenueAddressSuggestion
+from .jsonld import event_addresses
 from .readers import FoundEvent
 from .rules import norm_title
 
 DECIDED = {"approved", "rejected"}
+MAX_STREETS = 5  # CC-218: a page's suggestions; a venue has one address, so more than this is noise
 
 
 def _date(s: str | None) -> date | None:
@@ -145,6 +149,22 @@ def venue_for(db, source: DiscoverySource | None, item: DiscoveredItem) -> Venue
     if not named or named in {_place(source.venue_name), _place(source.venue.name if source.venue else "")}:
         return source.venue
     return next((v for v in db.scalars(select(Venue).order_by(Venue.id)) if _place(v.name) == named), None)
+
+
+def note_addresses(db, source: DiscoverySource, page_html: str) -> None:
+    """CC-218: keep the streets a page gives as suggestions, for venues with no address. The location's name has to
+    be the source's venue or a known one (venue_for): a stage or a touring stop elsewhere suggests nothing."""
+    for name, *parts in event_addresses(page_html)[:MAX_STREETS]:
+        venue, address = venue_for(db, source, SimpleNamespace(venue_name=name)), found_address(*parts)
+        if venue is None or address is None or venue.address:
+            continue
+        street, city, zip_code = address
+        row = db.get(VenueAddressSuggestion, (venue.id, street))
+        if row is None:
+            db.add(VenueAddressSuggestion(venue_id=venue.id, address=street, city=city, zip_code=zip_code, source=source.name))
+            db.flush()
+        else:  # another page may say what this one didn't
+            row.city, row.zip_code = row.city or city, row.zip_code or zip_code
 
 
 def matching_rule(db, source_id: int, title: str) -> SkipRule | None:
