@@ -155,8 +155,12 @@ def bounded_read(url: str, work=fetch_and_read) -> tuple[str, object]:
 
 def read_link(db, url: str, today: date) -> dict:
     """The draft for url, or raise PrivateAddress / Unreadable."""
-    check_public(url)
-    why, got = bounded_read(url)
+    try:
+        check_public(url)
+    except web.FetchError as e:  # CC-223: no such host: a page we couldn't open, like one that fails in the read below
+        why, got = "error", str(e)
+    else:
+        why, got = bounded_read(url)
     if why == "private":
         raise PrivateAddress(got)
     if why != "ok":
