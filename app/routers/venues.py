@@ -242,6 +242,7 @@ def merge_venue(venue_id: int, other_id: int, db: DB, _: AdminUser):
         into.website = venue.website
     if not into.address and venue.address:  # CC-218: and its address
         into.address, into.city, into.zip_code = venue.address, venue.city, venue.zip_code
+    into.no_source = into.no_source or venue.no_source  # CC-221: a deleted source stays deleted
     into.pending = into.pending and venue.pending  # CC-188: a live venue's events can't end up at a hidden one
     db.delete(venue)
     db.commit()

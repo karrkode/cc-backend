@@ -15,7 +15,9 @@ from ..discovery.readers import cost_usd
 from ..discovery.recap import budget_note, found_by_week, gather, next_send
 from ..discovery.rules import norm_title
 from ..discovery.store import matching_rule, possible_duplicates, rule_reason, sync_performances, venue_for
+from ..discovery.venuesources import covers, grid_numbers, state_of
 from ..models import DiscoveredItem, DiscoveryCheck, DiscoverySource, Event, SkipRule, Venue
+from ..stats import today_in_chicago
 from ..schemas import (BudgetIn, DiscoveredItemOut, DiscoveredPage, DiscoveryOverview, DiscoverySourceOut, DiscoverySourcePatch,
                        EventIn, EventRef, FoundChange, RUN_DATES_MAX, RejectIn, RejectOut, SkipRuleOut, SourcingCount, SourcingSummary,
                        SourcingUnreadable, SourcingWeek, UnreadableSource)
@@ -31,12 +33,21 @@ def _source(db: DB, source_id: int) -> DiscoverySource:
     return source
 
 
-def _out(source: DiscoverySource, waiting: dict, checks: dict) -> DiscoverySourceOut:
+def _out(source: DiscoverySource, waiting: dict, checks: dict, grid: dict) -> DiscoverySourceOut:
     out = DiscoverySourceOut.model_validate(source)
     out.kind = source.kind.value
     out.waiting = waiting.get(source.id, 0)
     out.checks_30d, out.pages_read_30d = checks.get(source.id, (0, 0))
+    numbers = grid[source.id]  # CC-221
+    out.label = source.venue.name if source.venue else source.venue_name or source.name
+    out.website = source.venue.website if source.venue else ""
+    out.state, out.size, out.events_year = state_of(source, numbers.found), numbers.size, numbers.events_year
+    out.found, out.approved = numbers.found, numbers.approved
     return out
+
+
+def _one(db: DB, source: DiscoverySource) -> DiscoverySourceOut:
+    return _out(source, {}, {}, grid_numbers(db, [source], today_in_chicago()))
 
 
 @router.get("/sources", response_model=DiscoveryOverview)
@@ -54,7 +65,8 @@ def sources(db: DB, _: AdminUser):
                            .where(DiscoveryCheck.checked_at >= since)).one()
     listed = db.scalars(select(DiscoverySource).order_by(func.lower(DiscoverySource.name))).all()
     state, spent, budget = budget_state(db)
-    return DiscoveryOverview(sources=[_out(s, waiting, checks) for s in listed], tokens_in_30d=int(tin), tokens_out_30d=int(tout),
+    grid = grid_numbers(db, listed, today_in_chicago())
+    return DiscoveryOverview(sources=[_out(s, waiting, checks, grid) for s in listed], tokens_in_30d=int(tin), tokens_out_30d=int(tout),
                              cost_30d_usd=cost_usd(int(tin), int(tout)), spent_month_usd=spent, budget_usd=budget, budget_state=state)
 
 
@@ -98,8 +110,9 @@ def update_source(source_id: int, body: DiscoverySourcePatch, db: DB, _: AdminUs
             source.next_check_on = None
     if changes.get("pages"):
         source.pages, source.page_state, source.next_check_on = changes["pages"], {}, None  # new pages: read them soon
+        source.find_link = False  # CC-221: an admin's address is never swapped for a link found on the home page
     db.commit()
-    return _out(source, {}, {})
+    return _one(db, source)
 
 
 @router.delete("/sources/{source_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -108,6 +121,9 @@ def delete_source(source_id: int, db: DB, _: AdminUser):
     and its checks still count toward the month's spend; its own skip rules go with it."""
     source = _source(db, source_id)
     place = source.venue.name if source.venue else source.venue_name  # so its items still know where they are
+    for venue in db.scalars(select(Venue)):
+        if covers(source, venue):  # CC-221: so discovery doesn't add it back from the website
+            venue.no_source = True
     db.execute(update(DiscoveredItem).where(DiscoveredItem.source_id == source.id, DiscoveredItem.venue_name == "").values(venue_name=place))
     db.execute(update(DiscoveredItem).where(DiscoveredItem.source_id == source.id).values(source_id=None))
     db.execute(update(DiscoveryCheck).where(DiscoveryCheck.source_id == source.id).values(source_id=None))
@@ -122,7 +138,7 @@ def check_now(source_id: int, db: DB, _: AdminUser):
     source = _source(db, source_id)
     source.next_check_on, source.unchanged_streak, source.check_requested = None, 0, True  # runs even past the budget
     db.commit()
-    return _out(source, {}, {})
+    return _one(db, source)
 
 
 # ---- review (CC-71) ---------------------------------------------------------------
