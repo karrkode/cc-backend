@@ -10,6 +10,7 @@ Reading as little as possible (agreed with the product owner):
 - CC-80: a page's own structured event data (schema.org) is used instead of Claude when it's complete
 - CC-80: a monthly budget (budget.py): from 80% event pages wait; at 100% only Check now runs
 - CC-211: from 80%, admins get an email and the sources with the most approved events per dollar go first
+- CC-221: every venue with a website gets a source (venuesources.py), a few first reads a day
 - CC-88: a found event missing a date or show days has its own page read the day after it's found,
   then weekly for 4 weeks (needs.py); these come first within the 10 event pages per run
 """
@@ -30,6 +31,7 @@ from .pagetext import page_text, text_hash
 from .readers import read_aic, read_page
 from .rules import apply_rules, norm_title
 from .store import drop_passed_hidden, note_addresses, on_source_site, record, venue_for
+from .venuesources import add_missing, use_calendar_link
 
 STRETCH_AFTER = 3
 MAX_GAP_DAYS = 60
@@ -89,6 +91,8 @@ def check_source(db, source: DiscoverySource, client, today: date) -> Outcome:
                 state["api"] = {"hash": digest}
                 out.status = "ok"
         else:
+            if source.find_link:
+                use_calendar_link(source)
             for url in source.pages:
                 prev = state.get(url, {})
                 page = web.fetch(url, prev.get("etag", ""), prev.get("last_modified", ""))
@@ -236,6 +240,8 @@ def run(db, client, today: date, only: int | None = None, force: bool = False) -
     Check now (source.check_requested) still run when the budget is used up."""
     results = []
     drop_passed_hidden(db, today)  # CC-207: costs nothing, so it runs whatever the budget says
+    if only is None and add_missing(db, today):  # CC-221: adding one costs nothing either: only its reads do
+        db.commit()
     sources = due(db, today, only, force)
     if budget_state(db)[0] != "ok":  # CC-211: what's left goes to the best sources
         sources = best_first(db, sources)

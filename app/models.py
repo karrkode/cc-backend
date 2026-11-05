@@ -251,6 +251,8 @@ class Venue(Base):
     # CC-219: an admin took it out of the public venue list. Not pending: approving an event ends pending, but only an
     # admin ends this. Its events stay listed, and discovery and submissions still file events under it.
     hidden: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    # CC-221: an admin deleted its discovery source, so discovery doesn't add one back from its website
+    no_source: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
 
 
 class VenueWebsiteDismissal(Base):
@@ -644,6 +646,10 @@ class DiscoverySource(Base):
     manual: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     # CC-80: an admin pressed Check now; such checks still run when the monthly budget is used up
     check_requested: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    # CC-221: added from a venue's website (app/discovery/venuesources.py). added_from keeps that address, because the
+    # pages move to the calendar link; find_link means the home page hasn't been searched for that link yet.
+    added_from: Mapped[str] = mapped_column(String(500), default="", server_default="")
+    find_link: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     venue: Mapped["Venue | None"] = relationship(lazy="joined")
 
 

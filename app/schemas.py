@@ -641,6 +641,14 @@ class DiscoverySourceOut(ORM):
     waiting: int = 0  # found items waiting for review
     checks_30d: int = 0
     pages_read_30d: int = 0
+    # CC-221: what the Event sources grid shows
+    label: str = ""  # the venue's name, or the source's when it has no venue
+    state: str = "new"  # ok | nothing | error | manual | new | off (venuesources.state_of)
+    size: int = 1  # the block's size step, 1 to 4
+    events_year: int = 0  # approved events at its venues, from 12 months ago onward
+    found: int = 0  # everything it has ever found
+    approved: int = 0  # of those, approved and still live
+    website: str = ""  # the venue's own site, as opposed to the pages read
 
 
 class DiscoverySourcePatch(BaseModel):
