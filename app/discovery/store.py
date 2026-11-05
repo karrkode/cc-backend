@@ -10,6 +10,7 @@
 - CC-217: an item whose venue is out of town is left out (status "skipped"): the site covers Chicago and its suburbs.
 - CC-189: an event's link is kept only if it's http(s) on the source's own site: a page can name any address.
 - CC-218: a street address in a page's event data becomes a suggestion for an admin. It never reaches the venue itself.
+- CC-207: a hidden item ("not sure yet") stays hidden when it's seen again, and once its dates pass it becomes rejected.
 - CC-79: an item that is a catalog event (listed or approved) passes its performance dates and times on
   to that event, for the planner. That's the one thing discovery changes on an event by itself: the
   dates aren't shown on cards, and admins don't edit them.
@@ -30,6 +31,7 @@ from .readers import FoundEvent
 from .rules import norm_title
 
 DECIDED = {"approved", "rejected"}
+PASSED_REASON = "its dates passed while it was hidden"  # CC-207
 MAX_STREETS = 5  # CC-218: a page's suggestions; a venue has one address, so more than this is noise
 
 
@@ -193,7 +195,7 @@ def possible_duplicates(db, items: list[DiscoveredItem]) -> dict[int, Event]:
     """For new items: a catalog event at the same venue with a similar title (not the same, or it would be "listed")."""
     out, by_venue = {}, {}
     for item in items:
-        if item.status != "new":
+        if item.status not in ("new", "hidden"):  # CC-207: a hidden one can still be approved
             continue
         ids = frozenset(venue_ids_of(db, item.source))
         if not ids:
@@ -256,6 +258,25 @@ def sync_performances(db, item: DiscoveredItem) -> None:
         event.performances = dates
 
 
+def last_date(item: DiscoveredItem) -> date | None:
+    """CC-207: the last day it's known to be on. An open run, or an opening with no closing date, has none: like the
+    catalog, we take those to be still on."""
+    days = [d for d in (_date(p.get("date")) for p in item.performances or []) if d]
+    if item.end_date:
+        return max([item.end_date, *days])
+    return None if item.open_run or not days else max(days)
+
+
+def drop_passed_hidden(db, today: date) -> int:
+    """CC-207: hidden events whose dates have passed show as rejected, so they can't come back. Returns how many."""
+    passed = [i for i in db.scalars(select(DiscoveredItem).where(DiscoveredItem.status == "hidden"))
+              if (last := last_date(i)) is not None and last < today]
+    for item in passed:
+        item.status, item.skip_reason = "rejected", PASSED_REASON
+    db.commit()
+    return len(passed)
+
+
 def record(db, source: DiscoverySource, found: FoundEvent, skip: str) -> str:
     """Store one found event. Returns what it was: new | update | skipped | seen."""
     if not on_source_site(found.url, source):
@@ -305,7 +326,7 @@ def _record(db, source: DiscoverySource, found: FoundEvent, skip: str) -> str:
             return "update"
         return "seen"
     item.last_seen_at = now
-    if item.status in DECIDED or item.status == "skipped":
+    if item.status in DECIDED or item.status in ("skipped", "hidden"):
         if item.status == "approved" and item.event_id:  # live now: offer the source's changes as an update
             listed = db.get(Event, item.event_id)
             diff = changes_against(listed, f) if listed else {}

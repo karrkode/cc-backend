@@ -12,13 +12,13 @@ from ..deps import DB, AdminUser
 from ..discovery.budget import budget_state, set_monthly_budget
 from ..discovery.needs import needs
 from ..discovery.readers import cost_usd
-from ..discovery.recap import _md, budget_note, gather, next_send
+from ..discovery.recap import budget_note, found_by_week, gather, next_send
 from ..discovery.rules import norm_title
 from ..discovery.store import matching_rule, possible_duplicates, rule_reason, sync_performances, venue_for
 from ..models import DiscoveredItem, DiscoveryCheck, DiscoverySource, Event, SkipRule, Venue
 from ..schemas import (BudgetIn, DiscoveredItemOut, DiscoveredPage, DiscoveryOverview, DiscoverySourceOut, DiscoverySourcePatch,
                        EventIn, EventRef, FoundChange, RUN_DATES_MAX, RejectIn, RejectOut, SkipRuleOut, SourcingCount, SourcingSummary,
-                       SourcingUnreadable, UnreadableSource)
+                       SourcingUnreadable, SourcingWeek, UnreadableSource)
 from .events import new_event
 
 router = APIRouter(prefix="/admin/discovery", tags=["discovery"])
@@ -60,14 +60,15 @@ def sources(db: DB, _: AdminUser):
 
 @router.get("/summary", response_model=SourcingSummary)
 def summary(db: DB, _: AdminUser):
-    """What the Event Sourcing page shows (CC-206): what needs the admin, then the week and the budget."""
+    """What the Event Sourcing page shows (CC-206, CC-207): what needs the admin, the budget, the graph and the found events."""
     now = datetime.now(UTC)
     w = gather(db, now)
-    return SourcingSummary(new_waiting=w.new_waiting, updates_waiting=w.updates_waiting,
-                           waiting_by_source=[SourcingCount(name=name, n=n) for name, n in w.waiting_by_source],
+    hidden = db.scalar(select(func.count()).select_from(DiscoveredItem).where(DiscoveredItem.status == "hidden")) or 0
+    return SourcingSummary(new_waiting=w.new_waiting, updates_waiting=w.updates_waiting, hidden=hidden,
+                           waiting_by_source=[SourcingCount(id=sid, name=name, n=n) for sid, name, n in w.waiting_by_source],
                            unreadable=[SourcingUnreadable(id=sid, name=name, reason=reason) for sid, name, _page, reason, _tried in w.unreadable],
-                           by_hand=[name for name, _page in w.by_hand], period=f"{_md(w.first)} to {_md(w.last)}",
-                           found_total=w.found_total, left_out=w.left_out, checks=w.checks, week_cost_usd=w.week_cost,
+                           by_hand=[name for name, _page in w.by_hand], found_total=w.found_total,
+                           found_weeks=[SourcingWeek(first=a, last=b, n=n) for a, b, n in found_by_week(db, now)],
                            next_recap=next_send(now), sources=len(w.sources), spent_month_usd=w.spent, budget_usd=w.budget,
                            budget_state=w.state, budget_note=budget_note(w))
 
@@ -126,7 +127,7 @@ def check_now(source_id: int, db: DB, _: AdminUser):
 
 # ---- review (CC-71) ---------------------------------------------------------------
 
-Show = Literal["waiting", "needs", "new", "update", "approved", "rejected", "skipped", "listed", "all"]
+Show = Literal["waiting", "needs", "new", "update", "approved", "rejected", "skipped", "listed", "hidden", "all"]
 SHOWS = {"waiting": ["new", "update"], "needs": ["new"], "all": None}  # needs: new ones missing a date or show days (CC-88)
 Has = Literal["any", "listed", "none"]  # CC-82: has a price (or "Free") / has an opening or closing date
 
@@ -137,7 +138,9 @@ def _has(q, has: Has, condition):
 
 def _narrowed(q, source: int | None, price: Has, dates: Has):
     """The filters besides status: source, price listed or not, dates listed or not."""
-    if source is not None:
+    if source == 0:  # CC-207: those whose source was deleted
+        q = q.where(DiscoveredItem.source_id.is_(None))
+    elif source is not None:
         q = q.where(DiscoveredItem.source_id == source)
     q = _has(q, price, (DiscoveredItem.cost_text != "") | DiscoveredItem.min_price.is_not(None))
     return _has(q, dates, DiscoveredItem.begin_date.is_not(None) | DiscoveredItem.end_date.is_not(None))
@@ -179,7 +182,7 @@ def _item_out(db: DB, item: DiscoveredItem, dups: dict | None = None) -> Discove
     out.venue_show_times = venue.show_times if venue is not None else {}
     if venue is not None:  # CC-125: the approve form starts with the venue's default category
         out.venue_category, out.venue_opera = venue.category, venue.opera
-    out.needs = needs(item, venue) if item.status == "new" else ""
+    out.needs = needs(item, venue) if item.status in ("new", "hidden") else ""
     out.proposed = [FoundChange(field=k, listed=v[0], found=v[1]) for k, v in (item.changes or {}).items()] \
         if item.status == "update" else []
     event = db.get(Event, item.event_id) if item.event_id else None
@@ -250,7 +253,7 @@ def still_needs(db: DB, item: DiscoveredItem, body: EventIn) -> str:
 def approve(item_id: int, body: EventIn, db: DB, user: AdminUser):
     """Add a found event to the catalog, as edited: live now, at a set time, or waiting for review."""
     item = _item(db, item_id)
-    if item.status not in ("new", "rejected", "skipped"):
+    if item.status not in ("new", "rejected", "skipped", "hidden"):
         raise HTTPException(status.HTTP_409_CONFLICT, "This one is already in the catalog")
     missing = still_needs(db, item, body)
     if missing:  # CC-88: the approve form asks for these
@@ -271,7 +274,7 @@ def reject(item_id: int, body: RejectIn, db: DB, _: AdminUser):
     """Reject a found event. With skip_similar, future ones whose title contains the phrase are
     rejected quietly too (this source or all), and so are any already waiting."""
     item = _item(db, item_id)
-    if item.status not in ("new", "skipped"):
+    if item.status not in ("new", "skipped", "hidden"):
         raise HTTPException(status.HTTP_409_CONFLICT, "Only new events can be rejected")
     item.status = "rejected"
     also = 0
@@ -293,6 +296,28 @@ def reject(item_id: int, body: RejectIn, db: DB, _: AdminUser):
         item.skip_reason = rule_reason(rule)
     db.commit()
     return RejectOut(item=_item_out(db, item), also_rejected=also)
+
+
+@router.post("/items/{item_id}/hide", response_model=DiscoveredItemOut)
+def hide(item_id: int, db: DB, _: AdminUser):
+    """CC-207: not sure yet, decide later. It leaves the waiting numbers and its page isn't read again."""
+    item = _item(db, item_id)
+    if item.status != "new":
+        raise HTTPException(status.HTTP_409_CONFLICT, "Only new events can be hidden")
+    item.status = "hidden"
+    db.commit()
+    return _item_out(db, item)
+
+
+@router.post("/items/{item_id}/unhide", response_model=DiscoveredItemOut)
+def unhide(item_id: int, db: DB, _: AdminUser):
+    """CC-207: back to new."""
+    item = _item(db, item_id)
+    if item.status != "hidden":
+        raise HTTPException(status.HTTP_409_CONFLICT, "This one isn't hidden")
+    item.status = "new"
+    db.commit()
+    return _item_out(db, item)
 
 
 def _settled(item: DiscoveredItem, event: Event | None) -> str:

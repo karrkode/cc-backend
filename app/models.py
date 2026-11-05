@@ -657,7 +657,7 @@ class DiscoveredItem(Base):
     # CC-133: kept, with its review status, when an admin deletes its source (then it has none)
     source_id: Mapped[int | None] = mapped_column(ForeignKey("discovery_sources.id", ondelete="SET NULL"), index=True)
     key: Mapped[str] = mapped_column(String(500))  # the event's own page, or its normalized title
-    status: Mapped[str] = mapped_column(String(20), default="new", index=True)  # new | listed | update | approved | rejected | skipped
+    status: Mapped[str] = mapped_column(String(20), default="new", index=True)  # new | listed | update | approved | rejected | skipped | hidden (CC-207)
     skip_reason: Mapped[str] = mapped_column(String(200), default="")
     title: Mapped[str] = mapped_column(String(300))
     url: Mapped[str] = mapped_column(String(2000), default="")

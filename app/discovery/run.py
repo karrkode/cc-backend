@@ -29,7 +29,7 @@ from .needs import look_again, needs
 from .pagetext import page_text, text_hash
 from .readers import read_aic, read_page
 from .rules import apply_rules, norm_title
-from .store import note_addresses, on_source_site, record, venue_for
+from .store import drop_passed_hidden, note_addresses, on_source_site, record, venue_for
 
 STRETCH_AFTER = 3
 MAX_GAP_DAYS = 60
@@ -235,6 +235,7 @@ def run(db, client, today: date, only: int | None = None, force: bool = False) -
     """Check what's due, within the monthly budget (CC-80). force (the command line's --now) and
     Check now (source.check_requested) still run when the budget is used up."""
     results = []
+    drop_passed_hidden(db, today)  # CC-207: costs nothing, so it runs whatever the budget says
     sources = due(db, today, only, force)
     if budget_state(db)[0] != "ok":  # CC-211: what's left goes to the best sources
         sources = best_first(db, sources)

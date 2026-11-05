@@ -116,11 +116,8 @@ def test_summary_matches_the_recap(client, db, admin_token):
     t = build_recap(db).text
     assert f"Waiting for review: {b['new_waiting'] + b['updates_waiting']} ({b['new_waiting']} new" in t
     assert f"NEW EVENTS FOUND THIS WEEK: {b['found_total']}" in t
-    assert f"LEFT OUT AUTOMATICALLY: {b['left_out']}" in t
-    assert f"CHECKS THIS WEEK: {b['checks']} check" in t
-    assert f"({b['period']})" in t
-    assert b["new_waiting"] == 2 and b["left_out"] == 1 and b["sources"] == 2
-    assert b["waiting_by_source"] == [{"name": "Goodman", "n": 2}]
+    assert b["new_waiting"] == 2 and b["sources"] == 2
+    assert b["waiting_by_source"] == [{"id": s.id, "name": "Goodman", "n": 2}]
     assert b["unreadable"] == [{"id": s.id, "name": "Goodman", "reason": "the site refused the request (HTTP 403)"}]
     assert b["by_hand"] == ["Court"]
     assert b["budget_usd"] == 10 and b["budget_state"] == "ok" and b["budget_note"] == ""
