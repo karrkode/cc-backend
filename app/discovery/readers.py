@@ -92,17 +92,31 @@ Give each event's own page address when the text links to it (links appear in <a
 If the page states the venue's regular opening hours, give them in venue_hours."""
 
 
-def read_page(client, source_name: str, kind: str, url: str, text: str, today: date,
-              note: str = "") -> tuple[PageReading, int, int]:
-    """(reading, input_tokens, output_tokens). Raises on a refusal or an unusable reply. note is added to the
-    instructions (CC-124: a member's link has no usual venue)."""
+class VenueReading(BaseModel):
+    """CC-222: what a venue's own site says about the venue. Empty when the page doesn't say."""
+    name: str = Field(default="", description="The venue's own name")
+    street: str = Field(default="", description="The street address, like 78 E Washington St")
+    city: str = ""
+    state: str = Field(default="", description="Two letters, like IL")
+    zip_code: str = ""
+    neighborhood: str = Field(default="", description="Only if the page names the neighborhood it's in")
+
+
+VENUE_INSTRUCTIONS = """You read a cultural venue's own web page, for a listings site in Chicago. The page address is
+{url}. Give the venue's name and the street address of the place where its events happen. Use only what the page
+says: never guess, and leave a field empty when the page doesn't state it. A mailing address that's a PO box isn't a
+street address."""
+
+
+def _read(client, system: str, text: str, output_format, max_tokens: int):
+    """(reading, input_tokens, output_tokens). Raises on a refusal or an unusable reply."""
     response = client.messages.parse(
         model=MODEL,
-        max_tokens=16000,
+        max_tokens=max_tokens,
         output_config={"effort": "low"},
-        system=INSTRUCTIONS.format(today=today.isoformat(), source=source_name, kind=kind, url=url) + note,
+        system=system,
         messages=[{"role": "user", "content": "The page's text:\n\n" + text}],
-        output_format=PageReading,
+        output_format=output_format,
     )
     if response.stop_reason == "refusal":
         raise ValueError("the model declined to read this page")
@@ -110,6 +124,18 @@ def read_page(client, source_name: str, kind: str, url: str, text: str, today: d
         raise ValueError("the reply was cut off (the page lists too much at once)")
     usage = response.usage
     return response.parsed_output, usage.input_tokens, usage.output_tokens
+
+
+def read_page(client, source_name: str, kind: str, url: str, text: str, today: date,
+              note: str = "") -> tuple[PageReading, int, int]:
+    """The events on a page. note is added to the instructions (CC-124: a member's link has no usual venue)."""
+    system = INSTRUCTIONS.format(today=today.isoformat(), source=source_name, kind=kind, url=url) + note
+    return _read(client, system, text, PageReading, 16000)
+
+
+def read_venue_page(client, url: str, text: str) -> tuple[VenueReading, int, int]:
+    """CC-222: the venue a page belongs to."""
+    return _read(client, VENUE_INSTRUCTIONS.format(url=url), text, VenueReading, 1000)
 
 
 # ---- the Art Institute of Chicago's public API (no AI) ----------------------------------

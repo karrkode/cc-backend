@@ -210,6 +210,12 @@ class AddressChoice(AddressPick):
 class VenueAdd(VenueIn, AddressChoice):
     """CC-218: an admin adding a venue directly, so the address is required. Venues added along the way (a member's
     suggestion, an event being edited or approved) use VenueIn and go on the no-address list instead."""
+    website: str = Field(default="", max_length=600)  # CC-222: discovery gives it a source at its next run (CC-221)
+
+    @field_validator("website")
+    @classmethod
+    def _website(cls, v):
+        return normalize_website(v)
 
 
 # CC-78: a venue's opening hours and usual show times. Times are 24-hour HH:MM; a closing time earlier
@@ -410,6 +416,25 @@ class NeighborhoodOut(BaseModel):
     name: str
     area: Area
     region: Region | None  # CC-73
+
+
+class VenueNamed(BaseModel):
+    name: str
+    neighborhood: str
+
+
+class VenueSiteDraft(BaseModel):
+    """CC-222: what a venue's website says, for the Add a venue form. Nothing is saved. problem: why the page couldn't
+    be read, which is still a 200 so that same_website reaches the form; "" when it could."""
+    website: str
+    name: str = ""
+    neighborhood: str = ""
+    address: str = ""
+    city: str = ""
+    zip_code: str = ""
+    missing: list[Literal["name", "address", "city", "zip_code"]] = []
+    same_website: list[VenueNamed] = []
+    problem: str = ""
 
 
 class LinkIn(BaseModel):

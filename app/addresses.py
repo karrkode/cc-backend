@@ -48,6 +48,11 @@ def found_address(street: str, city: str, zip_code: str) -> tuple[str, str, str]
         return None
     if not (re.search(r"\d", v) and re.search(r"[A-Za-z]{2}", v)):
         return None
+    return v, *found_town(city, zip_code)
+
+
+def found_town(city: str, zip_code: str) -> tuple[str, str]:
+    """A page's city and ZIP, each "" if it doesn't check out."""
     try:
         city = normalize_city(city)
     except ValueError:
@@ -56,7 +61,7 @@ def found_address(street: str, city: str, zip_code: str) -> tuple[str, str, str]
         zip_code = normalize_zip(zip_code)
     except ValueError:
         zip_code = ""
-    return v, city, zip_code
+    return city, zip_code
 
 
 def locality(area, neighborhood: str) -> tuple[str, str]:

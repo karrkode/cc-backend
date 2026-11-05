@@ -13,15 +13,16 @@ BLOCK = {"p", "div", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6", "section", 
 # About 15,000 tokens (CC-80): enough for a season or a month of shows; a longer page is cut off (and the
 # result says so) rather than costing several times as much.
 MAX_CHARS = 50_000
+TAIL_CHARS = 10_000  # CC-222: of those, what's kept from the page's end when a footer matters
 
 
 class _Text(HTMLParser):
-    def __init__(self, base: str):
+    def __init__(self, base: str, drop: set[str]):
         super().__init__(convert_charrefs=True)
-        self.base, self.out, self.skip, self.href = base, [], 0, None
+        self.base, self.drop, self.out, self.skip, self.href = base, drop, [], 0, None
 
     def handle_starttag(self, tag, attrs):
-        if tag in SKIP:
+        if tag in self.drop:
             self.skip += 1
         elif tag in BLOCK:
             self.out.append("\n")
@@ -30,7 +31,7 @@ class _Text(HTMLParser):
             self.href = urljoin(self.base, href) if href and not href.startswith(("#", "mailto:", "tel:", "javascript:")) else None
 
     def handle_endtag(self, tag):
-        if tag in SKIP and self.skip:
+        if tag in self.drop and self.skip:
             self.skip -= 1
         elif tag == "a" and self.href and not self.skip:
             self.out.append(f" <{self.href}> "); self.href = None
@@ -42,9 +43,10 @@ class _Text(HTMLParser):
             self.out.append(data)
 
 
-def page_text(html: str, url: str) -> tuple[str, bool]:
-    """(text, cut): the page's text and links; cut is True if it had to be shortened."""
-    p = _Text(url)
+def page_text(html: str, url: str, footers: bool = False) -> tuple[str, bool]:
+    """(text, cut): the page's text and links; cut is True if it had to be shortened. CC-222: footers=True keeps headers
+    and footers, and the end of a long page, since that's where a venue's site gives its address."""
+    p = _Text(url, SKIP - {"footer", "header"} if footers else SKIP)
     p.feed(html); p.close()
     text = re.sub(r"[ \t\r\f\v]+", " ", "".join(p.out))
     text = re.sub(r" ?\n[ \n]*", "\n", text).strip()
@@ -52,7 +54,9 @@ def page_text(html: str, url: str) -> tuple[str, bool]:
     host = urlsplit(url).netloc.removeprefix("www.")
     # CC-182: an address stops at the next "<" too, so each match ends where the next can start
     text = re.sub(r" ?<(https?://[^<>\s]+)>", lambda m: f" <{m.group(1)}>" if host in urlsplit(m.group(1)).netloc else "", text)
-    return (text[:MAX_CHARS], True) if len(text) > MAX_CHARS else (text, False)
+    if len(text) <= MAX_CHARS:
+        return text, False
+    return (text[:MAX_CHARS - TAIL_CHARS] + "\n" + text[-TAIL_CHARS:] if footers else text[:MAX_CHARS]), True
 
 
 def text_hash(text: str) -> str:
