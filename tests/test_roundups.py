@@ -99,7 +99,7 @@ def test_closing_soon_is_the_next_two_weeks_soonest_first(client, make_event):
     make_event(title="Open Run", venue_name="E", end=None)
     html = page(client, "closing-soon")
     assert names(html) == ["Today", "Sooner", "Later"]
-    assert "Last day today" in html and "Closes " in html
+    assert "Today only!" in html and "Last day today" not in html and "Closes " in html
 
 
 def test_kinds_list_opera_under_theater_and_music(client, make_event, db):
@@ -212,3 +212,8 @@ def test_roundups_are_lakefront_rows_under_day_heads(client, make_event, db):
     db.commit()
     end = TODAY + timedelta(days=2)
     assert f'<h2 class="day-head">Closing {end.strftime("%A")}, {end.strftime("%b")} {end.day}' in page(client, "closing-soon")
+    make_event(title="Final Night", begin=TODAY - timedelta(days=9), end=TODAY)
+    db.commit()
+    closing = page(client, "closing-soon")
+    assert '<h2 class="day-head">Today only!</h2>' in closing  # CC-232: the product owner's wording
+    assert "Closes today" not in closing

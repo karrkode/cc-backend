@@ -185,7 +185,7 @@ def _long(d: date, today: date | None = None) -> str:
 def _when(event: Event, today: date, closing: bool) -> str:
     b, e = event.begin_date, event.end_date
     if closing and e:
-        return "Last day today" if e == today else f"Closes {_short(e)}"
+        return "Today only!" if e == today else f"Closes {_short(e)}"
     if b and b > today:
         return f"Opens {_short(b)}"
     if e:
@@ -358,7 +358,7 @@ def _day_head(event: Event, today: date, closing: bool) -> str:
     """The head a row sits under, as in the site's listings (CC-140): the day it opens, or the day it closes."""
     b, e = event.begin_date, event.end_date
     if closing:
-        return "Closes today" if e == today else f"Closing {_long(e, today)}"
+        return "Today only!" if e == today else f"Closing {_long(e, today)}"
     return f"Opening {_long(b, today)}" if b and b > today else "On now"
 
 
