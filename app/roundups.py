@@ -185,7 +185,7 @@ def _long(d: date, today: date | None = None) -> str:
 def _when(event: Event, today: date, closing: bool) -> str:
     b, e = event.begin_date, event.end_date
     if closing and e:
-        return "Last day today" if e == today else f"Closes {_short(e)}"
+        return "Today only!" if e == today else f"Closes {_short(e)}"
     if b and b > today:
         return f"Opens {_short(b)}"
     if e:

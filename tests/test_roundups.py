@@ -99,7 +99,7 @@ def test_closing_soon_is_the_next_two_weeks_soonest_first(client, make_event):
     make_event(title="Open Run", venue_name="E", end=None)
     html = page(client, "closing-soon")
     assert names(html) == ["Today", "Sooner", "Later"]
-    assert "Last day today" in html and "Closes " in html
+    assert "Today only!" in html and "Last day today" not in html and "Closes " in html
 
 
 def test_kinds_list_opera_under_theater_and_music(client, make_event, db):
