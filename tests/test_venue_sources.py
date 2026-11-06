@@ -1,4 +1,4 @@
-"""CC-221: a source for every venue with a website, and the numbers behind the Event sources grid."""
+"""CC-221: a source for every venue with a website, and the numbers behind the Source grid."""
 from datetime import timedelta
 
 from sqlalchemy import select

@@ -10,7 +10,7 @@ fallback. It covers the past seven days:
 - the week's checks and cost, this month against the budget, and every source with how often it's checked
 
 It's sent even when the week was quiet ("Nothing new this week"), so a missing email means something
-is wrong. Links are named links to the site (Found events, Event sources), never written-out addresses.
+is wrong. Links are named links to the site (Found events, Source grid), never written-out addresses.
 """
 from collections import Counter
 from dataclasses import dataclass, field
@@ -241,7 +241,7 @@ def budget_note(w: Week) -> str:
     if w.state == "saving":
         return "Over 80% of the budget: event pages wait until next month. Sources are still checked, the most approved events per dollar first."
     if w.state == "paused":
-        return "The budget is used up: only Check now runs until next month. Raise it on Event sources if needed."
+        return "The budget is used up: only Check now runs until next month. Raise it on the Source grid if needed."
     return ""
 
 
@@ -285,7 +285,7 @@ def as_text(w: Week) -> str:
     lines += ["", f"CHECKS THIS WEEK: {_n(w.checks, 'check')}, {_n(w.pages, 'page')} read, about ${w.week_cost:.2f}",
               f"This month: ${w.spent:.2f} of the ${w.budget:.0f} budget." + (f" {budget_note(w)}" if budget_note(w) else "")]
     lines += _cols([("Source", "How often", "Next check")] + w.sources)
-    lines += ["", f"Event sources: {w.link('sources')}", "Sent every Tuesday at 10 AM.", "Culture Crew"]
+    lines += ["", f"Source grid: {w.link('sources')}", "Sent every Tuesday at 10 AM.", "Culture Crew"]
     return "\n".join(lines) + "\n"
 
 
@@ -408,7 +408,7 @@ def as_html(w: Week) -> str:
                  + (f'<p style="margin:0 0 8px;padding:8px 10px;border-radius:8px;background:{LEAD_SOFT};color:{ON_LEAD_SOFT};'
                     f'font-size:13px">{escape(note)}</p>' if note else ""))
     parts.append(_table(["Source", "How often", "Next check"], [[escape(a), escape(b), escape(c)] for a, b, c in w.sources]))
-    parts.append(f'<p style="margin:24px 0 0;font-size:12px;color:{MUTED}">{_a(w.link("sources"), "Event sources")} '
+    parts.append(f'<p style="margin:24px 0 0;font-size:12px;color:{MUTED}">{_a(w.link("sources"), "Source grid")} '
                  f'&middot; Sent every Tuesday at 10 AM</p>')
 
     body = "".join(parts)

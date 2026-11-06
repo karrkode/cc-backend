@@ -1,4 +1,4 @@
-"""CC-221: a source for every venue with a website, and the numbers behind the Event sources grid.
+"""CC-221: a source for every venue with a website, and the numbers behind the Source grid.
 
 - A venue's website (venues.website) and a source's sourcing URL (discovery_sources.pages) are different things: a
   website is usually a home page, which rarely lists events. A new source starts on the home page and, just before its
