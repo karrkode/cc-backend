@@ -666,7 +666,7 @@ class DiscoverySourceOut(ORM):
     waiting: int = 0  # found items waiting for review
     checks_30d: int = 0
     pages_read_30d: int = 0
-    # CC-221: what the Event sources grid shows
+    # CC-221: what the Source grid shows
     label: str = ""  # the venue's name, or the source's when it has no venue
     state: str = "new"  # ok | nothing | error | manual | new | off (venuesources.state_of)
     size: int = 1  # the block's size step, 1 to 4

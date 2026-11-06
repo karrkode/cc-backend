@@ -37,6 +37,7 @@ def test_a_busy_week(db, make_event):
     assert email.to == "info@chiculturecrew.com"
     assert email.subject == "Event discovery: 2 new, 1 update, 1 to check by hand"
     t = email.text
+    assert "Source grid: " in t and "/#sources" in t and "Event sources" not in t  # CC-234: new name, same address
     assert t.startswith("Hello, Andrew! Here's what's changed in the last week")
     assert "Waiting for review: 4 (3 new, 1 proposed updates)" in t  # Hamlet, Macbeth, Last Month + Othello
     assert "NEW EVENTS FOUND THIS WEEK: 2\n  Goodman  2" in t  # not last month's, not the rule's, not the class
@@ -46,6 +47,7 @@ def test_a_busy_week(db, make_event):
     assert "CHECKS THIS WEEK: 1 check, 3 pages read, about $0.02" in t
     assert "Goodman  Every month  Within the hour" in t
     h = email.html
+    assert ">Source grid</a>" in h and "Event sources" not in h
     assert "Hello, Andrew! Here's what's changed in the last week." in h
     assert '<a href="http://localhost:4173/#found" style="display:inline-block' in h and ">Review found events</a>" in h
     assert "https://goodman.example/season" in h and "Check by hand only</a>" in h
