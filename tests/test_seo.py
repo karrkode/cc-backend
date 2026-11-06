@@ -110,7 +110,7 @@ def test_event_page_is_a_small_lakefront_poster(client, make_event, db):
     page = client.get(f"/e/{ev.id}-tosca").text
     for old in OLD_LOOK:
         assert old not in page, old
-    assert "Newsreader" in page and "Big+Shoulders+Text" in page and 'var t = "light"' in page
+    assert "Instrument+Sans" in page and "Newsreader" not in page and "Big+Shoulders+Text" in page and 'var t = "light"' in page
     assert '<header class="mast"><div class="wrap"><a class="brand"' in page and "border-bottom: 6px solid var(--stripe)" in page
     assert '<div class="poster cat-music"><div class="poster-in"><p class="poster-k">Opera</p><h1>Tosca</h1>' in page
     assert '<dl class="facts"><dt>When</dt>' in page
