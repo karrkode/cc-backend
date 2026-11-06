@@ -1,6 +1,7 @@
 """CC-124: suggesting an event by its link: a draft from the page's event data, or Claude's reading of it."""
 import socket
 from datetime import timedelta
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select
@@ -240,3 +241,14 @@ def test_event_data_that_agrees_or_is_far_from_the_page_title_is_kept():
 def test_event_data_dates(value, expected):
     from app.discovery.jsonld import _when
     assert _when(value) == expected
+
+
+def test_a_failed_claude_read_counts_its_tokens(client, user_token, db, web_pages, claude):
+    """CC-198"""
+    claude.messages.create = lambda **kw: SimpleNamespace(stop_reason="max_tokens", content=[],
+                                                          usage=SimpleNamespace(input_tokens=700, output_tokens=90))
+    web_pages["https://blog.example/post"] = "<p>Ten things to do this fall</p>"
+    assert ask(client, user_token, "https://blog.example/post").status_code == 422
+    check = db.scalar(select(DiscoveryCheck))
+    assert (check.status, check.input_tokens, check.output_tokens, check.pages_read) == ("error", 700, 90, 1)
+

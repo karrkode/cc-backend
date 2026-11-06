@@ -17,7 +17,7 @@ from .discovery.budget import budget_state
 from .discovery.fetch import PrivateAddress, check_public
 from .discovery.jsonld import venue_in
 from .discovery.pagetext import page_text
-from .discovery.readers import read_venue_page
+from .discovery.readers import ReadFailed, read_venue_page
 from .discovery.venuesources import _parts
 from .models import Venue
 
@@ -80,6 +80,9 @@ def _ask_claude(db, url: str, got: dict) -> dict:
         return {}
     try:
         reading, tin, tout = read_venue_page(client, got["url"], got["text"])
+    except ReadFailed as e:  # CC-198: the same, and its tokens count toward the budget
+        fromlink._log(db, "error", url, e.tokens_in, e.tokens_out, note=f"Claude: {e}", who=WHO)
+        return {}
     except Exception as e:  # noqa: BLE001 - a failed read leaves what the page's data gave
         fromlink._log(db, "error", url, note=f"Claude: {type(e).__name__}: {e}", who=WHO)
         return {}

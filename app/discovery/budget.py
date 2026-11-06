@@ -9,7 +9,8 @@ unexpected: a very long page, or a site that changes all the time.
 
 CC-211: the first time a month reaches 80%, admins get one email (settings.recap_to, like the recap).
 
-Spending is worked out from the tokens logged for each check this calendar month (Chicago time), at
+Spending is worked out from the tokens logged for each check this calendar month (Chicago time), failed reads
+included (CC-198), at
 Claude Haiku 5.5's list price (readers.cost_usd). The alert is only as right as that price.
 """
 from datetime import UTC, datetime

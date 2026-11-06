@@ -635,6 +635,8 @@ class DiscoverySource(Base):
     active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=sa_true())
     next_check_on: Mapped[date | None] = mapped_column(Date)  # due on or after this day; None = due now
     unchanged_streak: Mapped[int] = mapped_column(Integer, default=0)  # checks in a row with nothing new
+    # CC-198: reads in a row that cost tokens and gave nothing usable; each one doubles the wait
+    failed_reads: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     page_state: Mapped[dict] = mapped_column(JSON, default=dict)  # per page: etag, last_modified, text hash
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

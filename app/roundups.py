@@ -16,6 +16,7 @@ from sqlalchemy import or_, select
 
 from .categories import category_condition, label
 from .config import get_settings
+from .discovery.store import _hhmm
 from .models import AppSetting, Event, Region, Venue
 from .routers.events import _on_between, price_or_usual
 from .seo import _page, cat_class, path_for, price_text
@@ -157,19 +158,25 @@ def times_on(event: Event, d: date) -> list[str] | None:
     return []
 
 
-def _clock(hhmm: str) -> str:
-    """"19:30" -> "7:30 pm", "14:00" -> "2 pm"."""
-    h, m = (int(x) for x in hhmm.split(":"))
+def _clock(hhmm: str | None) -> str:
+    """"19:30" -> "7:30 pm", "14:00" -> "2 pm". CC-198: "" for what isn't a time, which older found dates may hold."""
+    clean = _hhmm(hhmm)
+    if not clean:
+        return ""
+    h, m = (int(x) for x in clean.split(":"))
     text = f"{h % 12 or 12}" + (f":{m:02d}" if m else "")
     return f"{text} {'am' if h < 12 else 'pm'}"
 
 
 def _when_on(event: Event, d: date, times: list[str]) -> str:
-    if times:
-        return ", ".join(_clock(t) for t in times[:3])
+    shown = [c for c in map(_clock, times) if c]
+    if shown:
+        return ", ".join(shown[:3])
     hours = ((event.venue.open_hours if event.venue else {}) or {}).get(WEEKDAYS[d.weekday()])
     if hours and len(hours) == 2:
-        return f"{_clock(hours[0])}–{_clock(hours[1])}"
+        opens, closes = map(_clock, hours)
+        if opens and closes:
+            return f"{opens}–{closes}"
     return "All day"
 
 

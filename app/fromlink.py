@@ -23,7 +23,7 @@ from .discovery.budget import budget_state
 from .discovery.fetch import PrivateAddress, check_public
 from .discovery.jsonld import event_places, events_in, visible_title
 from .discovery.pagetext import page_text
-from .discovery.readers import FoundEvent, read_page
+from .discovery.readers import FoundEvent, ReadFailed, read_page
 from .discovery.rules import norm_title
 from .categories import BY_SOURCE_KIND, CATEGORIES
 from .models import DiscoveryCheck, DiscoverySource, Venue
@@ -185,6 +185,9 @@ def read_link(db, url: str, today: date) -> dict:
     try:
         reading, tin, tout = read_page(client, "a page a member sent in", "an event page", got["url"], got["text"],
                                        today, NOTE)
+    except ReadFailed as e:  # CC-198: the same, and its tokens count toward the budget
+        _log(db, "error", url, e.tokens_in, e.tokens_out, note=f"Claude: {e}")
+        raise Unreadable("error", f"Claude: {e}") from e
     except Exception as e:  # noqa: BLE001 - a failed read is a page we couldn't read, not a server error
         _log(db, "error", url, note=f"Claude: {type(e).__name__}: {e}")
         raise Unreadable("error", f"Claude: {type(e).__name__}: {e}") from e
