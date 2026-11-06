@@ -212,3 +212,8 @@ def test_roundups_are_lakefront_rows_under_day_heads(client, make_event, db):
     db.commit()
     end = TODAY + timedelta(days=2)
     assert f'<h2 class="day-head">Closing {end.strftime("%A")}, {end.strftime("%b")} {end.day}' in page(client, "closing-soon")
+    make_event(title="Final Night", begin=TODAY - timedelta(days=9), end=TODAY)
+    db.commit()
+    closing = page(client, "closing-soon")
+    assert '<h2 class="day-head">Today only!</h2>' in closing  # CC-232: the product owner's wording
+    assert "Closes today" not in closing

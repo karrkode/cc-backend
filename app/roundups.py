@@ -358,7 +358,7 @@ def _day_head(event: Event, today: date, closing: bool) -> str:
     """The head a row sits under, as in the site's listings (CC-140): the day it opens, or the day it closes."""
     b, e = event.begin_date, event.end_date
     if closing:
-        return "Closes today" if e == today else f"Closing {_long(e, today)}"
+        return "Today only!" if e == today else f"Closing {_long(e, today)}"
     return f"Opening {_long(b, today)}" if b and b > today else "On now"
 
 
