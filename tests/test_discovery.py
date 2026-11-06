@@ -70,13 +70,13 @@ def test_rules_leave_out_permanent_galleries():
 class FakeClaude:
     def __init__(self, events):
         self.events, self.calls = events, 0
-        self.messages = SimpleNamespace(parse=self.parse)
+        self.messages = SimpleNamespace(create=self.create)
 
-    def parse(self, **kw):
+    def create(self, **kw):
         self.calls += 1
         assert kw["model"] == "claude-haiku-5-5"
-        return SimpleNamespace(stop_reason="end_turn", parsed_output=PageReading(events=list(self.events)),
-                               usage=SimpleNamespace(input_tokens=1000, output_tokens=200))
+        return SimpleNamespace(stop_reason="end_turn", usage=SimpleNamespace(input_tokens=1000, output_tokens=200),
+                               content=[SimpleNamespace(type="text", text=PageReading(events=list(self.events)).model_dump_json())])
 
 
 @pytest.fixture

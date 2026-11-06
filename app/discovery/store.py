@@ -11,6 +11,8 @@
 - CC-189: an event's link is kept only if it's http(s) on the source's own site: a page can name any address.
 - CC-218: a street address in a page's event data becomes a suggestion for an admin. It never reaches the venue itself.
 - CC-207: a hidden item ("not sure yet") stays hidden when it's seen again, and once its dates pass it becomes rejected.
+- CC-198: a performance is kept only with a real date, and a time that can't be read is dropped: pages and readings
+  can say anything, and public pages show these.
 - CC-79: an item that is a catalog event (listed or approved) passes its performance dates and times on
   to that event, for the planner. That's the one thing discovery changes on an event by itself: the
   dates aren't shown on cards, and admins don't edit them.
@@ -72,7 +74,7 @@ def fields_of(e: FoundEvent) -> dict:
     return {"title": e.title.strip()[:300], "url": (e.url or "")[:2000], "kind": e.kind, "category": e.category,
             "venue_name": (e.venue_name or "")[:200], "begin_date": _date(e.begin_date), "end_date": _date(e.end_date),
             "open_run": e.open_run, "cost_text": (e.cost_text or "")[:120], "min_price": _price(e.min_price),
-            "performances": [p.model_dump() for p in e.performances][:400], "weekly": weekly_of(e), "weeks": weeks_of(e)}
+            "performances": shows_of(e)[:400], "weekly": weekly_of(e), "weeks": weeks_of(e)}
 
 
 DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
@@ -85,6 +87,11 @@ def _hhmm(t: str | None) -> str | None:
     except ValueError:
         return None
     return f"{h:02d}:{m:02d}" if 0 <= h < 24 and 0 <= m < 60 else None
+
+
+def shows_of(e: FoundEvent) -> list[dict]:
+    """CC-198: the performances with a date that reads, as YYYY-MM-DD, and their times as HH:MM or None."""
+    return [{"date": day.isoformat(), "time": _hhmm(p.time)} for p in e.performances if (day := _date(p.date))]
 
 
 def weekly_of(e: FoundEvent) -> dict:

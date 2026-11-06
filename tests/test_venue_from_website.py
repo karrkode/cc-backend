@@ -31,14 +31,14 @@ def ld(body: str) -> str:
 class FakeClaude:
     def __init__(self, **said):
         self.said, self.calls, self.sent = said, 0, ""
-        self.messages = SimpleNamespace(parse=self.parse)
+        self.messages = SimpleNamespace(create=self.create)
 
-    def parse(self, **kw):
+    def create(self, **kw):
         self.calls += 1
         self.sent = kw["messages"][0]["content"]
-        assert kw["model"] == "claude-haiku-5-5" and kw["output_format"] is VenueReading
-        return SimpleNamespace(stop_reason="end_turn", parsed_output=VenueReading(**self.said),
-                               usage=SimpleNamespace(input_tokens=1000, output_tokens=50))
+        assert kw["model"] == "claude-haiku-5-5" and "street" in kw["output_config"]["format"]["schema"]["properties"]
+        return SimpleNamespace(stop_reason="end_turn", usage=SimpleNamespace(input_tokens=1000, output_tokens=50),
+                               content=[SimpleNamespace(type="text", text=VenueReading(**self.said).model_dump_json())])
 
 
 @pytest.fixture
@@ -121,11 +121,21 @@ def test_no_claude_read_and_the_form_is_told_what_is_missing(client, admin_token
 def test_a_claude_failure_leaves_what_the_page_gave(client, admin_token, db, web_pages, claude, monkeypatch):
     def fails(**kw):
         raise ValueError("no")
-    claude.messages.parse = fails
+    claude.messages.create = fails
     web_pages[SITE] = ld('{"@type": "Museum", "name": "Lakeshore Museum"}') + PLAIN
     got = ask(client, admin_token)
     assert got.status_code == 200 and got.json()["name"] == "Lakeshore Museum"
     assert db.query(DiscoveryCheck).one().status == "error"
+
+
+def test_a_failed_claude_read_counts_its_tokens(client, admin_token, db, web_pages, claude):
+    """CC-198"""
+    claude.messages.create = lambda **kw: SimpleNamespace(stop_reason="refusal", content=[],
+                                                          usage=SimpleNamespace(input_tokens=700, output_tokens=0))
+    web_pages[SITE] = ld('{"@type": "Museum", "name": "Lakeshore Museum"}') + PLAIN
+    assert ask(client, admin_token).json()["name"] == "Lakeshore Museum"
+    check = db.query(DiscoveryCheck).one()
+    assert (check.status, check.input_tokens, check.pages_read) == ("error", 700, 1)
 
 
 @pytest.mark.parametrize("failure, says", [(web.Blocked("no"), "doesn't let us"), (web.FetchError("404"), "couldn't open")])

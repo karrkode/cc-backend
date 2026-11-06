@@ -13,6 +13,8 @@ Reading as little as possible (agreed with the product owner):
 - CC-221: every venue with a website gets a source (venuesources.py), a few first reads a day
 - CC-88: a found event missing a date or show days has its own page read the day after it's found,
   then weekly for 4 weeks (needs.py); these come first within the 10 event pages per run
+- CC-198: a failed read's tokens count toward the budget, and a source whose reads keep failing waits longer each time
+  (1, 2, 4, 8... days, up to 60). Check now still runs it. A page that can't be fetched costs nothing, so that's tomorrow.
 """
 import json
 from dataclasses import dataclass, field
@@ -28,7 +30,7 @@ from .hours import apply_open_hours, apply_show_times, link_venue
 from .jsonld import complete, events_in
 from .needs import look_again, needs
 from .pagetext import page_text, text_hash
-from .readers import read_aic, read_page
+from .readers import ReadFailed, read_aic, read_page
 from .rules import apply_rules, norm_title
 from .store import drop_passed_hidden, note_addresses, on_source_site, record, venue_for
 from .venuesources import add_missing, use_calendar_link
@@ -58,6 +60,11 @@ def next_gap(source: DiscoverySource) -> int:
     return int(min(max(gap, 1), max(MAX_GAP_DAYS, source.every_days)))
 
 
+def failed_gap(failed_reads: int) -> int:
+    """CC-198: the days to wait after this many failed reads in a row."""
+    return min(2 ** (failed_reads - 1), MAX_GAP_DAYS)
+
+
 def due(db, today: date, only: int | None = None, force: bool = False) -> list[DiscoverySource]:
     q = select(DiscoverySource).order_by(DiscoverySource.id)
     if only is not None:
@@ -82,6 +89,7 @@ def _store(db, source: DiscoverySource, events, out: Outcome) -> None:
 def check_source(db, source: DiscoverySource, client, today: date) -> Outcome:
     out = Outcome()
     state = dict(source.page_state or {})
+    wait = 1  # after an error: try again tomorrow; nothing was saved as read
     try:
         if source.reader == "aic_api":
             reading = read_aic(today)
@@ -126,14 +134,21 @@ def check_source(db, source: DiscoverySource, client, today: date) -> Outcome:
         out.status, out.notes = "blocked", [str(e)]
     except web.FetchError as e:
         out.status, out.notes = "error", [str(e)]
+    except ReadFailed as e:
+        out.pages_read += 1; out.tokens_in += e.tokens_in; out.tokens_out += e.tokens_out
+        source.failed_reads += 1
+        wait = failed_gap(source.failed_reads)
+        out.status, out.notes = "error", [f"{e} (failed reads in a row: {source.failed_reads}; next try in {wait} days)"]
     except Exception as e:  # a reader failing on one source must not stop the others
         out.status, out.notes = "error", [f"{type(e).__name__}: {e}"[:500]]
     now = datetime.now(UTC)
     source.last_checked_at, source.last_status = now, out.status
     source.last_error = "; ".join(out.notes) if out.status in ("blocked", "error") else ""
     if out.status == "error":
-        source.next_check_on = today + timedelta(days=1)  # try again tomorrow; nothing was saved as read
+        source.next_check_on = today + timedelta(days=wait)
         return out
+    if out.status != "blocked":
+        source.failed_reads = 0
     source.page_state = state
     if out.status == "ok":
         source.unchanged_streak, source.last_changed_at = 0, now
@@ -170,6 +185,9 @@ def read_event_page(db, client, item: DiscoveredItem, today: date, mark: str) ->
             _store(db, source, [e], out)
     except web.Blocked as e:
         out.status, out.notes = "blocked", [str(e)]
+    except ReadFailed as e:  # each event page is only tried on its own schedule, so there's nothing to back off
+        out.pages_read, out.tokens_in, out.tokens_out = 1, e.tokens_in, e.tokens_out
+        out.status, out.notes = "error", [str(e)]
     except Exception as e:  # noqa: BLE001 - one event page must not stop the rest
         out.status, out.notes = "error", [f"{type(e).__name__}: {e}"[:500]]
     out.notes.insert(0, f"{item.title}: {mark}")

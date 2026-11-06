@@ -217,3 +217,24 @@ def test_roundups_are_lakefront_rows_under_day_heads(client, make_event, db):
     closing = page(client, "closing-soon")
     assert '<h2 class="day-head">Today only!</h2>' in closing  # CC-232: the product owner's wording
     assert "Closes today" not in closing
+
+
+def test_a_time_that_cant_be_read_is_left_out_and_the_page_still_renders(client, make_event, db):
+    """CC-198: older found dates can hold anything a page said."""
+    day = SUN.isoformat()
+    make_event(title="Half Readable", venue_name="Hall One", begin=SUN, end=SUN).performances = [
+        {"date": day, "time": "8ish"}, {"date": day, "time": "20:00"}, {"date": day, "time": "25:99"}]
+    make_event(title="Not Readable", venue_name="Hall Two", begin=SUN, end=SUN).performances = [{"date": day, "time": "evening"}]
+    db.commit()
+    sunday = page(client, "this-weekend").split(f'id="h-{day}"')[1]
+    assert "Half Readable" in sunday and "8 pm" in sunday and "8ish" not in sunday
+    assert "Not Readable" in sunday and "evening" not in sunday
+
+
+def test_opening_hours_that_cant_be_read_are_left_out(client, make_event, db):
+    """CC-198"""
+    event = make_event(title="Odd Hours", venue_name="Hall Three", begin=SUN, end=SUN)
+    event.venue.open_hours = {"sun": ["noon", "17:00"]}
+    db.commit()
+    assert "All day" in page(client, "this-weekend").split(f'id="h-{SUN.isoformat()}"')[1]
+

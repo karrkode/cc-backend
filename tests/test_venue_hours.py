@@ -19,8 +19,9 @@ class Reader:
     """A stand-in for Claude that also reports the venue's opening hours."""
     def __init__(self, events, hours):
         self.reading = PageReading(events=events, venue_hours=hours)
-        self.messages = SimpleNamespace(parse=lambda **kw: SimpleNamespace(
-            stop_reason="end_turn", parsed_output=self.reading, usage=SimpleNamespace(input_tokens=10, output_tokens=5)))
+        self.messages = SimpleNamespace(create=lambda **kw: SimpleNamespace(
+            stop_reason="end_turn", usage=SimpleNamespace(input_tokens=10, output_tokens=5),
+            content=[SimpleNamespace(type="text", text=self.reading.model_dump_json())]))
 
 
 def show(title, *dated):
