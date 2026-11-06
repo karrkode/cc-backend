@@ -153,7 +153,7 @@ PAGE_STYLE = """
   --cat-theater: #B9472E; --cat-music: #7A5AD0; --cat-art: #2F7A5B;
   color-scheme: dark;
 }
-:root { --on-cat: #FFFFFF; --display: "Newsreader", Georgia, "Times New Roman", serif;
+:root { --on-cat: #FFFFFF; --display: "Instrument Sans", system-ui, "Helvetica Neue", Arial, sans-serif;
   --sign: "Big Shoulders Text", "Arial Narrow", system-ui, sans-serif; }
 *, *::before, *::after { box-sizing: border-box; }
 body { margin: 0; background: var(--page); color: var(--text); font-family: var(--display); font-size: 1.125rem; line-height: 1.45;
@@ -226,7 +226,7 @@ THEME_SCRIPT = """(function () {
 STAR = ('<svg class="star" aria-hidden="true" viewBox="0 0 24 24"><polygon points="12,1 14.5,7.67 21.53,6.5 17,12 21.53,17.5 '
         '14.5,16.33 12,23 9.5,16.33 2.47,17.5 7,12 2.47,6.5 9.5,7.67"></polygon></svg>')
 FONTS = ("https://fonts.googleapis.com/css2?family=Big+Shoulders+Text:wght@600..800"
-         "&family=Newsreader:ital,opsz,wght@0,6..72,400..600;1,6..72,400&display=swap")
+         "&family=Instrument+Sans:ital,wght@0,400..600;1,400&display=swap")
 
 _CAT_CLASS = {"Theater": "cat-theater", "Music": "cat-music", "Visual Art": "cat-art"}
 
