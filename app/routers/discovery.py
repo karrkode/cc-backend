@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
+from pydantic import ValidationError
 from sqlalchemy import delete, func, select, update
 
 from ..deps import DB, AdminUser
@@ -18,7 +19,7 @@ from ..discovery.store import matching_rule, possible_duplicates, rule_reason, s
 from ..discovery.venuesources import covers, grid_numbers, state_of
 from ..models import DiscoveredItem, DiscoveryCheck, DiscoverySource, Event, SkipRule, Venue
 from ..stats import today_in_chicago
-from ..schemas import (BudgetIn, DiscoveredItemOut, DiscoveredPage, DiscoveryOverview, DiscoverySourceOut, DiscoverySourcePatch,
+from ..schemas import (BatchHeld, BatchIn, BatchOut, BudgetIn, DiscoveredItemOut, DiscoveredPage, DiscoveryOverview, DiscoverySourceOut, DiscoverySourcePatch,
                        EventIn, EventRef, FoundChange, RUN_DATES_MAX, RejectIn, RejectOut, SkipRuleOut, SourcingCount, SourcingSummary,
                        SourcingUnreadable, SourcingWeek, UnreadableSource)
 from .events import new_event
@@ -146,6 +147,7 @@ def check_now(source_id: int, db: DB, _: AdminUser):
 Show = Literal["waiting", "needs", "new", "update", "approved", "rejected", "skipped", "listed", "hidden", "all"]
 SHOWS = {"waiting": ["new", "update"], "needs": ["new"], "all": None}  # needs: new ones missing a date or show days (CC-88)
 Has = Literal["any", "listed", "none"]  # CC-82: has a price (or "Free") / has an opening or closing date
+Order = Literal["found", "day"]  # CC-208: newest found first, or by the day it opens (closes, with no opening), undated last
 
 
 def _has(q, has: Has, condition):
@@ -205,16 +207,21 @@ def _item_out(db: DB, item: DiscoveredItem, dups: dict | None = None) -> Discove
     out.event = EventRef(id=event.id, title=event.title) if event else None
     dup = (dups or {}).get(item.id)
     out.possible_duplicate = EventRef(id=dup.id, title=dup.title) if dup else None
+    if item.status == "new" and dups is not None:  # CC-208: lists only, where the duplicates are known
+        out.batch_hold = as_found(db, item, venue, dup is not None)[1]
     return out
 
 
 @router.get("/items", response_model=DiscoveredPage)
 def items(db: DB, _: AdminUser, show: Show = "waiting", source: int | None = None, price: Has = "any", dates: Has = "any",
-          limit: Annotated[int, Query(ge=1, le=500)] = 100, offset: Annotated[int, Query(ge=0)] = 0):
+          order: Order = "found", limit: Annotated[int, Query(ge=1, le=500)] = 100, offset: Annotated[int, Query(ge=0)] = 0):
     """Found events for review, newest first: new events and proposed updates ("waiting"), or one
     status; optionally only those with (or without) a price, or dates. Also the count per status
     under the same filters, and the sources that couldn't be read, for a manual look."""
-    q = _filtered(show, source, price, dates).order_by(DiscoveredItem.first_seen_at.desc(), DiscoveredItem.id.desc())
+    day = func.coalesce(DiscoveredItem.begin_date, DiscoveredItem.end_date)
+    q = _filtered(show, source, price, dates).order_by(
+        *((day.is_(None), day, DiscoveredItem.begin_date.is_(None), func.lower(DiscoveredItem.title), DiscoveredItem.id) if order == "day"
+          else (DiscoveredItem.first_seen_at.desc(), DiscoveredItem.id.desc())))
     missing = [i for i in db.scalars(_filtered("needs", source, price, dates)) if needs(i, venue_for(db, i.source, i))]
     if show == "needs":  # worked out here, not in SQL: it depends on the venue's usual show times
         ids = {i.id for i in missing}
@@ -265,6 +272,83 @@ def still_needs(db: DB, item: DiscoveredItem, body: EventIn) -> str:
     return needs(as_approved, venue)
 
 
+def _run_as_listed(item: DiscoveredItem) -> list[dict] | None:
+    """CC-208: what the approve form starts a short run with (CC-212): its listed days and times. [] when it isn't a
+    short run; None when it is, and a day's time is missing, so the admin has to look at it."""
+    if not (item.begin_date and item.end_date and 0 <= (item.end_date - item.begin_date).days < SHORT_RUN_DAYS):
+        return []
+    first, last, listed = item.begin_date.isoformat(), item.end_date.isoformat(), {}
+    for p in item.performances or []:
+        if first <= (p.get("date") or "") <= last:
+            listed.setdefault(p["date"], p.get("time"))  # one time a day in a run: the first
+    if not listed or not all(listed.values()):
+        return None
+    return [{"date": d, "time": t} for d, t in sorted(listed.items())]
+
+
+def as_found(db: DB, item: DiscoveredItem, venue: Venue | None, duplicate: bool) -> tuple[EventIn | None, str]:
+    """CC-208: the event a batch approval would add, with nobody checking it in the form, or why it has to wait: "duplicate",
+    "new_venue", "type", "type_differs", "short_run", "form", or what it still needs (CC-88). Starts as the approve form does
+    (found.js), which takes the venue's type over what the page said: fine with an admin looking, so here they have to agree."""
+    if duplicate:
+        return None, "duplicate"
+    if venue is None:
+        return None, "new_venue"
+    opera = (venue.opera if venue.category else False) or item.opera
+    category = "Music" if opera else venue.category or item.category
+    if not category:
+        return None, "type"
+    if not opera and venue.category and item.category and venue.category != item.category:
+        return None, "type_differs"
+    run = _run_as_listed(item)
+    if run is None:
+        return None, "short_run"
+    weekly = item.weekly or {}
+    own_times = weekly != (venue.show_times or {}) or bool(item.weeks)  # the venue's times stay the venue's
+    try:
+        body = EventIn(title=item.title, category=category, opera=opera, begin_date=item.begin_date, end_date=item.end_date,
+                       open_run=item.open_run and not item.end_date, weekly=weekly if own_times else {},
+                       weeks=(item.weeks or {}) if own_times else {}, run_dates=run, cost_text=item.cost_text,
+                       min_price=item.min_price, url=item.url, venue_id=venue.id, publish="now")
+    except ValidationError:  # what the source gave doesn't fit: the form says which part
+        return None, "form"
+    missing = still_needs(db, item, body)
+    return (None, missing) if missing else (body, "")
+
+
+def _add_to_catalog(db: DB, item: DiscoveredItem, body: EventIn, user) -> None:
+    event = new_event(db, body, user)
+    event.found_by_id = item.source_id
+    db.add(event)
+    db.flush()
+    item.status, item.event_id, item.skip_reason = "approved", event.id, ""
+    sync_performances(db, item)  # CC-79: its dates and times, for the planner
+
+
+@router.post("/items/batch", response_model=BatchOut)
+def batch(body: BatchIn, db: DB, user: AdminUser):
+    """CC-208: approve, delete (reject) or hide several new events at once. Each stands alone: one that can't be done is
+    left as it is and said why, and the rest still go through. "gone": it's no longer new, so someone else decided it."""
+    ids = list(dict.fromkeys(body.ids))
+    found = {i.id: i for i in db.scalars(select(DiscoveredItem).where(DiscoveredItem.id.in_(ids)))}
+    waiting = [found[i] for i in ids if i in found and found[i].status == "new"]
+    done, held = [], [BatchHeld(id=i, why="gone") for i in ids if i not in found or found[i].status != "new"]
+    dups = possible_duplicates(db, waiting) if body.action == "approve" else {}
+    for item in waiting:
+        if body.action != "approve":
+            item.status = {"reject": "rejected", "hide": "hidden"}[body.action]
+            done.append(item.id)
+            continue
+        event, why = as_found(db, item, venue_for(db, item.source, item), item.id in dups)
+        if event is None:
+            held.append(BatchHeld(id=item.id, why=why))
+            continue
+        _add_to_catalog(db, item, event, user)
+        done.append(item.id)
+    db.commit()
+    return BatchOut(done=done, held=held)
+
+
 @router.post("/items/{item_id}/approve", response_model=DiscoveredItemOut)
 def approve(item_id: int, body: EventIn, db: DB, user: AdminUser):
     """Add a found event to the catalog, as edited: live now, at a set time, or waiting for review."""
@@ -275,12 +359,7 @@ def approve(item_id: int, body: EventIn, db: DB, user: AdminUser):
     if missing:  # CC-88: the approve form asks for these
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
                             "Add the date it opens." if missing == "date" else "Choose the days it's on, with a start time for each.")
-    event = new_event(db, body, user)
-    event.found_by_id = item.source_id
-    db.add(event)
-    db.flush()
-    item.status, item.event_id, item.skip_reason = "approved", event.id, ""
-    sync_performances(db, item)  # CC-79: its dates and times, for the planner
+    _add_to_catalog(db, item, body, user)
     db.commit()
     return _item_out(db, item)
 
