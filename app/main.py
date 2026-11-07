@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
@@ -5,11 +7,20 @@ from sqlalchemy import text
 from .bodylimit import BodyLimit
 from .config import get_settings
 from .deps import DB
+from .fromlink import warm_reader
 from .routers import admin, approvals, auth, crews, discovery, events, issues, me, photos, seo, traffic, venues
 
 settings = get_settings()
 
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    warm_reader()  # CC-216
+    yield
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title="Culture Crew API",
     version="0.1.0",
     description="Chicago arts events, accounts, and event submissions for chiculturecrew.com.",

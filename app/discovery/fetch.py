@@ -69,6 +69,7 @@ class Robots:
     allow: list[str]
     crawl_delay: float
     ai_opt_out: bool
+    unsure: bool = False  # CC-216: the site didn't answer clearly, so these empty rules hold for this read only
 
     def allows(self, path: str) -> bool:
         best_allow = max((len(p) for p in self.allow if path.startswith(p)), default=-1)
@@ -216,7 +217,7 @@ def robots_for(url: str, timeout: float = TIMEOUT) -> Robots:
         except urllib.error.HTTPError as e:
             if e.code in (401, 403):
                 raise Blocked(f"the site refuses automated visitors (HTTP {e.code} for robots.txt)") from e
-            _robots[origin] = Robots([], [], 0.0, False)  # no robots.txt: no rules
+            _robots[origin] = Robots([], [], 0.0, False, unsure=e.code not in (404, 410))  # no robots.txt: no rules
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             raise FetchError(f"couldn't reach {parts.netloc}: {e}") from e
     return _robots[origin]
