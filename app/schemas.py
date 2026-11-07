@@ -1167,6 +1167,7 @@ class CrewInvitePreview(BaseModel):
     members: int
     already_member: bool
     full: bool
+    removed: bool = False  # CC-187: the leader removed this account, so the link won't let it in
 
 
 class JoinIn(BaseModel):

@@ -32,9 +32,9 @@ def test_start_invite_join_and_see_names_never_emails(client):
     assert (crew["name"], crew["owner"], [m["name"] for m in crew["members"]]) == ("Thursday Crew", True, ["Ana"])
     link = invite(client, p["Ana"], crew["id"])
     assert link["url"].endswith("/#join=" + link["token"])
-    preview = client.get(f"/crews/invite/{link['token']}").json()  # works before signing in
+    preview = client.post("/crews/invite/preview", json={"token": link["token"]}).json()  # works before signing in
     assert preview == {"crew_id": crew["id"], "crew_name": "Thursday Crew", "description": "Plays and a drink after",
-                       "invited_by": "Ana", "members": 1, "already_member": False, "full": False}
+                       "invited_by": "Ana", "members": 1, "already_member": False, "full": False, "removed": False}
     r = client.post("/crews/join", json={"token": link["token"]}, headers=p["Ben"])
     assert r.status_code == 201 and [m["name"] for m in r.json()["members"]] == ["Ana", "Ben"]
     assert client.post("/crews/join", json={"token": link["token"]}, headers=p["Ben"]).status_code == 200  # again: fine
@@ -64,7 +64,7 @@ def test_members_invite_owner_manages(client):
     assert client.patch(f"/crews/{cid}", json={"name": "Ben's crew"}, headers=p["Ben"]).status_code == 403
     assert client.delete(f"/crews/{cid}/invites/{bens['id']}", headers=p["Cy"]).status_code == 403  # not Cy's link
     assert client.delete(f"/crews/{cid}/invites/{bens['id']}", headers=p["Ana"]).status_code == 204  # the owner can
-    assert client.get(f"/crews/invite/{bens['token']}").status_code == 404
+    assert client.post("/crews/invite/preview", json={"token": bens["token"]}).status_code == 404
     ben_id = next(m["user_id"] for m in client.get("/crews", headers=p["Ben"]).json()[0]["members"] if m["name"] == "Ben")
     cy_id = next(m["user_id"] for m in client.get("/crews", headers=p["Cy"]).json()[0]["members"] if m["name"] == "Cy")
     r = client.delete(f"/crews/{cid}/members/{cy_id}", headers=p["Ana"])
@@ -87,7 +87,7 @@ def test_links_expire_and_crews_fill_up(client, db, monkeypatch):
     monkeypatch.setattr(crews_router, "MAX_MEMBERS", 2)
     link = invite(client, p["Ana"], crew["id"])
     client.post("/crews/join", json={"token": link["token"]}, headers=p["Ben"])
-    assert client.get(f"/crews/invite/{link['token']}").json()["full"] is True
+    assert client.post("/crews/invite/preview", json={"token": link["token"]}).json()["full"] is True
     assert client.post("/crews/join", json={"token": link["token"]}, headers=p["Cy"]).status_code == 409
     assert client.post(f"/crews/{crew['id']}/invites", headers=p["Ana"]).status_code == 409
     stored = db.scalars(select(CrewInvite.token_hash)).all()
