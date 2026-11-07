@@ -43,7 +43,7 @@ def test_a_failed_warm_start_doesnt_stop_the_api(monkeypatch):
         raise OSError("no more processes")
     monkeypatch.setattr(fromlink.forkserver, "ensure_running", fails)
     with TestClient(app) as c:
-        assert c.get("/health").status_code == 200
+        assert c.get("/openapi.json").status_code == 200  # not /health: this client has no test database
 
 
 # --- reusing robots.txt, through the reader's real process ---
