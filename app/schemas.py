@@ -994,6 +994,7 @@ class DiscoveredItemOut(ORM):
     proposed: list[FoundChange] = []  # for "update": what would change
     event: EventRef | None = None  # the catalog event, once listed or approved
     possible_duplicate: EventRef | None = None
+    batch_hold: str = ""  # CC-208: in a list, why a batch wouldn't approve this new event; "" when it would
     first_seen_at: datetime
 
 
@@ -1024,6 +1025,22 @@ class RejectIn(BaseModel):
 class RejectOut(BaseModel):
     item: DiscoveredItemOut
     also_rejected: int = 0  # other waiting items the new rule caught
+
+
+class BatchIn(BaseModel):
+    """CC-208: reject is the page's Delete. At most 500 ids, the most GET /items gives at once."""
+    action: Literal["approve", "reject", "hide"]
+    ids: list[int] = Field(min_length=1, max_length=500)
+
+
+class BatchHeld(BaseModel):
+    id: int
+    why: str  # gone, or as_found's reason
+
+
+class BatchOut(BaseModel):
+    done: list[int]
+    held: list[BatchHeld]
 
 
 class SkipRuleOut(BaseModel):
