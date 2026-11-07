@@ -11,11 +11,16 @@ draft for the Suggest form; nothing is saved but a line in the discovery log.
   API's other requests. Only Claude's read (when there's no event data) runs in the request itself.
 - CC-214: that read asks for the one event the page is about, and gets CLAUDE_TIMEOUT with no retry. A timeout is
   logged and answered like any other failed read, and the member fills in the form.
+- CC-216: that process is ready from when the API starts (warm_reader), and is given the site's robots.txt rules if
+  they were read in the last ROBOTS_KEEP seconds. Only the robots.txt request is saved: every request and redirect
+  is checked as ever.
 """
+import logging
 import multiprocessing
 import threading
 from datetime import date
 from functools import lru_cache
+from multiprocessing import forkserver
 from time import monotonic
 from urllib.parse import urlsplit
 
@@ -38,11 +43,17 @@ CLAUDE_TIMEOUT = 12.0  # CC-214: the same for Claude's read, which takes about 2
 # CC-182: the most fetching and reading one page may take in all, the most of it that's downloaded, and how many
 # pages are read at once (a process each, on a small server)
 DEADLINE, MAX_BYTES, READERS = 15, 3_000_000, threading.BoundedSemaphore(3)
+# CC-216: how long a site's robots.txt rules are reused, how many sites' are kept, and the most rules kept for one
+# (a site's robots.txt is its own to make large, and these stay in the API's memory)
+ROBOTS_KEEP, ROBOTS_SITES, ROBOTS_RULES = 300, 50, 2000
 RUN_DATES_MAX = 30  # as many dated shows as a fixed run takes (schemas.RUN_DATES_MAX)
 WHY = {"blocked": "That site doesn't let us read its pages automatically.",
        "error": "We couldn't open that page.",
        "none": "We couldn't find an event on that page.",
        "busy": "We're reading a lot of links right now. Try again in a minute."}
+log = logging.getLogger(__name__)
+_recent_robots: dict[str, tuple[float, web.Robots]] = {}  # CC-216: origin: when it was read (monotonic), its rules
+_recent_lock = threading.Lock()
 
 
 class Unreadable(Exception):
@@ -127,9 +138,43 @@ def _workers():
     return ctx
 
 
-def _child(conn, work, url):
+def warm_reader() -> None:
+    """CC-216: starts that small server when the API starts, so the first link doesn't wait for it. A failure here
+    is only a slower first link, which tries again."""
     try:
-        conn.send(work(url))
+        _workers()
+        forkserver.ensure_running()
+    except (OSError, ValueError) as e:
+        log.warning("the page reader didn't start early: %s", e)
+
+
+def _robots_known(url: str) -> dict[str, web.Robots]:
+    """The recent rules for this link's site. Its http/https and www forms come too, as links often redirect between
+    them, but each set of rules stays under its own origin."""
+    now = monotonic()
+    with _recent_lock:
+        return {origin: rules for origin, (read_at, rules) in _recent_robots.items()
+                if now - read_at < ROBOTS_KEEP and _host(origin) == _host(url)}
+
+
+def _keep_robots(fresh: dict[str, web.Robots]) -> None:
+    now = monotonic()
+    with _recent_lock:
+        for origin in [o for o, (read_at, _) in _recent_robots.items() if now - read_at >= ROBOTS_KEEP]:
+            del _recent_robots[origin]
+        for origin, rules in fresh.items():
+            if len(rules.disallow) + len(rules.allow) <= ROBOTS_RULES:
+                _recent_robots.pop(origin, None)
+                _recent_robots[origin] = (now, rules)
+        while len(_recent_robots) > ROBOTS_SITES:
+            del _recent_robots[next(iter(_recent_robots))]  # the oldest: entries are in the order they were read
+
+
+def _child(conn, work, url, known):
+    web._robots.update(known)
+    try:
+        reply = work(url)
+        conn.send((reply, {o: r for o, r in web._robots.items() if o not in known and not r.unsure}))
     finally:
         conn.close()
 
@@ -141,12 +186,14 @@ def bounded_read(url: str, work=fetch_and_read) -> tuple[str, object]:
     try:
         ctx = _workers()
         recv, send = ctx.Pipe(duplex=False)
-        proc = ctx.Process(target=_child, args=(send, work, url), daemon=True)
+        proc = ctx.Process(target=_child, args=(send, work, url, _robots_known(url)), daemon=True)
         proc.start()
         send.close()
         try:
             if recv.poll(DEADLINE):
-                return recv.recv()
+                reply, fresh = recv.recv()
+                _keep_robots(fresh)
+                return reply
             return "error", f"reading the page took over {DEADLINE} seconds"
         except EOFError:
             return "error", "the page reader stopped"

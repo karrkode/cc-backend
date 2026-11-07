@@ -1,10 +1,15 @@
 """CC-182: work for fromlink.bounded_read's own process in tests. It lives in a module of its own, which the
 process imports by name."""
 import os
+import socket
 import time
 
+from app import fromlink
+from app.discovery import fetch as web
 from app.discovery.jsonld import events_in, page_titles, visible_title
 from app.discovery.pagetext import page_text
+
+from .fake_net import Net
 
 
 def spin(url):
@@ -22,6 +27,13 @@ def die(url):
 
 def echo(url):
     return "ok", {"url": url}
+
+
+def routed(port, answers, url):
+    """The real read, with the fake internet set up in this process: a test's own patches don't reach it."""
+    net = Net(port, answers)
+    web._addresses, socket.create_connection = net.lookup, net.dial
+    return fromlink.fetch_and_read(url)
 
 
 def hostile(url):
