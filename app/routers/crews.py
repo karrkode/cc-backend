@@ -167,25 +167,15 @@ def _invite(db: DB, token: str) -> CrewInvite:
     return invite
 
 
-def _preview(db: DB, token: str, user: User | None) -> CrewInvitePreview:
-    invite = _invite(db, token)
-    crew = db.get(Crew, invite.crew_id)
-    return CrewInvitePreview(crew_id=crew.id, crew_name=crew.name, description=crew.description, invited_by=name_of(invite.creator),
-                             members=len(crew.members), already_member=bool(user) and any(m.user_id == user.id for m in crew.members),
-                             full=len(crew.members) >= MAX_MEMBERS, removed=bool(user) and db.get(CrewRemoval, (crew.id, user.id)) is not None)
-
-
 @router.post("/invite/preview", response_model=CrewInvitePreview)
 def preview_invite(body: JoinIn, db: DB, user: OptionalUser):
     """What the link is for, before signing in or joining: the crew's name, who invited you, how many are in it.
     CC-187: a POST, so the token stays out of access logs."""
-    return _preview(db, body.token, user)
-
-
-# CC-187: the live site still calls this until its own change ships. Drop it once that's deployed.
-@router.get("/invite/{token}", response_model=CrewInvitePreview, deprecated=True)
-def preview_invite_by_path(token: str, db: DB, user: OptionalUser):
-    return _preview(db, token, user)
+    invite = _invite(db, body.token)
+    crew = db.get(Crew, invite.crew_id)
+    return CrewInvitePreview(crew_id=crew.id, crew_name=crew.name, description=crew.description, invited_by=name_of(invite.creator),
+                             members=len(crew.members), already_member=bool(user) and any(m.user_id == user.id for m in crew.members),
+                             full=len(crew.members) >= MAX_MEMBERS, removed=bool(user) and db.get(CrewRemoval, (crew.id, user.id)) is not None)
 
 
 @router.post("/join", response_model=CrewOut)

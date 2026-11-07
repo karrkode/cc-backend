@@ -169,6 +169,6 @@ def test_the_preview_takes_the_token_in_the_body(client, crew):
     assert client.post("/crews/invite/preview", json={}).status_code == 422
 
 
-def test_the_old_preview_still_answers_until_the_site_ships(client, crew):
+def test_a_token_in_the_path_gets_no_answer(client, crew):
     link = make_link(client, crew["h"]["Ana"], crew)
-    assert client.get(f"/crews/invite/{link['token']}").json() == preview(client, link["token"]).json()
+    assert client.get(f"/crews/invite/{link['token']}").status_code == 404
