@@ -4,19 +4,22 @@ nobody outside a crew can see who's in it (a crew you're not in is "not found").
 
 Invite links carry a random token in the URL fragment (#join=…), which browsers never send to a server.
 Only its hash is stored; a link lasts 7 days and can be revoked by whoever made it, or by the owner.
+
+CC-187: someone the leader removes stays out until they accept an email invite from the leader. Their links and the
+invites they sent stop working when they go, and the same goes for someone who leaves.
 """
 import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Response, status
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select, update
 
 from .. import emailcaps, mail
 from ..config import get_settings
 from ..crewplans import crew_board, unshare, unshare_been
 from ..deps import DB, CurrentUser, OptionalUser
-from ..models import Crew, CrewEmailInvite, CrewInvite, CrewMember, User
+from ..models import Crew, CrewEmailInvite, CrewInvite, CrewMember, CrewRemoval, User
 from ..ratelimit import SlidingWindowLimiter
 from ..schemas import (CrewBoardItem, CrewEmailInviteOut, CrewIn, EmailInviteIn, PendingInviteOut, CrewInviteLink, CrewInviteOut, CrewInvitePreview, CrewMemberOut, CrewOut, CrewPatch,
                        JoinIn, OwnerIn)
@@ -31,6 +34,7 @@ MAX_OWNED = 10  # crews one person can start
 INVITE_DAYS = 7
 EMAIL_INVITE_DAYS = 14  # CC-59: long enough for someone to get round to registering
 INVITES_PER_HOUR = 20
+REMOVED = "You can't rejoin this crew with a link. Only its leader can invite you back."
 invite_limiter = SlidingWindowLimiter(window_seconds=3600)
 
 
@@ -44,6 +48,13 @@ def _aware(ts: datetime) -> datetime:
 
 def _live(invite: CrewInvite) -> bool:
     return invite.revoked_at is None and _aware(invite.expires_at) > datetime.now(UTC)
+
+
+def _end_invites_from(db: DB, crew: Crew, user_id: uuid.UUID) -> None:
+    """CC-187: someone no longer in the crew can't keep bringing people in, or come back on a link of their own."""
+    db.execute(update(CrewInvite).where(CrewInvite.crew_id == crew.id, CrewInvite.created_by == user_id, CrewInvite.revoked_at.is_(None))
+               .values(revoked_at=datetime.now(UTC)))
+    db.execute(delete(CrewEmailInvite).where(CrewEmailInvite.crew_id == crew.id, CrewEmailInvite.invited_by == user_id))
 
 
 def _member_crew(db: DB, crew_id: int, user: User) -> Crew:
@@ -156,14 +167,25 @@ def _invite(db: DB, token: str) -> CrewInvite:
     return invite
 
 
-@router.get("/invite/{token}", response_model=CrewInvitePreview)
-def preview_invite(token: str, db: DB, user: OptionalUser):
-    """What the link is for, before signing in or joining: the crew's name, who invited you, how many are in it."""
+def _preview(db: DB, token: str, user: User | None) -> CrewInvitePreview:
     invite = _invite(db, token)
     crew = db.get(Crew, invite.crew_id)
     return CrewInvitePreview(crew_id=crew.id, crew_name=crew.name, description=crew.description, invited_by=name_of(invite.creator),
                              members=len(crew.members), already_member=bool(user) and any(m.user_id == user.id for m in crew.members),
-                             full=len(crew.members) >= MAX_MEMBERS)
+                             full=len(crew.members) >= MAX_MEMBERS, removed=bool(user) and db.get(CrewRemoval, (crew.id, user.id)) is not None)
+
+
+@router.post("/invite/preview", response_model=CrewInvitePreview)
+def preview_invite(body: JoinIn, db: DB, user: OptionalUser):
+    """What the link is for, before signing in or joining: the crew's name, who invited you, how many are in it.
+    CC-187: a POST, so the token stays out of access logs."""
+    return _preview(db, body.token, user)
+
+
+# CC-187: the live site still calls this until its own change ships. Drop it once that's deployed.
+@router.get("/invite/{token}", response_model=CrewInvitePreview, deprecated=True)
+def preview_invite_by_path(token: str, db: DB, user: OptionalUser):
+    return _preview(db, token, user)
 
 
 @router.post("/join", response_model=CrewOut)
@@ -172,6 +194,8 @@ def join(body: JoinIn, db: DB, user: CurrentUser, response: Response):
     crew = db.get(Crew, invite.crew_id)
     if any(m.user_id == user.id for m in crew.members):
         return _out(db, crew, user)  # already in: fine
+    if db.get(CrewRemoval, (crew.id, user.id)) is not None:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, REMOVED)
     if len(crew.members) >= MAX_MEMBERS:
         raise HTTPException(status.HTTP_409_CONFLICT, f"This crew is full ({MAX_MEMBERS} members).")
     crew.members.append(CrewMember(user_id=user.id))
@@ -191,6 +215,7 @@ def leave(crew_id: int, db: DB, user: CurrentUser):
     crew.members = [m for m in crew.members if m.user_id != user.id]
     unshare(db, user.id, crew_id=crew.id)  # CC-75: your plans leave with you
     unshare_been(db, user.id, crew_id=crew.id)  # CC-93: and your "I've been" marks
+    _end_invites_from(db, crew, user.id)  # CC-187: or leaving would dodge a removal, with a link to come back on
     db.commit()
 
 
@@ -199,11 +224,16 @@ def remove_member(crew_id: int, user_id: uuid.UUID, db: DB, user: CurrentUser):
     crew = _owned_crew(db, crew_id, user)
     if user_id == user.id:
         raise HTTPException(status.HTTP_409_CONFLICT, "You can't remove yourself. Hand the crew over, or dissolve it.")
-    if not any(m.user_id == user_id for m in crew.members):
+    member = next((m for m in crew.members if m.user_id == user_id), None)
+    if member is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not a member of this crew")
+    email = member.user.email
     crew.members = [m for m in crew.members if m.user_id != user_id]
     unshare(db, user_id, crew_id=crew.id)
     unshare_been(db, user_id, crew_id=crew.id)
+    _end_invites_from(db, crew, user_id)
+    db.execute(delete(CrewEmailInvite).where(CrewEmailInvite.crew_id == crew.id, CrewEmailInvite.email == email))  # CC-187
+    db.merge(CrewRemoval(crew_id=crew.id, user_id=user_id, removed_by=user.id))
     db.commit()
     return _out(db, crew, user)
 
@@ -240,9 +270,14 @@ def invite_by_email(crew_id: int, body: EmailInviteIn, db: DB, user: CurrentUser
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "That's a lot of invites. Try again in an hour.")
     email = str(body.email).strip().lower()
     member_emails = {m.user.email for m in crew.members}
+    # CC-187: only the leader can bring back someone they removed. A member's invite to that address looks the same to
+    # the member, but it's never emailed and its owner doesn't see it (_pending).
+    removed = db.scalar(select(CrewRemoval).join(User, User.id == CrewRemoval.user_id)
+                        .where(CrewRemoval.crew_id == crew.id, User.email == email)) is not None
+    by_leader = user.id == crew.owner_id
     waiting = db.scalar(select(CrewEmailInvite).where(CrewEmailInvite.crew_id == crew.id, CrewEmailInvite.email == email))
-    if waiting is not None and _aware(waiting.expires_at) <= datetime.now(UTC):
-        db.delete(waiting)  # an old one that ran out: start again
+    if waiting is not None and (_aware(waiting.expires_at) <= datetime.now(UTC) or (removed and by_leader and waiting.invited_by != user.id)):
+        db.delete(waiting)  # an old one that ran out, or a member's the leader is replacing: start again
         db.flush()
         waiting = None
     if waiting is None and email != user.email:  # already invited: say the same, change nothing
@@ -251,7 +286,7 @@ def invite_by_email(crew_id: int, body: EmailInviteIn, db: DB, user: CurrentUser
         db.add(CrewEmailInvite(crew_id=crew.id, email=email, invited_by=user.id,
                                expires_at=datetime.now(UTC) + timedelta(days=EMAIL_INVITE_DAYS)))
         confirmed = user.email_verified or not get_settings().require_verified_email  # unconfirmed inviters email nobody
-        if email not in member_emails and confirmed and emailcaps.may_send(db, email, emailcaps.INVITE, user.id):
+        if email not in member_emails and (by_leader or not removed) and confirmed and emailcaps.may_send(db, email, emailcaps.INVITE, user.id):
             tasks.add_task(mail.send, mail.crew_invite(email, short_name(user.display_name), crew.name, EMAIL_INVITE_DAYS))
         db.commit()
     return {"message": SENT}
@@ -275,7 +310,9 @@ def _pending(db: DB, user: User) -> list[CrewEmailInvite]:
         return []
     rows = db.scalars(select(CrewEmailInvite).where(CrewEmailInvite.email == user.email).order_by(CrewEmailInvite.created_at)).all()
     now = datetime.now(UTC)
-    return [i for i in rows if _aware(i.expires_at) > now and not any(m.user_id == user.id for m in i.crew.members)]
+    removed_from = set(db.scalars(select(CrewRemoval.crew_id).where(CrewRemoval.user_id == user.id)))  # CC-187
+    return [i for i in rows if _aware(i.expires_at) > now and not any(m.user_id == user.id for m in i.crew.members)
+            and (i.crew_id not in removed_from or i.invited_by == i.crew.owner_id)]
 
 
 @router.get("/pending", response_model=list[PendingInviteOut])
@@ -301,6 +338,7 @@ def accept_invite(invite_id: int, db: DB, user: CurrentUser):
         raise HTTPException(status.HTTP_409_CONFLICT, f"This crew is full ({MAX_MEMBERS} members).")
     crew.members.append(CrewMember(user_id=user.id))
     db.delete(invite)
+    db.execute(delete(CrewRemoval).where(CrewRemoval.crew_id == crew.id, CrewRemoval.user_id == user.id))  # CC-187: invited back
     db.commit()
     db.refresh(crew)
     return _out(db, crew, user)

@@ -485,6 +485,17 @@ class CrewMember(Base):
     user: Mapped[User] = relationship(lazy="joined")
 
 
+class CrewRemoval(Base):
+    """CC-187: a leader removed this account from this crew. Links and other members' invites can't bring it back; the
+    row goes when the account accepts an email invite from the crew's leader."""
+    __tablename__ = "crew_removals"
+
+    crew_id: Mapped[int] = mapped_column(ForeignKey("crews.id", ondelete="CASCADE"), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True, index=True)
+    removed_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    removed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class CrewInvite(Base):
     """An invite link: anyone with it can join until it expires or is revoked. Only its hash is kept;
     the link itself is shown once, to the member who made it."""
