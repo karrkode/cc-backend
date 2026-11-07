@@ -9,6 +9,8 @@ draft for the Suggest form; nothing is saved but a line in the discovery log.
 - A few links a minute and a few dozen a day per member.
 - CC-182: the page is fetched and read in a process of its own, stopped at DEADLINE, so no page can hold up the
   API's other requests. Only Claude's read (when there's no event data) runs in the request itself.
+- CC-214: that read asks for the one event the page is about, and gets CLAUDE_TIMEOUT with no retry. A timeout is
+  logged and answered like any other failed read, and the member fills in the form.
 """
 import multiprocessing
 import threading
@@ -23,7 +25,7 @@ from .discovery.budget import budget_state
 from .discovery.fetch import PrivateAddress, check_public
 from .discovery.jsonld import event_places, events_in, visible_title
 from .discovery.pagetext import page_text
-from .discovery.readers import FoundEvent, ReadFailed, read_page
+from .discovery.readers import FoundEvent, ReadFailed, read_link_page
 from .discovery.rules import norm_title
 from .categories import BY_SOURCE_KIND, CATEGORIES
 from .models import DiscoveryCheck, DiscoverySource, Venue
@@ -32,12 +34,11 @@ from .ratelimit import SlidingWindowLimiter
 PER_MINUTE, PER_DAY = 4, 30
 minute_limiter, day_limiter = SlidingWindowLimiter(60), SlidingWindowLimiter(24 * 3600)
 TIMEOUT = 10  # a member is waiting: discovery's 25 seconds is too long
+CLAUDE_TIMEOUT = 12.0  # CC-214: the same for Claude's read, which takes about 2 seconds
 # CC-182: the most fetching and reading one page may take in all, the most of it that's downloaded, and how many
 # pages are read at once (a process each, on a small server)
 DEADLINE, MAX_BYTES, READERS = 15, 3_000_000, threading.BoundedSemaphore(3)
 RUN_DATES_MAX = 30  # as many dated shows as a fixed run takes (schemas.RUN_DATES_MAX)
-NOTE = ("\n\nThis page was sent in by a member suggesting one event, so there's no usual venue: give each event's "
-        "venue_name as the page states it. List the event the page is about first.")
 WHY = {"blocked": "That site doesn't let us read its pages automatically.",
        "error": "We couldn't open that page.",
        "none": "We couldn't find an event on that page.",
@@ -59,7 +60,7 @@ def _ssm_key(_: int) -> str:
     return got["Parameter"]["Value"]
 
 
-def claude_client():
+def claude_client(timeout: float = 60.0, max_retries: int = 1):
     """A Claude client, or None when there's no key (locally, unless ANTHROPIC_API_KEY is set)."""
     s = get_settings()
     key = s.anthropic_api_key
@@ -71,7 +72,7 @@ def claude_client():
     if not key or key == "unset":
         return None
     import anthropic
-    return anthropic.Anthropic(api_key=key, timeout=60.0, max_retries=1)
+    return anthropic.Anthropic(api_key=key, timeout=timeout, max_retries=max_retries)
 
 
 def _pick(events: list[FoundEvent], url: str) -> FoundEvent | None:
@@ -174,7 +175,7 @@ def read_link(db, url: str, today: date) -> dict:
         _log(db, "ok", url, note="read from the page's event data")
         return _draft(db, FoundEvent.model_validate(got["found"]), url, got["place"], "page", today, others=got["others"])
     state, _, _ = budget_state(db)
-    client = claude_client() if state != "paused" else None
+    client = claude_client(CLAUDE_TIMEOUT, max_retries=0) if state != "paused" else None
     if client is None or got["ai_opt_out"]:
         note = "no event data on the page" + (", and no Claude read" if client is None else ", and the site opts out of AI")
         _log(db, "none", url, note=note)
@@ -183,8 +184,7 @@ def read_link(db, url: str, today: date) -> dict:
         _log(db, "none", url, note="the page has no text")
         raise Unreadable("none", "the page has no text")
     try:
-        reading, tin, tout = read_page(client, "a page a member sent in", "an event page", got["url"], got["text"],
-                                       today, NOTE)
+        reading, tin, tout = read_link_page(client, got["url"], got["text"], today)
     except ReadFailed as e:  # CC-198: the same, and its tokens count toward the budget
         _log(db, "error", url, e.tokens_in, e.tokens_out, note=f"Claude: {e}")
         raise Unreadable("error", f"Claude: {e}") from e
