@@ -82,6 +82,9 @@ class User(Base):
     # accepts or declines. Admins can always approve.
     approver: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     approver_offered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # CC-203: every access token carries this; raising it ends them all at once (sign-out everywhere,
+    # a password change or reset), instead of letting them run out their 15 minutes.
+    session_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     @property
@@ -190,6 +193,9 @@ class RefreshToken(Base):
     token_hash: Mapped[str] = mapped_column(String(64), unique=True)  # sha256 hex; the raw token is never stored
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # CC-203: when the session began with a password, carried over on each refresh, so a session ends
+    # after max_session_days however often it refreshes.
+    signed_in_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

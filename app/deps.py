@@ -30,6 +30,10 @@ def optional_user(db: DB,
     user = db.get(User, user_id)
     if user is None:  # account deleted after the token was issued
         raise _UNAUTHORIZED
+    # CC-203: signed out everywhere, or the password changed, since this token was made. Tokens from before
+    # CC-203 have no "sv" and count as version 0, so nobody is signed out by the deploy.
+    if claims.get("sv", 0) != user.session_version:
+        raise _UNAUTHORIZED
     return user
 
 

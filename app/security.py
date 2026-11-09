@@ -3,6 +3,8 @@
 Access token: a signed JWT that lives 15 minutes, sent as "Authorization: Bearer ...".
 Refresh token: a random string that lives 30 days in an HttpOnly cookie. Only its
 SHA-256 is stored, so a leaked database can't be used to sign in.
+CC-203: the access token carries the account's session version ("sv"). Raising the version
+ends every access token at once.
 """
 import hashlib
 import secrets
@@ -32,11 +34,11 @@ def verify_password(password: str, password_hash: str | None) -> bool:
     return bcrypt.checkpw(password.encode(), password_hash.encode())
 
 
-def create_access_token(user_id: uuid.UUID, role: str) -> tuple[str, int]:
+def create_access_token(user_id: uuid.UUID, role: str, session_version: int = 0) -> tuple[str, int]:
     s = get_settings()
     now = datetime.now(UTC)
     expires_in = s.access_token_minutes * 60
-    claims = {"sub": str(user_id), "role": role, "iss": s.jwt_issuer,
+    claims = {"sub": str(user_id), "role": role, "sv": session_version, "iss": s.jwt_issuer,
               "iat": now, "exp": now + timedelta(seconds=expires_in)}
     return jwt.encode(claims, s.jwt_secret, algorithm=ALGORITHM), expires_in
 

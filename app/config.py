@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     jwt_issuer: str = "chiculturecrew"
     access_token_minutes: int = 15
     refresh_token_days: int = 30
+    max_session_days: int = 90  # CC-203: then sign in again with the password, however often it refreshed
 
     # Comma-separated in the environment, e.g. "https://chiculturecrew.com,http://localhost:4173"
     cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:4173", "http://127.0.0.1:4173"]
