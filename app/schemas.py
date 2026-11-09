@@ -10,6 +10,7 @@ from pydantic import (AfterValidator, BaseModel, ConfigDict, EmailStr, Field, co
 
 from .addresses import full_address, map_url, normalize_address, normalize_city, normalize_zip
 from .models import Area, EventStatus, PlanStatus, Region, Role
+from .passwords import TOO_COMMON, is_common
 from .websites import normalize_website
 
 # CC-125: the categories (app.categories.CATEGORIES); Concert became Music. CC-133: Comedy and Educational went.
@@ -26,6 +27,14 @@ class ORM(BaseModel):
 def _bcrypt_limit(v: str) -> str:
     if len(v.encode()) > 72:  # bcrypt only uses the first 72 bytes
         raise ValueError("Password must be at most 72 bytes")
+    return v
+
+
+def _new_password(v: str) -> str:
+    """The rules for a password being set (sign-up, reset, change). Signing in only checks it matches."""
+    v = _bcrypt_limit(v)
+    if is_common(v):  # CC-191
+        raise ValueError(TOO_COMMON)
     return v
 
 
@@ -63,20 +72,25 @@ class RegisterIn(BaseModel):
     display_name: str = Field(default="", max_length=80)
     join_source: JoinSourceIn | None = None  # CC-121: sent only for a sign-up in a visit that came by /join
 
-    _password_fits_bcrypt = field_validator("password")(_bcrypt_limit)
+    _password_rules = field_validator("password")(_new_password)
     _plain_display_name = field_validator("display_name")(_plain_name)
+
+
+# CC-191: a password too long to be anyone's (over bcrypt's 72 bytes) is checked like any other and is
+# "incorrect", not a validation error. The cap is only there to keep requests small.
+SIGN_IN_PASSWORD_MAX = 1000
 
 
 class LoginIn(BaseModel):
     email: EmailStr
-    password: str = Field(max_length=200)
+    password: str = Field(max_length=SIGN_IN_PASSWORD_MAX)
 
 
 class PasswordChangeIn(BaseModel):
-    current_password: str = Field(max_length=200)
+    current_password: str = Field(max_length=SIGN_IN_PASSWORD_MAX)
     new_password: str = Field(min_length=8, max_length=72)  # the same rules as at sign-up
 
-    _password_fits_bcrypt = field_validator("new_password")(_bcrypt_limit)
+    _password_rules = field_validator("new_password")(_new_password)
 
 
 class ProfilePatch(BaseModel):
@@ -88,7 +102,7 @@ class ProfilePatch(BaseModel):
     """
     display_name: str | None = Field(default=None, max_length=80)
     email: EmailStr | None = None
-    current_password: str | None = Field(default=None, max_length=200)
+    current_password: str | None = Field(default=None, max_length=SIGN_IN_PASSWORD_MAX)
 
     _plain_display_name = field_validator("display_name")(_plain_name)
 
@@ -117,7 +131,7 @@ class ForgotPasswordIn(BaseModel):
 class ResetPasswordIn(TokenIn):
     new_password: str = Field(min_length=8, max_length=72)  # the same rules as at sign-up
 
-    _password_fits_bcrypt = field_validator("new_password")(_bcrypt_limit)
+    _password_rules = field_validator("new_password")(_new_password)
 
 
 class MessageOut(BaseModel):
