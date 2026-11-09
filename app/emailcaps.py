@@ -1,6 +1,6 @@
 """CC-184: how many emails one address gets, and one account causes, whatever the route. Every limit is here.
 
-Each email a member can cause (confirm links, password resets, crew invites) is recorded in sent_emails before it's
+Each email a member can cause (confirm links, password resets, crew invites, change notices) is recorded in sent_emails before it's
 queued. Cancelling, declining or expiring an invite doesn't touch that record, so it can't be used to send again.
 Over a cap the route answers exactly as usual and sends nothing, so the answer says nothing about the address.
 The weekly recap goes to our own inbox from a scheduled job and isn't counted.
@@ -16,6 +16,7 @@ from .models import SentEmail
 VERIFY = "verify_email"
 RESET = "reset_password"
 INVITE = "crew_invite"
+NOTICE = "account_notice"  # CC-203: your password or email changed
 
 # one address, every kind together
 PER_ADDRESS_PER_HOUR = 3

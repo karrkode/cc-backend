@@ -40,24 +40,31 @@ def _check_name_free(db: DB, name: str, user: User | None = None) -> None:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "That name is reserved. Choose another.")
 
 
-def _issue(db: DB, user: User, response: Response) -> TokenOut:
-    """Make a new access token, and a new refresh token in the cookie."""
+def _issue(db: DB, user: User, response: Response, signed_in_at: datetime | None = None) -> TokenOut:
+    """Make a new access token, and a new refresh token in the cookie.
+
+    signed_in_at is when this session began with a password: now for a sign-in, and the old token's
+    for a refresh (CC-203). The refresh token never outlives max_session_days from then."""
     s = get_settings()
+    now = datetime.now(UTC)
+    signed_in_at = signed_in_at or now
+    expires_at = min(now + timedelta(days=s.refresh_token_days), signed_in_at + timedelta(days=s.max_session_days))
     raw = new_refresh_token()
-    db.add(RefreshToken(user_id=user.id, token_hash=hash_refresh_token(raw),
-                        expires_at=datetime.now(UTC) + timedelta(days=s.refresh_token_days)))
+    db.add(RefreshToken(user_id=user.id, token_hash=hash_refresh_token(raw), expires_at=expires_at,
+                        signed_in_at=signed_in_at))
     record_active(db, user)  # CC-67: every visit by a signed-in member starts or refreshes a session
     db.commit()
-    response.set_cookie(COOKIE, raw, max_age=s.refresh_token_days * 86400, path=COOKIE_PATH,
+    response.set_cookie(COOKIE, raw, max_age=int((expires_at - now).total_seconds()), path=COOKIE_PATH,
                         domain=s.cookie_domain, secure=s.cookie_secure, httponly=True, samesite="lax")
-    access, expires_in = create_access_token(user.id, user.role.value)
+    access, expires_in = create_access_token(user.id, user.role.value, user.session_version)
     return TokenOut(access_token=access, expires_in=expires_in, user=UserOut.model_validate(user))
 
 
 def _end_all_sessions(db: DB, user: User):
-    """Sign the account out everywhere: no refresh token survives. Access tokens already
-    handed out still work until they expire (at most access_token_minutes)."""
+    """Sign the account out everywhere: no refresh token survives, and (CC-203) raising the session
+    version ends the access tokens already handed out too. Doesn't commit."""
     db.execute(delete(RefreshToken).where(RefreshToken.user_id == user.id))
+    user.session_version = (user.session_version or 0) + 1
 
 
 def _verification_email(db: DB, user: User) -> mail.Email:
@@ -119,18 +126,20 @@ def refresh(db: DB, response: Response, cc_refresh: str | None = Cookie(default=
     token = db.scalar(select(RefreshToken).where(RefreshToken.token_hash == hash_refresh_token(cc_refresh))
                       .with_for_update())
     now = datetime.now(UTC)
-    if token is None or _utc(token.expires_at) <= now:
+    max_age = timedelta(days=get_settings().max_session_days)
+    # CC-203: a session lasts max_session_days from its sign-in, however often it refreshed
+    if token is None or _utc(token.expires_at) <= now or _utc(token.signed_in_at) + max_age <= now:
         _clear_cookie(response)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Session expired. Sign in again.")
     if token.revoked_at is not None and (now - _utc(token.revoked_at)).total_seconds() > REUSE_GRACE_SECONDS:
-        db.execute(delete(RefreshToken).where(RefreshToken.user_id == token.user_id))
+        _end_all_sessions(db, db.get(User, token.user_id))
         db.commit()
         _clear_cookie(response)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Session expired. Sign in again.")
     if token.revoked_at is None:
         token.revoked_at = now
     user = db.get(User, token.user_id)
-    return _issue(db, user, response)
+    return _issue(db, user, response, signed_in_at=_utc(token.signed_in_at))
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
@@ -147,6 +156,14 @@ def logout(db: DB, response: Response, cc_refresh: str | None = Cookie(default=N
     _clear_cookie(response)
 
 
+@router.post("/logout-everywhere", status_code=status.HTTP_204_NO_CONTENT)
+def logout_everywhere(db: DB, user: CurrentUser, response: Response):
+    """CC-203: sign this account out on every device, this one included, at once."""
+    _end_all_sessions(db, user)
+    db.commit()
+    _clear_cookie(response)
+
+
 @router.get("/me", response_model=UserOut)
 def me(user: CurrentUser):
     return user
@@ -160,12 +177,14 @@ def update_me(body: ProfilePatch, db: DB, user: CurrentUser, tasks: BackgroundTa
     - a new email needs the right current_password (403 if wrong, so the page doesn't
       mistake it for an expired sign-in) and must not belong to another account (409)
     - a new address takes effect at once but is unconfirmed: a link is emailed to it
+    - CC-203: the old address is told of the change, in case it wasn't them
     - other sessions stay signed in; tokens carry the account id, not the email
     - role and id can't be changed here
     """
     if body.display_name is not None and body.display_name.strip() != user.display_name:
         _check_name_free(db, body.display_name, user)  # an existing name can stay as it is
     new_email = body.email is not None and body.email.lower() != user.email
+    old_email = user.email
     if new_email:
         if not body.current_password or not verify_password(body.current_password, user.password_hash):
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Current password is incorrect")
@@ -180,17 +199,28 @@ def update_me(body: ProfilePatch, db: DB, user: CurrentUser, tasks: BackgroundTa
         raise HTTPException(status.HTTP_409_CONFLICT, "An account with that email already exists")
     email = (_verification_email(db, user)  # also voids links sent to the old address
              if new_email and emailcaps.may_send(db, user.email, emailcaps.VERIFY, user.id) else None)
+    notice = (mail.email_changed(old_email)
+              if new_email and emailcaps.may_send(db, old_email, emailcaps.NOTICE, user.id) else None)
     db.commit()
-    if email is not None:
-        tasks.add_task(mail.send, email)
+    for e in (notice, email):
+        if e is not None:
+            tasks.add_task(mail.send, e)
     db.refresh(user)
     return user
 
 
+def _password_notice(db: DB, user: User, tasks: BackgroundTasks, how: str) -> None:
+    """CC-203: tell the account its password changed, in case it wasn't them. Queued after the response;
+    over a CC-184 cap it's skipped like any other email."""
+    if emailcaps.may_send(db, user.email, emailcaps.NOTICE, user.id):
+        tasks.add_task(mail.send, mail.password_changed(user, how))
+
+
 @router.post("/password", response_model=TokenOut, dependencies=[Depends(limit_auth_attempts)])
-def change_password(body: PasswordChangeIn, db: DB, user: CurrentUser, response: Response):
+def change_password(body: PasswordChangeIn, db: DB, user: CurrentUser, response: Response,
+                    tasks: BackgroundTasks):
     """Change your password. Every other session is signed out; this one gets a fresh
-    access token and refresh cookie, so it stays signed in.
+    access token and refresh cookie, so it stays signed in. The account is emailed a notice (CC-203).
 
     - wrong current_password: 403 (not 401, so the page doesn't mistake it for an expired sign-in)
     - a new password the same as the current one: 400
@@ -201,6 +231,7 @@ def change_password(body: PasswordChangeIn, db: DB, user: CurrentUser, response:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "The new password is the same as the current one")
     user.password_hash = hash_password(body.new_password)
     _end_all_sessions(db, user)
+    _password_notice(db, user, tasks, "changed")
     return _issue(db, user, response)  # commits the new password and this session's new token together
 
 
@@ -255,9 +286,10 @@ def forgot_password(body: ForgotPasswordIn, db: DB, tasks: BackgroundTasks):
 
 
 @router.post("/reset-password", response_model=TokenOut, dependencies=[Depends(limit_auth_attempts)])
-def reset_password(body: ResetPasswordIn, db: DB, response: Response):
+def reset_password(body: ResetPasswordIn, db: DB, response: Response, tasks: BackgroundTasks):
     """Set a new password from the emailed link, then sign in. Every other session is signed
-    out, and the address counts as confirmed (they've just shown they can read its mail)."""
+    out, the address counts as confirmed (they've just shown they can read its mail), and
+    the account is emailed a notice (CC-203)."""
     user = mail.redeem_token(db, body.token, EmailTokenPurpose.reset_password)
     if user is None:
         db.rollback()
@@ -266,4 +298,5 @@ def reset_password(body: ResetPasswordIn, db: DB, response: Response):
     if user.email_verified_at is None:
         user.email_verified_at = datetime.now(UTC)
     _end_all_sessions(db, user)
+    _password_notice(db, user, tasks, "reset")
     return _issue(db, user, response)

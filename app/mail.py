@@ -1,4 +1,5 @@
-"""The site's own emails: confirming an address, resetting a password, crew invites, and the weekly discovery recap.
+"""The site's own emails: confirming an address, resetting a password, change notices, crew invites, and the weekly
+discovery recap.
 
 How an email goes out depends on settings.email_mode:
 - ses: Amazon SES (production). The SES identity lives in us-east-1 (infra/aws/ses.tf).
@@ -29,6 +30,7 @@ from .models import EmailToken, EmailTokenPurpose, User
 from .security import hash_refresh_token as hash_token  # the same SHA-256 hex digest
 
 log = logging.getLogger("uvicorn.error")  # uvicorn already prints this logger at INFO
+CONTACT = "info@chiculturecrew.com"
 
 
 @dataclass
@@ -149,6 +151,41 @@ To choose a new one, open this link:
 
 The link works once and expires in {s.reset_link_minutes} minutes. Resetting your password signs
 you out everywhere. If you didn't ask for this, ignore this email; your password stays the same.
+
+Culture Crew
+{s.site_url}
+""")
+
+
+def password_changed(user: User, how: str) -> Email:
+    """CC-203: the account's password was changed (from the account page) or reset (from an emailed link)."""
+    s = get_settings()
+    return Email(user.email, "Your Culture Crew password was changed", f"""Hi,
+
+The password for your Culture Crew account was just {how}. Any other devices that were signed in
+have been signed out.
+
+If this was you, there's nothing more to do. If it wasn't, reset your password now with
+"Forgot password?" on the sign-in page, and write to us at {CONTACT}.
+
+{s.site_url}/#account
+
+Culture Crew
+{s.site_url}
+""")
+
+
+def email_changed(old_email: str) -> Email:
+    """CC-203: sent to the address an account used to have. It doesn't name the new address, which
+    may not belong to whoever reads this."""
+    s = get_settings()
+    return Email(old_email, "The email for your Culture Crew account was changed", f"""Hi,
+
+The email address for the Culture Crew account that used this address has just been changed,
+so we won't send account emails here any more.
+
+If this was you, there's nothing more to do. If it wasn't, write to us at {CONTACT} and we'll
+help you get the account back.
 
 Culture Crew
 {s.site_url}

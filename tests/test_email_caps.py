@@ -124,9 +124,11 @@ def test_email_change_counts_against_the_new_address(client, db):
         age_sent_emails(db, minutes=2)
         r = client.patch("/auth/me", headers=h, json={"email": f"ana{n % 2}@example.com", "current_password": PW_DEFAULT})
         assert r.status_code == 200
-    assert [len(to(a)) for a in ("ana0@example.com", "ana1@example.com")] == [2, 1]
-    rows = db.scalars(select(SentEmail.email).order_by(SentEmail.id)).all()
+    assert [len(to(a)) for a in ("ana0@example.com", "ana1@example.com")] == [3, 2]  # CC-203: + the moved-away notice
+    rows = db.scalars(select(SentEmail.email).where(SentEmail.kind == emailcaps.VERIFY).order_by(SentEmail.id)).all()
     assert rows == ["ana@example.com", "ana0@example.com", "ana1@example.com", "ana0@example.com"]
+    notices = db.scalars(select(SentEmail.email).where(SentEmail.kind == emailcaps.NOTICE).order_by(SentEmail.id)).all()
+    assert notices == ["ana@example.com", "ana0@example.com", "ana1@example.com"]
 
 
 # ---- crew invites ---------------------------------------------------------------------------
