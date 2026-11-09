@@ -31,6 +31,8 @@ services:
       JWT_SECRET: local-dev-secret-not-for-production
       CORS_ORIGINS: http://localhost:4173,http://127.0.0.1:4173
       COOKIE_SECURE: "false"
+      # CC-241: an in-memory Jira, so "Create Jira ticket" works locally without touching the real one (tickets CC-9001 on).
+      JIRA_BACKEND: fake
       # Ready-made test accounts, an admin and a regular user, created on every start (scripts/dev_users.py),
       # plus three culture crews whose seven other members use DEV_USER_PASSWORD (see the README).
       # Local throwaway values: the script refuses to run unless ENV=local.

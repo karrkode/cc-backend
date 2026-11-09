@@ -63,6 +63,16 @@ class Settings(BaseSettings):
     anthropic_key_param: str = "/culture-crew/anthropic-api-key"
     ssm_region: str = "us-east-2"
 
+    # CC-241: admins turn a member's report into a Jira ticket. jira_backend: api (Jira Cloud), fake (an in-memory
+    # Jira, for trying it locally), none (off). Unset: api in production, none elsewhere. In production the account
+    # email and API token ("email:token") are read from Parameter Store; JIRA_CREDENTIALS is for a local test only.
+    jira_backend: Literal["api", "fake", "none"] | None = None
+    jira_site: str = "https://chiculturecrew.atlassian.net"
+    jira_project: str = "CC"
+    jira_credentials: str = ""
+    jira_credentials_param: str = "/culture-crew/jira-api-credentials"
+    jira_timeout_seconds: float = 10.0
+
     # Local only: the test accounts scripts.dev_users creates (see docker-compose.yml). Never set in prod.
     dev_admin_email: str = ""
     dev_admin_password: str = ""
@@ -92,6 +102,10 @@ class Settings(BaseSettings):
     @property
     def email_mode(self) -> str:
         return self.email_backend or ("log" if self.env == "local" else "none")
+
+    @property
+    def jira_mode(self) -> str:  # CC-241
+        return self.jira_backend or ("api" if self.env == "prod" else "none")
 
     @property
     def photo_storage(self) -> str:  # CC-76: "s3" in production, a local folder otherwise

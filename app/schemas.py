@@ -1254,6 +1254,8 @@ class IssueAdminOut(IssueOut):
     screen: str
     site_version: str
     sent_by: IssueReporter | None = None  # None: the account was deleted
+    jira_key: str | None = None  # CC-241: the ticket made from it, admins only
+    jira_url: str | None = None
 
 
 class IssuePage(BaseModel):
@@ -1265,6 +1267,40 @@ class IssuePage(BaseModel):
 class IssuePatch(BaseModel):
     status: IssueStatus | None = None
     admin_note: str | None = Field(default=None, max_length=500)
+
+
+JiraIssueType = Literal["Bug", "Story", "Task"]
+JiraPriority = Literal["Highest", "High", "Medium", "Low", "Lowest"]
+
+
+class JiraDraft(BaseModel):
+    """CC-241: the ticket the server suggests for a report, with personal details already taken out. The admin edits
+    it before sending. reference is added to the end of the description as it is, so the ticket always leads back."""
+    issue_type: JiraIssueType
+    priority: JiraPriority
+    summary: str
+    description: str
+    reference: str
+    connected: bool  # False: Jira isn't set up on this server, so sending will fail
+
+
+class JiraCreate(BaseModel):
+    issue_type: JiraIssueType
+    priority: JiraPriority = "Medium"
+    summary: str = Field(min_length=3, max_length=200)
+    description: str = Field(default="", max_length=20000)
+
+    @field_validator("summary", "description")
+    @classmethod
+    def _trim(cls, v: str) -> str:
+        return v.strip()
+
+
+class JiraTicketStatus(BaseModel):
+    key: str
+    url: str
+    status: str  # Jira's own word, e.g. In Progress
+    category: str  # new | indeterminate | done
 
 
 # ---- approvers and approvals (CC-91) ----------------------------------------------

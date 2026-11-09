@@ -168,7 +168,7 @@ applies new migrations when it starts.
 | Approvals | `GET /approvals?show=waiting\|approved\|rejected`, `POST /approvals/{id}` (approve, or reject with a reason) | approvers and admins |
 | Takes | `PUT /admin/takes/{event_id}/{user_id}` (CC-112: `{hidden}` hides a public take or unhides it; the journal entry stays) | admin |
 | Members | `GET /admin/members`, `POST`/`DELETE /admin/members/{id}/approver` (offer, withdraw or remove) | admin |
-| Issues | `POST /issues`; `GET`/`PATCH /admin/issues` | signed in / admin |
+| Issues | `POST /issues`; `GET`/`PATCH /admin/issues`; `GET`/`POST /admin/issues/{id}/jira` (CC-241: draft and make its Jira ticket), `GET /admin/jira-status?ids=` | signed in / admin |
 | Stats | `GET /admin/stats` (includes photo checks and their cost this month), `/admin/stats/events`, `/admin/stats/traffic` (with the join page's visits and sign-ups by source, CC-121); `POST /traffic` | admin / anyone |
 | Pages (CC-108) | `GET /e/{id}-{title}` (plain HTML event page, with Event JSON-LD, preview tags and public takes), `/sitemap.xml`, `/robots.txt`. On chiculturecrew.com CloudFront sends these paths here and caches them | anyone |
 | Roundups (CC-109) | `GET /chicago/` (the list) and `/chicago/{slug}`: plain HTML pages of live events by rule (this weekend, free and $25 and under, closing in two weeks, by kind, by side of town), served like the event pages. Admins edit each intro with `GET /admin/roundups` and `PUT /admin/roundups/{slug}` | anyone; intros: admins |
