@@ -578,7 +578,8 @@ class IssueReport(Base):
     note the member sees beside it on Your account. CC-95: or a feature request (kind "feature"); each kind
     is numbered on its own (ISS-0007, FR-0002)."""
     __tablename__ = "issue_reports"
-    __table_args__ = (UniqueConstraint("kind", "number", name="uq_issue_reports_kind_number"),)
+    __table_args__ = (UniqueConstraint("kind", "number", name="uq_issue_reports_kind_number"),
+                      UniqueConstraint("jira_key", name="uq_issue_reports_jira_key"))
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     kind: Mapped[str] = mapped_column(String(10), default="issue", server_default="issue", index=True)  # issue | feature
@@ -594,6 +595,11 @@ class IssueReport(Base):
     admin_note: Mapped[str] = mapped_column(String(500), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    # CC-241: the Jira ticket an admin made from it (admins only). jira_pending_at is set while one is being made,
+    # so a second click or a retry can't make another; a claim older than a minute has failed and may be retried.
+    jira_key: Mapped[str | None] = mapped_column(String(20))
+    jira_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    jira_pending_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     reporter: Mapped[User | None] = relationship(lazy="joined")
 

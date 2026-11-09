@@ -126,6 +126,7 @@ Then open https://chiculturecrew.com.
 | Make an admin | on the server: `docker exec api python -m scripts.make_admin you@example.com` |
 | Run event discovery now | on the server: `docker exec api python -m scripts.discover --source <id> --now` (without the API key it can't read changed pages) |
 | Set the Anthropic API key for discovery | `aws ssm put-parameter --name /culture-crew/anthropic-api-key --type SecureString --overwrite --value '<key>'` |
+| Connect Jira for tickets from member reports (CC-241) | `aws ssm put-parameter --name /culture-crew/jira-api-credentials --type SecureString --overwrite --value '<email>:<api token>'` |
 | Plan dolphins on an account | on the server: `docker exec api python -m scripts.dolphins you@example.com` (`--off` to remove) |
 | Put a CDN or load balancer in front of Caddy | add its address ranges to Caddy's `trusted_proxies` (in the Caddyfile in `aws/server/user_data.sh.tftpl`), or every visitor will look like the CDN and share one sign-in limit. The API trusts `X-Forwarded-For` only from Docker networks (`--forwarded-allow-ips` in the Dockerfile), so leave that as it is while Caddy stays the only way in |
 
