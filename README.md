@@ -167,6 +167,7 @@ applies new migrations when it starts.
 | Photos | `GET /photos/{id}?exp&sig` (a link signed for 15 minutes) | anyone with the link |
 | Approvals | `GET /approvals?show=waiting\|approved\|rejected`, `POST /approvals/{id}` (approve, or reject with a reason) | approvers and admins |
 | Takes | `PUT /admin/takes/{event_id}/{user_id}` (CC-112: `{hidden}` hides a public take or unhides it; the journal entry stays) | admin |
+| Site health | `GET /admin/health?hours=1\|24\|168\|720` (CC-244: requests, call times, server errors, database checks and non-200s by status, from `app/health.py`) | admin |
 | Members | `GET /admin/members`, `POST`/`DELETE /admin/members/{id}/approver` (offer, withdraw or remove) | admin |
 | Issues | `POST /issues`; `GET`/`PATCH /admin/issues`; `GET`/`POST /admin/issues/{id}/jira` (CC-241: draft and make its Jira ticket), `GET /admin/jira-status?ids=` | signed in / admin |
 | Stats | `GET /admin/stats` (includes photo checks and their cost this month), `/admin/stats/events`, `/admin/stats/traffic` (with the join page's visits and sign-ups by source, CC-121); `POST /traffic` | admin / anyone |

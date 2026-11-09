@@ -1341,3 +1341,61 @@ class ApprovalsPage(BaseModel):
 class DecisionIn(BaseModel):
     decision: Literal["approve", "reject"]
     reason: str = Field(default="", max_length=300)
+
+
+# ---- CC-244: Site health -----------------------------------------------------------------------------------------
+
+class HealthError(BaseModel):
+    at: datetime
+    method: str
+    route: str
+    status: int
+    ms: float | None
+
+
+class HealthApi(BaseModel):
+    started_at: datetime  # when this API process started
+    requests: int
+    server_errors: int  # 5xx in the window
+    errors_last_15_min: int
+    recent_errors: list[HealthError]  # the last 10 server errors in the window, newest first
+
+
+class HealthRoute(BaseModel):
+    method: str
+    route: str
+    requests: int
+    avg_ms: float | None
+    max_ms: float | None
+
+
+class HealthTiming(BaseModel):
+    avg_ms: float | None
+    p50_ms: float | None
+    p95_ms: float | None
+    p99_ms: float | None
+    slowest: list[HealthRoute]  # by average, slowest first
+
+
+class HealthDb(BaseModel):
+    ok: bool  # answered just now
+    ms: float | None
+    checks: int  # the minute checks in the window
+    failed: int
+    avg_ms: float | None
+    last_failed_at: datetime | None  # ever (within the 30 days kept)
+
+
+class HealthStatusCount(BaseModel):
+    status: int
+    count: int
+
+
+class HealthOut(BaseModel):
+    hours: int
+    now: datetime
+    state: Literal["healthy", "trouble"]  # trouble: a server error or failed database check in the last 15 minutes
+    api: HealthApi
+    timing: HealthTiming
+    db: HealthDb
+    non_200: list[HealthStatusCount]  # most first
