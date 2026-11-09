@@ -67,7 +67,9 @@ class Settings(BaseSettings):
     # Jira, for trying it locally), none (off). Unset: api in production, none elsewhere. In production the account
     # email and API token ("email:token") are read from Parameter Store; JIRA_CREDENTIALS is for a local test only.
     jira_backend: Literal["api", "fake", "none"] | None = None
-    jira_site: str = "https://chiculturecrew.atlassian.net"
+    jira_site: str = "https://chiculturecrew.atlassian.net"  # ticket links
+    # API calls: a scoped API token only works through Atlassian's gateway, addressed by the site's cloud id
+    jira_api_base: str = "https://api.atlassian.com/ex/jira/afcbf044-3608-4c7e-b276-ba503e355435"
     jira_project: str = "CC"
     jira_credentials: str = ""
     jira_credentials_param: str = "/culture-crew/jira-api-credentials"

@@ -200,7 +200,7 @@ def test_api_sends_auth_and_reads_answers(monkeypatch):
     api = jira.JiraApi("someone@example.org:tok")
     assert api.create("Bug", "Medium", "Summary", "One\nTwo\n\nThree", ["member-feedback", "report-ISS-0001"]) == "CC-300"
     body = json.loads(sent[0].data)["fields"]
-    assert sent[0].full_url == "https://chiculturecrew.atlassian.net/rest/api/3/issue" and sent[0].headers["Authorization"].startswith("Basic ")
+    assert sent[0].full_url == "https://api.atlassian.com/ex/jira/afcbf044-3608-4c7e-b276-ba503e355435/rest/api/3/issue" and sent[0].headers["Authorization"].startswith("Basic ")
     assert body["project"] == {"key": "CC"} and body["issuetype"] == {"name": "Bug"} and body["priority"] == {"name": "Medium"}
     assert body["description"]["content"][0]["content"] == [{"type": "text", "text": "One"}, {"type": "hardBreak"}, {"type": "text", "text": "Two"}]
     [t] = api.find(["report-ISS-0001"])

@@ -98,7 +98,7 @@ class JiraApi:
     def __init__(self, credentials: str):
         self.auth = "Basic " + base64.b64encode(credentials.encode()).decode()
         s = get_settings()
-        self.site, self.timeout = s.jira_site.rstrip("/"), s.jira_timeout_seconds
+        self.site, self.timeout = s.jira_api_base.rstrip("/"), s.jira_timeout_seconds
 
     def _call(self, method: str, path: str, body: dict | None = None) -> dict:
         req = urllib.request.Request(self.site + path, method=method, data=json.dumps(body).encode() if body else None,
