@@ -37,12 +37,18 @@ def test_confirming_sends_the_welcome_once(client):
     assert confirm(client).status_code == 200
     [email] = welcomes()
     assert email.to == "ana@example.com"
-    assert email.text.startswith("Ana!\n\nYou've confirmed your email, excellent!")
-    for words in ("Choose, Commit, Communicate", "Interested button", "Upgrade that Interested to Going!",
-                  "it shows up in My week", "Report an issue or request a feature",
+    assert email.text.startswith("Ana!\n\nExcellent--you've confirmed your email! Chi Culture Crew is a place to find")
+    for words in ("Choose, Commit, Communicate", "Interested button", "Upgrade that 'Interested' to 'Going'!",
+                  "it will show up in your Cultural Planner feature.", "continually evolving with new features",
+                  "- Communicate: _Anything worth seeing is worth seeing with someone you care about._ This",
+                  "Report an issue or request a feature",
                   "Your cultural collaborator,\nAndrew Carr\nhttp://localhost:4173\n"):
         assert words in email.text
-    assert email.html == ""
+    # the HTML copy says the same, with the one italic line in italics
+    assert email.html.startswith('<!doctype html>') and "<p>Ana!</p>" in email.html
+    assert "<li>Communicate: <em>Anything worth seeing is worth seeing with someone you care about.</em> This" in email.html
+    assert "_" not in email.html and email.html.count("<li>") == 3
+    assert '<a href="http://localhost:4173">http://localhost:4173</a>' in email.html
 
     assert confirm(client).status_code == 200  # the same link again (a mail scanner): no second welcome
     assert len(welcomes()) == 1
@@ -75,6 +81,11 @@ def test_the_greeting_is_a_cleaned_capped_first_name():
     assert greeting("") == "Hello hello!"
     assert greeting("B" * 80) == f"{'B' * 19}…!"
     assert first_name("  Mal\tlory ") == "Mal"
+
+
+def test_the_name_is_escaped_in_the_html():
+    email = mail.welcome(User(email="a@example.com", password_hash="x", display_name="<b>Jo</b>"))
+    assert email.text.startswith("<b>Jo</b>!\n") and "<p>&lt;b&gt;Jo&lt;/b&gt;!</p>" in email.html
 
 
 def test_the_subject_never_carries_the_name():

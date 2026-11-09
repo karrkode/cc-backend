@@ -20,6 +20,7 @@ import logging
 import re
 import secrets
 from dataclasses import dataclass
+from html import escape
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import delete, select
@@ -215,28 +216,51 @@ def first_name(display_name: str) -> str:
     return plain_name(words[0], "", cap=FIRST_NAME_CAP) if words else ""
 
 
+# CC-243: the welcome's body, approved on the story. Paragraphs; a paragraph of "- " lines is a list; text in
+# _underscores_ is italic (left as underscores in the plain-text copy, which can't show italics).
+WELCOME_BODY = [
+    "Excellent--you've confirmed your email! Chi Culture Crew is a place to find what's new and happening in the "
+    "Chicago(land) area and, more importantly, for you to create a crew of others to check out these moments.",
+    "Why a crew, you ask? Because, at its core, I think we all want to see more art. And, most frustratingly, despite "
+    "the weeks of lead-up or the extended run, it often eludes us. My proposal is that by curating your own set of "
+    "friends (a crew), you'll create a group (or groups!) that motivates you to see more. This results in the three "
+    "C's of culture that this site is built around: Choose, Commit, Communicate.",
+    "- Choose: Explore the catalog! My focus is Theater, Visual Art and Music. This is mainly to support living "
+    "performers and non-enterprise talent (sadly T*ylor Swift will not make an appearance on this site). Mark what "
+    "catches your eye with the Interested button on any event.\n"
+    "- Commit: Commitment is key! Upgrade that 'Interested' to 'Going'! When you do, you can add the date you'll be "
+    "seeing it, and it will show up in your Cultural Planner feature.\n"
+    "- Communicate: _Anything worth seeing is worth seeing with someone you care about._ This is where the crew comes "
+    "in. Like seeing theater on Thursdays (I do!), create your own Thursday Theater crew. Together you can share what "
+    "looks good to you and quickly reach consensus!",
+    "This site is continually evolving with new features added every week, so please hang tight if something seems "
+    "incomplete or less than desired. When you're signed in, the bottom of every page has \"Report an issue or request "
+    "a feature\". Don't be shy!",
+]
+_ITALIC = re.compile(r"_([^_]+)_")
+
+
 def welcome(user: User) -> Email:
     """CC-243: sent once, the first time an account's address is confirmed (users.welcomed_at). The greeting
     is the one place a member's own text opens an email: the product owner approved that exception to CC-185
-    on the story. It's only a cleaned, capped first word; the subject stays our own wording."""
+    on the story. It's only a cleaned, capped first word; the subject stays our own wording. It has an HTML
+    copy only so the one italic line shows as italic; it's otherwise as plain as the text."""
     s = get_settings()
     name = first_name(user.display_name)
-    return Email(user.email, "So what is ChiCultureCrew... (an explainer)", f"""{f"{name}!" if name else "Hello hello!"}
+    hello = f"{name}!" if name else "Hello hello!"
+    sign = ["Your cultural collaborator,", "Andrew Carr", s.site_url]
+    text = "\n\n".join([hello, *WELCOME_BODY, "\n".join(sign)]) + "\n"
 
-You've confirmed your email, excellent! Chi Culture Crew aims to be a place to find what's new and happening in the Chicago(land) area and, more importantly, for you to create a crew of others to check out these moments.
-
-Why a crew, you ask? Because, at its core, I think we all want to see more art. And, most frustratingly, despite the weeks of lead-up or the extended run, it often eludes us. My proposal is that by curating your own set of friends (a crew), you'll create a group (or groups!) that motivates you to see more. This results in the three C's of culture that this site is built around: Choose, Commit, Communicate.
-
-- Choose: Explore the catalog! My focus is Theater, Visual Art and Music. This is mainly to support living performers and non-enterprise talent (sadly T*ylor Swift will not make an appearance on this site). Mark what catches your eye with the Interested button on any event.
-- Commit: Commitment is key! Upgrade that Interested to Going! When you do, you can add the date you'll be seeing it, and it shows up in My week.
-- Communicate: Anything worth seeing is worth seeing with someone you care about. This is where the crew comes in. Like seeing theater on Thursdays (I do!), create your own Thursday Theater crew. Together you can share what looks good to you and quickly reach consensus!
-
-This site is continually evolving, with new features added every week, so please hang tight if something seems incomplete or less than desired. When you're signed in, the bottom of every page has "Report an issue or request a feature". Don't be shy!
-
-Your cultural collaborator,
-Andrew Carr
-{s.site_url}
-""")
+    def para(p: str) -> str:
+        if p.startswith("- "):
+            items = "".join(f"<li>{_ITALIC.sub(r'<em>\1</em>', escape(line[2:]))}</li>" for line in p.split("\n"))
+            return f"<ul>{items}</ul>"
+        return f"<p>{_ITALIC.sub(r'<em>\1</em>', escape(p))}</p>"
+    link = f'<a href="{escape(s.site_url)}">{escape(s.site_url)}</a>'
+    html = ('<!doctype html><html lang="en"><head><meta charset="utf-8"></head><body>'
+            + para(hello) + "".join(map(para, WELCOME_BODY))
+            + f"<p>{escape(sign[0])}<br>{escape(sign[1])}<br>{link}</p></body></html>")
+    return Email(user.email, "So what is ChiCultureCrew... (an explainer)", text, html)
 
 
 def crew_invite(to: str, inviter: str, crew: str, days: int) -> Email:
