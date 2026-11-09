@@ -1264,6 +1264,54 @@ class IssuePage(BaseModel):
     kinds: dict[str, int] = {}  # CC-95: how many of each kind, open (new or looking) ones only
 
 
+class IssueOldest(BaseModel):
+    key: str  # ISS-0007
+    days: float
+
+
+class IssueAge(BaseModel):
+    """CC-245: how long the open reports have waited."""
+    median_days: float | None  # None: nothing open
+    oldest: IssueOldest | None
+    under_week: int
+    one_to_four_weeks: int
+    over_four_weeks: int
+
+
+class IssueWeek(BaseModel):
+    week: date  # its Monday, in Chicago
+    count: int
+
+
+class IssueFixTime(BaseModel):
+    """CC-245: how long fixed reports took, from the report to Fixed."""
+    median_days: float | None  # None: nothing fixed yet
+    fixed: int  # the fixed reports it is the median of
+    last_30_days: int  # of those, fixed in the last 30 days
+
+
+class IssueJiraStats(BaseModel):
+    """CC-245: where the open reports stand in Jira (CC-241). available is False when Jira can't be asked right now."""
+    available: bool
+    message: str = ""
+    no_ticket: int = 0
+    to_do: int = 0
+    in_progress: int = 0
+    done: int = 0  # done in Jira (deployed) but not yet marked fixed here
+    not_found: int = 0  # its ticket is gone from Jira
+
+
+class IssueStats(BaseModel):
+    """CC-245: the Issues dashboard. counts is by status, worked out as /admin/issues does, so the two match."""
+    counts: dict[str, int]
+    open: int  # new + looking
+    open_by_kind: dict[str, int]
+    age: IssueAge
+    weeks: list[IssueWeek]  # the last 8 weeks, oldest first; this week so far is last
+    fix_time: IssueFixTime
+    jira: IssueJiraStats
+
+
 class IssuePatch(BaseModel):
     status: IssueStatus | None = None
     admin_note: str | None = Field(default=None, max_length=500)
