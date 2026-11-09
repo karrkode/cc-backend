@@ -602,6 +602,9 @@ class IssueReport(Base):
     jira_key: Mapped[str | None] = mapped_column(String(20))
     jira_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     jira_pending_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # CC-245: when it was last set to fixed or won't fix (cleared if it's reopened), for the dashboard's time to fix.
+    # A note edit changes updated_at, so updated_at can't say this.
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     reporter: Mapped[User | None] = relationship(lazy="joined")
 

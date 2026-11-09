@@ -3,7 +3,9 @@ Issues page, set a status (new, looking into it, fixed, won't fix) and can add a
 New reports appear in the Tuesday recap. No screenshots yet.
 CC-95: a report can be a feature request instead. Issues and requests are numbered apart (ISS-0007, FR-0002).
 CC-241: an admin can turn a report into a Jira ticket (one per report) and see that ticket's status in Jira. The
-report's own status stays the admin's: a ticket that's done in Jira (deployed) doesn't mark the report fixed."""
+report's own status stays the admin's: a ticket that's done in Jira (deployed) doesn't mark the report fixed.
+CC-245: a dashboard for admins on the Issues page: open reports by status and age, new ones per week, the time to fix,
+and where the open ones stand in Jira."""
 import logging
 import re
 from datetime import UTC, datetime, timedelta
@@ -19,12 +21,15 @@ from ..config import get_settings
 from ..deps import DB, AdminUser, CurrentUser, require_verified_email
 from ..models import IssueReport, User
 from ..ratelimit import SlidingWindowLimiter
-from ..schemas import (IssueAdminOut, IssueIn, IssueKind, IssueOut, IssuePage, IssuePatch, IssueReporter, IssueStatus, JiraCreate,
-                       JiraDraft, JiraTicketStatus)
+from ..schemas import (IssueAdminOut, IssueAge, IssueFixTime, IssueIn, IssueJiraStats, IssueKind, IssueOldest, IssueOut, IssuePage,
+                       IssuePatch, IssueReporter, IssueStats, IssueStatus, IssueWeek, JiraCreate, JiraDraft, JiraTicketStatus)
+from ..stats import CHICAGO
 
 log = logging.getLogger("uvicorn.error")
 
 router = APIRouter(tags=["issues"])
+OPEN = ("new", "looking")
+CLOSED = ("fixed", "wont_fix")
 REPORTS_PER_HOUR = 5
 report_limiter = SlidingWindowLimiter(window_seconds=3600)
 
@@ -94,8 +99,98 @@ def all_reports(db: DB, _: AdminUser, show: Annotated[IssueStatus | None, Query(
     q = stmt
     counted = select(IssueReport.status, func.count()).group_by(IssueReport.status)
     counts = dict(db.execute(counted.where(IssueReport.kind == kind) if kind else counted).all())
-    kinds = dict(db.execute(select(IssueReport.kind, func.count()).where(IssueReport.status.in_(["new", "looking"])).group_by(IssueReport.kind)).all())
+    kinds = dict(db.execute(select(IssueReport.kind, func.count()).where(IssueReport.status.in_(OPEN)).group_by(IssueReport.kind)).all())
     return IssuePage(items=[_admin_out(i) for i in db.scalars(q).unique()], counts=counts, kinds=kinds)
+
+
+# ---- CC-245: the Issues dashboard ---------------------------------------------------------
+
+WEEKS = 8
+DAY = 86400
+
+
+def _utc(d: datetime) -> datetime:
+    return d.replace(tzinfo=UTC) if d.tzinfo is None else d  # SQLite gives times back without a zone
+
+
+def _median(xs: list[float]) -> float | None:
+    if not xs:
+        return None
+    xs = sorted(xs)
+    mid = len(xs) // 2
+    return xs[mid] if len(xs) % 2 else (xs[mid - 1] + xs[mid]) / 2
+
+
+def _jira_stats(open_reports: list[IssueReport]) -> IssueJiraStats:
+    """Where the open reports stand in Jira, asked live (the ticket's status isn't stored here, CC-249 may sync it)."""
+    linked = {jira.report_label(i.key): i for i in open_reports if i.jira_key}
+    out = IssueJiraStats(available=True, no_ticket=len(open_reports) - len(linked))
+    if not linked:
+        return out
+    labels, found = list(linked), {}
+    try:
+        for n in range(0, len(labels), 100):  # Jira answers at most 100 at a time
+            for t in jira.client().find(labels[n:n + 100]):
+                for lab in t.labels:
+                    if lab in linked:
+                        found[lab] = t.category
+    except jira.JiraError as e:
+        log.warning("jira: dashboard status lookup failed: %s", e.status)
+        return IssueJiraStats(available=False, message=e.message, no_ticket=out.no_ticket)
+    for lab in linked:
+        cat = found.get(lab)
+        if cat is None:
+            out.not_found += 1
+        elif cat == "done":
+            out.done += 1
+        elif cat == "indeterminate":
+            out.in_progress += 1
+        else:
+            out.to_do += 1
+    return out
+
+
+@router.get("/admin/issue-stats", response_model=IssueStats)
+def report_stats(db: DB, _: AdminUser, kind: Annotated[IssueKind | None, Query(description="Only issues, or only feature requests")] = None):
+    """The Issues dashboard: how many reports are open and where they stand, how long the open ones have waited, how
+    many came in each week, and how long fixing takes. Counted from the same rows as /admin/issues, so they match."""
+    stmt = select(IssueReport)
+    if kind:
+        stmt = stmt.where(IssueReport.kind == kind)
+    reports = db.scalars(stmt).unique().all()
+    now = datetime.now(UTC)
+    counts: dict[str, int] = {}
+    for i in reports:
+        counts[i.status] = counts.get(i.status, 0) + 1
+    open_reports = [i for i in reports if i.status in OPEN]
+    by_kind: dict[str, int] = {}
+    for i in open_reports:
+        by_kind[i.kind] = by_kind.get(i.kind, 0) + 1
+
+    ages = [((now - _utc(i.created_at)).total_seconds() / DAY, i) for i in open_reports]
+    oldest = max(ages, key=lambda a: (a[0], -a[1].id), default=None)
+    age = IssueAge(median_days=_median([a for a, _ in ages]),
+                   oldest=IssueOldest(key=oldest[1].key, days=oldest[0]) if oldest else None,
+                   under_week=sum(a < 7 for a, _ in ages), one_to_four_weeks=sum(7 <= a < 28 for a, _ in ages),
+                   over_four_weeks=sum(a >= 28 for a, _ in ages))
+
+    this_monday = now.astimezone(CHICAGO).date()
+    this_monday -= timedelta(days=this_monday.weekday())
+    mondays = [this_monday - timedelta(weeks=n) for n in range(WEEKS - 1, -1, -1)]
+    per_week = dict.fromkeys(mondays, 0)
+    for i in reports:
+        d = _utc(i.created_at).astimezone(CHICAGO).date()
+        monday = d - timedelta(days=d.weekday())
+        if monday in per_week:
+            per_week[monday] += 1
+
+    fixed = [i for i in reports if i.status == "fixed" and i.closed_at]
+    fix_time = IssueFixTime(median_days=_median([max(0.0, (_utc(i.closed_at) - _utc(i.created_at)).total_seconds() / DAY) for i in fixed]),
+                            fixed=len(fixed), last_30_days=sum(now - _utc(i.closed_at) <= timedelta(days=30) for i in fixed))
+
+    return IssueStats(counts=counts, open=len(open_reports), open_by_kind=by_kind, age=age,
+                      weeks=[IssueWeek(week=m, count=per_week[m]) for m in mondays], fix_time=fix_time,
+                      jira=_jira_stats(open_reports))
 
 
 @router.patch("/admin/issues/{issue_id}", response_model=IssueAdminOut)
@@ -105,6 +200,10 @@ def update_report(issue_id: int, body: IssuePatch, db: DB, _: AdminUser):
     if issue is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Report not found")
     if body.status is not None:
+        if body.status in CLOSED and issue.status not in CLOSED:
+            issue.closed_at = datetime.now(UTC)  # CC-245
+        elif body.status not in CLOSED:
+            issue.closed_at = None
         issue.status = body.status
     if body.admin_note is not None:
         issue.admin_note = body.admin_note.strip()
