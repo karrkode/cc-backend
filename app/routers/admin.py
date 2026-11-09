@@ -9,9 +9,9 @@ from ..areas import OUT_OF_TOWN
 from ..categories import CATEGORIES, REMOVED
 from ..deps import DB, AdminUser
 from ..discovery.rules import norm_title
-from .. import roundups
+from .. import health, roundups
 from ..models import Attended, DiscoveredItem, DiscoverySource, Event, EventStatus, SubmissionRule, Venue
-from ..schemas import (EventAdminOut, EventAdminPage, EventInterestOut, OutOfTownOut, RoundupIntroIn, RoundupOut, StatsOut, SubmissionRuleIn, SubmissionRuleOut,
+from ..schemas import (EventAdminOut, EventAdminPage, EventInterestOut, HealthOut, OutOfTownOut, RoundupIntroIn, RoundupOut, StatsOut, SubmissionRuleIn, SubmissionRuleOut,
                        TakeHideIn, TrafficOut)
 from ..photos import CHECK_USD, checks_this_month
 from ..stats import event_interest, today_in_chicago, weekly_stats
@@ -20,6 +20,16 @@ from ..venuereview import accept_venue
 from ..visibility import utcnow
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+@router.get("/health", response_model=HealthOut)
+def site_health(db: DB, _: AdminUser, hours: Annotated[int, Query(description="1, 24, 168 or 720")] = 24):
+    """CC-244: the Site health page: the API's requests, call times, the database's checks and the non-200 responses,
+    over the last hour, day, week or 30 days. What's been noted but not yet written is written first, so it's current."""
+    if hours not in health.WINDOWS:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "hours must be 1, 24, 168 or 720")
+    health.flush(db)
+    return health.summary(db, hours)
 
 
 @router.get("/events", response_model=EventAdminPage)

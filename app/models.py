@@ -6,7 +6,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import (JSON, Boolean, CheckConstraint, Date, DateTime, Enum, ForeignKey, ForeignKeyConstraint, Index, Integer,
+from sqlalchemy import (JSON, Boolean, CheckConstraint, Date, DateTime, Enum, Float, ForeignKey, ForeignKeyConstraint, Index, Integer,
                         Numeric, String, Text, UniqueConstraint, Uuid, false, func, true as sa_true)
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
@@ -774,3 +774,26 @@ class DiscoveryCheck(Base):
     input_tokens: Mapped[int] = mapped_column(Integer, default=0)
     output_tokens: Mapped[int] = mapped_column(Integer, default=0)
     note: Mapped[str] = mapped_column(Text, default="")
+
+
+class RequestMetric(Base):
+    """CC-244: one API request, for the admin Site health page: when, which route (its pattern, never the real path),
+    the status and how long it took. No address, user, query or body is kept. Rows go after 30 days (app/health.py)."""
+    __tablename__ = "request_metrics"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    method: Mapped[str] = mapped_column(String(8))
+    route: Mapped[str] = mapped_column(String(200))  # e.g. /events/{event_id}; "(no route)" when nothing matched
+    status: Mapped[int] = mapped_column(Integer, index=True)
+    ms: Mapped[float] = mapped_column(Float)
+
+
+class DbCheck(Base):
+    """CC-244: the API's own check of the database each minute: did it answer, and how fast. Kept 30 days."""
+    __tablename__ = "db_checks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    ok: Mapped[bool] = mapped_column(Boolean)
+    ms: Mapped[float | None] = mapped_column(Float, nullable=True)
