@@ -20,8 +20,8 @@ def user(name: str, email: str = "ana@example.com") -> User:
 
 def test_confirm_and_reset_emails_open_with_our_own_greeting():
     for email in (mail.verify_email(user(PROSE), "tok"), mail.reset_password(user(PROSE), "tok")):
-        assert email.subject in ("Confirm your email for Culture Crew", "Reset your Culture Crew password")
-        assert email.text.startswith("Hi,\n\n")
+        assert email.subject in ("ChiCultureCrew needs you to validate your email!", "Reset your Culture Crew password")
+        assert email.text.startswith(("Hi,\n\n", "Hello hello and welcome to Chi Culture Crew!"))
         assert "evil" not in email.text and "order" not in email.text  # the name isn't in these emails at all
         assert email.html == ""  # text only, so there's no HTML copy to differ from it
 

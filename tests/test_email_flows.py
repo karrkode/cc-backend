@@ -42,8 +42,9 @@ def expire_all(db):
 def test_sign_up_emails_a_link_that_confirms_the_address(client, db):
     token = register(client)
     assert me(client, token)["email_verified"] is False
-    assert len(OUTBOX) == 1 and OUTBOX[0].subject == "Confirm your email for Culture Crew"
-    assert OUTBOX[0].text.startswith("Hi,\n") and "Ana" not in OUTBOX[0].text and "expires in 24 hours" in OUTBOX[0].text
+    assert len(OUTBOX) == 1 and OUTBOX[0].subject == "ChiCultureCrew needs you to validate your email!"
+    assert OUTBOX[0].text.startswith("Hello hello and welcome to Chi Culture Crew!") and "Ana" not in OUTBOX[0].text
+    assert "expires in 24 hours" in OUTBOX[0].text
     raw = link_token("verify", to="ana@example.com")
 
     r = client.post("/auth/verify-email", json={"token": raw})  # no sign-in needed

@@ -120,22 +120,21 @@ def already_confirmed_by(db: Session, raw: str) -> User | None:
 
 # ---- the emails ------------------------------------------------------------------
 
-# CC-185: opening lines are only ever our own wording. Text a member chose (a display name, a crew name)
+# CC-185: opening lines are only ever our own wording (one approved exception: the welcome's greeting, CC-243). Text a member chose (a display name, a crew name)
 # comes lower down, labelled, on one line, without anything that reads as a link. The one exception is
 # the inviter's cleaned, capped name in the invite subject, so a friend's invite is recognisable.
 
 def verify_email(user: User, raw: str) -> Email:
+    """CC-243: the product owner's own wording, approved on the story. No member text in it."""
     s = get_settings()
-    return Email(user.email, "Confirm your email for Culture Crew", f"""Hi,
-
-Please confirm this is your email address for Culture Crew by opening this link:
+    return Email(user.email, "ChiCultureCrew needs you to validate your email!", f"""Hello hello and welcome to Chi Culture Crew! First step, please confirm your email address by opening this link:
 
 {s.site_url}/#verify={raw}
 
-The link works once and expires in {s.verify_link_hours} hours. If you didn't create a Culture Crew
-account, you can ignore this email.
+As a heads up, the link works only once and expires in {s.verify_link_hours} hours. Once you confirm, you'll get a walk-through of the site. Again, thank you for choosing this journey!
 
-Culture Crew
+Your cultural collaborator,
+Andrew Carr
 {s.site_url}
 """)
 
@@ -205,6 +204,39 @@ def plain_name(text: str, fallback: str, cap: int = NAME_CAP) -> str:
     if len(text) > cap:
         text = text[:cap - 1].rstrip() + "…"
     return text or fallback
+
+
+FIRST_NAME_CAP = 20
+
+
+def first_name(display_name: str) -> str:
+    """CC-243: the first word of a member's name, cleaned like any name in an email (CC-185), or "" if nothing is left."""
+    words = plain_name(display_name, "").split()
+    return plain_name(words[0], "", cap=FIRST_NAME_CAP) if words else ""
+
+
+def welcome(user: User) -> Email:
+    """CC-243: sent once, the first time an account's address is confirmed (users.welcomed_at). The greeting
+    is the one place a member's own text opens an email: the product owner approved that exception to CC-185
+    on the story. It's only a cleaned, capped first word; the subject stays our own wording."""
+    s = get_settings()
+    name = first_name(user.display_name)
+    return Email(user.email, "So what is ChiCultureCrew... (an explainer)", f"""{f"{name}!" if name else "Hello hello!"}
+
+You've confirmed your email, excellent! Chi Culture Crew aims to be a place to find what's new and happening in the Chicago(land) area and, more importantly, for you to create a crew of others to check out these moments.
+
+Why a crew, you ask? Because, at its core, I think we all want to see more art. And, most frustratingly, despite the weeks of lead-up or the extended run, it often eludes us. My proposal is that by curating your own set of friends (a crew), you'll create a group (or groups!) that motivates you to see more. This results in the three C's of culture that this site is built around: Choose, Commit, Communicate.
+
+- Choose: Explore the catalog! My focus is Theater, Visual Art and Music. This is mainly to support living performers and non-enterprise talent (sadly T*ylor Swift will not make an appearance on this site). Mark what catches your eye with the Interested button on any event.
+- Commit: Commitment is key! Upgrade that Interested to Going! When you do, you can add the date you'll be seeing it, and it shows up in My week.
+- Communicate: Anything worth seeing is worth seeing with someone you care about. This is where the crew comes in. Like seeing theater on Thursdays (I do!), create your own Thursday Theater crew. Together you can share what looks good to you and quickly reach consensus!
+
+This site is continually evolving, with new features added every week, so please hang tight if something seems incomplete or less than desired. When you're signed in, the bottom of every page has "Report an issue or request a feature". Don't be shy!
+
+Your cultural collaborator,
+Andrew Carr
+{s.site_url}
+""")
 
 
 def crew_invite(to: str, inviter: str, crew: str, days: int) -> Email:

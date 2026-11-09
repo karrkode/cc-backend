@@ -83,6 +83,14 @@ def _verification_email(db: DB, user: User) -> mail.Email:
     return mail.verify_email(user, raw)
 
 
+def _welcome_once(user: User, tasks: BackgroundTasks):
+    """CC-243: the welcome email, the first time this account's address is confirmed. The caller commits;
+    background tasks run after the response, so the email only goes once the commit has."""
+    if user.welcomed_at is None:
+        user.welcomed_at = datetime.now(UTC)
+        tasks.add_task(mail.send, mail.welcome(user))
+
+
 def _clear_cookie(response: Response):
     s = get_settings()
     response.delete_cookie(COOKIE, path=COOKIE_PATH, domain=s.cookie_domain, secure=s.cookie_secure,
@@ -270,7 +278,7 @@ def resend_verification(db: DB, user: CurrentUser, tasks: BackgroundTasks):
 
 
 @router.post("/verify-email", response_model=UserOut, dependencies=[Depends(limit_auth_attempts)])
-def verify_email(body: TokenIn, db: DB):
+def verify_email(body: TokenIn, db: DB, tasks: BackgroundTasks):
     """Confirm an address from the emailed link. No sign-in needed: the link may be opened
     on another device. Links work once, expire, and only for the address they were sent to.
     Opening an already-used link again succeeds while that address is still confirmed, so a
@@ -283,6 +291,7 @@ def verify_email(body: TokenIn, db: DB):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "This link has expired or was already used")
         return user
     user.email_verified_at = datetime.now(UTC)
+    _welcome_once(user, tasks)
     db.commit()
     db.refresh(user)
     return user
@@ -317,6 +326,7 @@ def reset_password(body: ResetPasswordIn, db: DB, response: Response, tasks: Bac
     user.password_hash = hash_password(body.new_password)
     if user.email_verified_at is None:
         user.email_verified_at = datetime.now(UTC)
+        _welcome_once(user, tasks)
     login_failures.clear(user.email)  # CC-191: someone who can read the account's mail may sign in again
     _end_all_sessions(db, user)
     _password_notice(db, user, tasks, "reset")
