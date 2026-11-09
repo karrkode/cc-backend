@@ -27,7 +27,10 @@ class Settings(BaseSettings):
     cookie_secure: bool = False  # True in prod (HTTPS only)
     cookie_domain: str | None = None  # ".chiculturecrew.com" in prod so the API and page share it
 
-    login_attempts_per_minute: int = 10
+    login_attempts_per_minute: int = 10  # per address, for each auth endpoint
+    # CC-191: failed sign-ins per account (by email), however many addresses they come from
+    login_failures_per_account: int = 10
+    login_failure_window_minutes: int = 15
     # CC-190: visitor stats. Pings past either limit still get a 204; they just aren't counted.
     traffic_pings_per_minute: int = 60  # per address
     traffic_new_visitors_per_day: int = 10  # per address: a household, or a few friends on one Wi-Fi

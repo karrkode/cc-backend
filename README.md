@@ -192,6 +192,12 @@ applies new migrations when it starts.
   effect immediately rather than when their token expires.
 - Login and register are limited to 10 tries a minute per IP. The counter is in memory,
   which is right for one server; several servers would need a shared store such as Redis.
+- CC-191: an account (counted by the email typed, whether or not it exists) gets 10 failed sign-ins in 15
+  minutes, then a 429 until the window passes or the password is reset.
+- CC-191: a new password (sign-up, reset, change) must not be one of the 10,000 most common
+  (`app/data/common-passwords.txt`, see `app/passwords.py`). Passwords already set keep working. A password
+  over 72 bytes when signing in or confirming your password is simply incorrect. Changing the password cancels
+  unused reset links.
 - Request bodies over 1 MB are refused (`app/bodylimit.py`), except a photo upload, which has its own 3 MB limit. Caddy
   stops anything over 4 MB first.
 - `POST /traffic` always answers 204, but counts at most 60 pings a minute and 10 new visitors a day per address.

@@ -7,8 +7,8 @@ from sqlalchemy.exc import IntegrityError
 from .. import emailcaps, mail
 from ..config import get_settings
 from ..deps import DB, CurrentUser
-from ..models import EmailTokenPurpose, RefreshToken, Role, User
-from ..ratelimit import limit_auth_attempts
+from ..models import EmailToken, EmailTokenPurpose, RefreshToken, Role, User
+from ..ratelimit import limit_auth_attempts, login_failures
 from ..schemas import (ForgotPasswordIn, LoginIn, MessageOut, PasswordChangeIn, ProfilePatch, RegisterIn,
                        ResetPasswordIn, TokenIn, TokenOut, UserOut, RESERVED_NAMES, name_key)
 from ..security import (create_access_token, hash_password, hash_refresh_token, new_refresh_token,
@@ -67,6 +67,14 @@ def _end_all_sessions(db: DB, user: User):
     user.session_version = (user.session_version or 0) + 1
 
 
+def _cancel_reset_links(db: DB, user: User):
+    """CC-191: a new password replaces the old one completely, so a reset link sent before it
+    (perhaps one someone else asked for) no longer works."""
+    db.execute(delete(EmailToken).where(EmailToken.user_id == user.id,
+                                        EmailToken.purpose == EmailTokenPurpose.reset_password,
+                                        EmailToken.used_at.is_(None)))
+
+
 def _verification_email(db: DB, user: User) -> mail.Email:
     """Make a confirm-your-email link. The caller commits, and only then queues the email,
     so a request that fails never sends one."""
@@ -107,9 +115,19 @@ def register(body: RegisterIn, db: DB, response: Response, tasks: BackgroundTask
 
 @router.post("/login", response_model=TokenOut, dependencies=[Depends(limit_auth_attempts)])
 def login(body: LoginIn, db: DB, response: Response):
-    user = db.scalar(select(User).where(User.email == body.email.lower()))
+    email = body.email.lower()
+    # CC-191: the per-address limit doesn't stop guesses spread over many addresses, so failures are
+    # also counted per account. Counted by the email typed, so an address with no account is held
+    # back the same way and the reply doesn't tell them apart. Even the right password waits it out.
+    s = get_settings()
+    if login_failures.blocked(email, s.login_failures_per_account):
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, f"Too many tries for this account. Wait "
+                            f"{s.login_failure_window_minutes} minutes, or reset your password.")
+    user = db.scalar(select(User).where(User.email == email))
     if not verify_password(body.password, user.password_hash if user else None):
+        login_failures.record(email)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Email or password is incorrect")
+    login_failures.clear(email)
     return _issue(db, user, response)
 
 
@@ -220,7 +238,8 @@ def _password_notice(db: DB, user: User, tasks: BackgroundTasks, how: str) -> No
 def change_password(body: PasswordChangeIn, db: DB, user: CurrentUser, response: Response,
                     tasks: BackgroundTasks):
     """Change your password. Every other session is signed out; this one gets a fresh
-    access token and refresh cookie, so it stays signed in. The account is emailed a notice (CC-203).
+    access token and refresh cookie, so it stays signed in. The account is emailed a notice (CC-203),
+    and unused reset links stop working (CC-191).
 
     - wrong current_password: 403 (not 401, so the page doesn't mistake it for an expired sign-in)
     - a new password the same as the current one: 400
@@ -230,6 +249,7 @@ def change_password(body: PasswordChangeIn, db: DB, user: CurrentUser, response:
     if body.new_password == body.current_password:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "The new password is the same as the current one")
     user.password_hash = hash_password(body.new_password)
+    _cancel_reset_links(db, user)
     _end_all_sessions(db, user)
     _password_notice(db, user, tasks, "changed")
     return _issue(db, user, response)  # commits the new password and this session's new token together
@@ -297,6 +317,7 @@ def reset_password(body: ResetPasswordIn, db: DB, response: Response, tasks: Bac
     user.password_hash = hash_password(body.new_password)
     if user.email_verified_at is None:
         user.email_verified_at = datetime.now(UTC)
+    login_failures.clear(user.email)  # CC-191: someone who can read the account's mail may sign in again
     _end_all_sessions(db, user)
     _password_notice(db, user, tasks, "reset")
     return _issue(db, user, response)

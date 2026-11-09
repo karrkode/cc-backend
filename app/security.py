@@ -27,11 +27,17 @@ def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
 
+BCRYPT_MAX_BYTES = 72
+
+
 def verify_password(password: str, password_hash: str | None) -> bool:
-    if password_hash is None:
-        bcrypt.checkpw(password.encode(), _DUMMY_HASH.encode())
+    raw = password.encode()
+    # CC-191: bcrypt refuses anything over 72 bytes, and no password we store is that long (sign-up
+    # never allowed it), so a longer one is simply wrong. Hash the dummy anyway so it takes as long.
+    if password_hash is None or len(raw) > BCRYPT_MAX_BYTES:
+        bcrypt.checkpw(raw[:BCRYPT_MAX_BYTES], _DUMMY_HASH.encode())
         return False
-    return bcrypt.checkpw(password.encode(), password_hash.encode())
+    return bcrypt.checkpw(raw, password_hash.encode())
 
 
 def create_access_token(user_id: uuid.UUID, role: str, session_version: int = 0) -> tuple[str, int]:

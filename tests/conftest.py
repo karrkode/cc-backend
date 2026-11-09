@@ -24,7 +24,7 @@ from app.mail import OUTBOX  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import Area, Event, EventStatus, Role, User, Venue  # noqa: E402
 from app.fromlink import day_limiter, minute_limiter  # noqa: E402
-from app.ratelimit import auth_limiter  # noqa: E402
+from app.ratelimit import auth_limiter, login_failures  # noqa: E402
 from app.traffic import ping_limits  # noqa: E402
 
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "sqlite+pysqlite:///:memory:")
@@ -66,7 +66,7 @@ def client(Session):
             yield s
 
     app.dependency_overrides[get_db] = _get_db
-    auth_limiter.reset(); minute_limiter.reset(); day_limiter.reset(); ping_limits.reset()
+    auth_limiter.reset(); login_failures.reset(); minute_limiter.reset(); day_limiter.reset(); ping_limits.reset()
     OUTBOX.clear()
     with TestClient(app) as c:
         yield c
