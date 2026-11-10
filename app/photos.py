@@ -9,6 +9,8 @@
 - Stored privately: an S3 bucket in production (encrypted, no public access), a folder locally. Shown
   only through short-lived links signed by the API, to the member and to admins (approvers: CC-91).
 - Removing the mark or the event removes the photo; sweep() removes any the database no longer knows.
+- CC-248: a member's own journal event can have one photo too. Only its member ever sees it, so there's no
+  approver: the same Rekognition rule refuses what's never stored, and anything else is shown at once.
 """
 import hashlib
 import hmac
@@ -20,7 +22,7 @@ from pathlib import Path
 from sqlalchemy import func, select
 
 from .config import get_settings
-from .models import PhotoCheck, WentPhoto
+from .models import OwnEvent, PhotoCheck, WentPhoto
 
 MAX_BYTES = 3_000_000  # after the browser shrinks it; about 200 KB is usual
 UPLOADS_PER_DAY = 10
@@ -123,9 +125,12 @@ def store():
 
 # ---- signed links ---------------------------------------------------------------------------
 
-def _sig(photo_id: int, exp: int) -> str:
-    key = hashlib.sha256(b"went-photo-link:" + get_settings().jwt_secret.encode()).digest()
+def _sig(photo_id: int, exp: int, kind: bytes = b"went-photo-link:") -> str:
+    key = hashlib.sha256(kind + get_settings().jwt_secret.encode()).digest()
     return hmac.new(key, f"{photo_id}:{exp}".encode(), hashlib.sha256).hexdigest()[:32]
+
+
+OWN = b"own-event-photo-link:"  # CC-248: its own key, so a went-photo link can't open an own event's photo
 
 
 def link(photo: WentPhoto, api_base: str = "") -> str:
@@ -138,6 +143,16 @@ def link_ok(photo_id: int, exp: int, sig: str) -> bool:
     return exp >= time.time() and hmac.compare_digest(sig, _sig(photo_id, exp))
 
 
+def own_link(own: OwnEvent, api_base: str = "") -> str:
+    """CC-248: the same kind of link, for an own event's photo."""
+    exp = int(time.time()) + LINK_MINUTES * 60
+    return f"{api_base}/photos/own/{own.id}?exp={exp}&sig={_sig(own.id, exp, OWN)}"
+
+
+def own_link_ok(own_id: int, exp: int, sig: str) -> bool:
+    return exp >= time.time() and hmac.compare_digest(sig, _sig(own_id, exp, OWN))
+
+
 # ---- saving and removing --------------------------------------------------------------------
 
 def uploads_today(db, user_id) -> int:
@@ -146,17 +161,26 @@ def uploads_today(db, user_id) -> int:
                                                                        PhotoCheck.checked_at >= since)) or 0
 
 
-def save(db, user_id, event_id: int, data: bytes, content_type: str) -> WentPhoto:
-    """Check, store and record a member's photo for an event they've been to. Raises Refused. Doesn't commit."""
+def _checked(db, user_id, data: bytes) -> tuple[list[dict], bool]:
+    """Rekognition's labels and whether to blur. Raises Refused. Every upload counts toward the daily limit and the cost."""
     labels = moderation_labels(data)
-    check = PhotoCheck(user_id=user_id, outcome="stored")  # every upload counts toward the daily limit and the cost
+    check = PhotoCheck(user_id=user_id, outcome="stored")
     db.add(check)
     try:
-        blurred = judge(labels)
+        return labels, judge(labels)
     except Refused:
         check.outcome = "refused"  # the photo itself is never stored
         raise
-    key = f"photos/{uuid.uuid4().hex}.{'webp' if content_type == 'image/webp' else 'jpg'}"
+
+
+def _new_key(content_type: str) -> str:
+    return f"photos/{uuid.uuid4().hex}.{'webp' if content_type == 'image/webp' else 'jpg'}"
+
+
+def save(db, user_id, event_id: int, data: bytes, content_type: str) -> WentPhoto:
+    """Check, store and record a member's photo for an event they've been to. Raises Refused. Doesn't commit."""
+    labels, blurred = _checked(db, user_id, data)
+    key = _new_key(content_type)
     store().put(key, data, content_type)
     old = db.scalar(select(WentPhoto).where(WentPhoto.user_id == user_id, WentPhoto.event_id == event_id))
     if old is not None:
@@ -167,6 +191,26 @@ def save(db, user_id, event_id: int, data: bytes, content_type: str) -> WentPhot
                       status="waiting", blurred=blurred, labels=labels)
     db.add(photo)
     return photo
+
+
+def save_own(db, own: OwnEvent, data: bytes, content_type: str) -> None:
+    """CC-248: check and store the photo for a member's own event, replacing any it had. Raises Refused.
+    No approver, so blurring doesn't apply. Doesn't commit."""
+    _checked(db, own.user_id, data)
+    key = _new_key(content_type)
+    store().put(key, data, content_type)
+    remove_own(own)
+    own.photo_key, own.photo_type, own.photo_at = key, content_type, datetime.now(UTC)
+
+
+def remove_own(own: OwnEvent) -> None:
+    """CC-248: delete an own event's photo from storage, if it has one. Doesn't commit."""
+    if own.photo_key:
+        try:
+            store().delete(own.photo_key)
+        except Exception:  # noqa: BLE001 - the sweep gets it next time
+            pass
+    own.photo_key, own.photo_type, own.photo_at = None, "", None
 
 
 def remove(db, photos) -> None:
@@ -181,7 +225,7 @@ def remove(db, photos) -> None:
 
 def sweep(db, older_than_minutes: int = 60) -> int:
     """Remove stored photos the database doesn't know (their mark, event or account is gone). Returns how many."""
-    known = set(db.scalars(select(WentPhoto.key)))
+    known = set(db.scalars(select(WentPhoto.key))) | set(db.scalars(select(OwnEvent.photo_key)))  # CC-248
     cutoff = datetime.now(UTC) - timedelta(minutes=older_than_minutes)  # not one being saved right now
     gone = [key for key, at in store().keys() if key not in known and at < cutoff]
     for key in gone:

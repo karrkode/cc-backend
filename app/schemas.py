@@ -905,11 +905,90 @@ class JournalIn(BaseModel):
     @field_validator("words")
     @classmethod
     def _three_words(cls, v: str) -> str:
-        if len(v.split()) != 3:
-            raise ValueError("Give three words")
-        if any(len(w) > 20 for w in v.split()):
-            raise ValueError("Keep each word to 20 characters")
-        return " ".join(v.split())
+        return three_words(v)
+
+
+def three_words(v: str) -> str:
+    """CC-98: exactly three words, each up to 20 characters, single-spaced."""
+    if len(v.split()) != 3:
+        raise ValueError("Give three words")
+    if any(len(w) > 20 for w in v.split()):
+        raise ValueError("Keep each word to 20 characters")
+    return " ".join(v.split())
+
+
+def _one_line(v: str) -> str:
+    return " ".join(v.split())
+
+
+class OwnCategoryIn(BaseModel):
+    """CC-248: one of your own journal categories, private to you."""
+    name: Annotated[str, AfterValidator(_one_line)] = Field(max_length=30)
+
+    @field_validator("name")
+    @classmethod
+    def _named(cls, v: str) -> str:
+        if not v:
+            raise ValueError("Give it a name")
+        return v
+
+
+class OwnCategoryOut(ORM):
+    id: int
+    name: str
+    events: int = 0  # CC-248: how many of your events are in it (set per request), for "delete it?"
+
+
+class OwnEventIn(BaseModel):
+    """CC-248: an event you add to your own journal because it isn't in the catalog. Title and date are needed;
+    the rest can wait. A category is one of the catalog's three (category) or one of your own (category_id)."""
+    title: Annotated[str, AfterValidator(_one_line)] = Field(max_length=120)
+    date: date_
+    venue: Annotated[str, AfterValidator(_one_line)] = Field(default="", max_length=120)
+    category: Category | None = None
+    category_id: int | None = None
+    words: str = Field(default="", max_length=62)  # three words, or none yet
+    review: str = Field(default="", max_length=1000)
+    recommend: bool = False
+
+    @field_validator("words", "review")
+    @classmethod
+    def _trimmed(cls, v: str) -> str:
+        return v.strip()
+
+    @field_validator("words")
+    @classmethod
+    def _three_or_none(cls, v: str) -> str:
+        return three_words(v) if v else ""
+
+    @field_validator("title")
+    @classmethod
+    def _titled(cls, v: str) -> str:
+        if not v:
+            raise ValueError("Give it a title")
+        return v
+
+    @model_validator(mode="after")
+    def _one_category(self):
+        if self.category and self.category_id is not None:
+            raise ValueError("Choose one category")
+        return self
+
+
+class OwnEventOut(ORM):
+    """CC-248: your own journal event (only ever sent to you). photo_url: a link that works for 15 minutes."""
+    id: int
+    title: str
+    date: date_ = Field(validation_alias="on_date")
+    venue: str
+    category: str | None = None
+    category_id: int | None = None
+    category_name: str = ""  # your own category's name, or the catalog one
+    words: str
+    review: str
+    recommend: bool
+    photo_url: str = ""
+    created_at: datetime
 
 
 class JournalOut(ORM):
