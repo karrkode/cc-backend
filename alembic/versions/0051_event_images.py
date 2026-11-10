@@ -1,15 +1,15 @@
 """an event's photo: its key in the event-images bucket and where it came from (CC-250)
 
-Revision ID: 0050
-Revises: 0049
+Revision ID: 0051
+Revises: 0050
 Create Date: 2026-11-10 14:00:00.000000
 """
 from alembic import op
 import sqlalchemy as sa
 
 
-revision = '0050'
-down_revision = '0049'
+revision = '0051'
+down_revision = '0050'
 branch_labels = None
 depends_on = None
 
