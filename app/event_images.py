@@ -7,8 +7,8 @@
 - Public: the event-images bucket (infra/aws/event_images.tf) is served by the site's CloudFront at /event-images/*.
   Keys carry a hash of the bytes, so a new photo gets a new address and browsers can cache each one for a year.
 - Locally the photos go in a folder (event_image_dir) that docker-compose.yml serves on :4173 at the same path.
-- The first photos came from a one-off search (scripts.event_images). Event sourcing will store new ones through
-  store_photo(), which fills image_key and image_source_url the same way.
+- The first photos came from a one-off search (scripts.event_images). CC-246: event sourcing stores new ones
+  (app/discovery/pictures.py) through store_photo(), which fills image_key and image_source_url the same way.
 """
 import hashlib
 import io
@@ -19,6 +19,8 @@ from .config import get_settings
 MAX_SIDE = 1200  # the widest catalog card is about 450 CSS pixels; this covers 2x screens and the poster
 QUALITY = 80
 MAX_INPUT_BYTES = 25_000_000  # the largest of the first batch is under 6 MB
+# CC-246: a picture is read before its pixels are, so a small file that unpacks into a huge image is refused (CC-197)
+MAX_PIXELS = 50_000_000
 PREFIX = "event-images"  # the CloudFront path, and the bucket's served prefix
 ORIGINALS = "originals"  # never routed by CloudFront
 
@@ -35,7 +37,11 @@ def normalise(data: bytes) -> bytes:
         raise BadImage("too large")
     try:
         im = Image.open(io.BytesIO(data))
+        if im.width * im.height > MAX_PIXELS:
+            raise BadImage("too many pixels")
         im.load()
+    except BadImage:
+        raise
     except Exception as err:  # Pillow raises several kinds for unreadable files
         raise BadImage(str(err)) from err
     im = ImageOps.exif_transpose(im)
@@ -112,10 +118,11 @@ def store():
         else LocalStore(s.event_image_dir)
 
 
-def save(event_id: int, data: bytes, ext: str, to=None) -> str:
-    """Store the original and its WebP; returns the served key. Uploading the same bytes again is a no-op."""
+def save(event_id: int, data: bytes, ext: str, to=None, webp: bytes | None = None) -> str:
+    """Store the original and its WebP (made here unless given); returns the served key. Uploading the same bytes
+    again is a no-op."""
     to = to or store()
-    webp = normalise(data)
+    webp = webp or normalise(data)
     key = key_for(event_id, webp)
     if not to.exists(key):
         to.put(original_key_for(event_id, data, ext), data, "application/octet-stream")
@@ -123,8 +130,8 @@ def save(event_id: int, data: bytes, ext: str, to=None) -> str:
     return key
 
 
-def store_photo(event, data: bytes, ext: str, source_url: str = "", to=None) -> str:
-    """Give an event its photo (the caller commits). For sourcing, and for the one-off import's local run."""
-    event.image_key = save(event.id, data, ext, to)
+def store_photo(event, data: bytes, ext: str, source_url: str = "", to=None, webp: bytes | None = None) -> str:
+    """Give an event its photo (the caller commits). For sourcing (CC-246), and for the one-off import's local run."""
+    event.image_key = save(event.id, data, ext, to, webp)
     event.image_source_url = source_url or ""
     return event.image_key

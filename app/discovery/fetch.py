@@ -246,12 +246,8 @@ def _read(r, max_bytes: int, deadline: float | None) -> bytes:
             raise FetchError(f"page is larger than {max_bytes / 1_000_000:g} MB")
 
 
-def fetch(url: str, etag: str = "", last_modified: str = "", ai: bool = True, timeout: float = TIMEOUT,
-          deadline: float | None = None, max_bytes: int = MAX_BYTES, wait: bool = True) -> Page:
-    """Get a page, or a 304 when it hasn't changed. ai=True means its text will go to Claude, so an
-    AI opt-out in robots.txt counts as a refusal. CC-182: deadline (a time.monotonic() value) bounds the whole
-    download, not just each read; wait=False skips the gap between requests to one site, for a single page a
-    member is waiting on."""
+def _polite(url: str, ai: bool, timeout: float, wait: bool) -> None:
+    """robots.txt (and, when ai, its AI opt-out), then the gap between requests to one site."""
     parts = urlsplit(url)
     if parts.scheme not in ("http", "https"):
         raise Blocked(f"not a web address: {url}")
@@ -264,6 +260,24 @@ def fetch(url: str, etag: str = "", last_modified: str = "", ai: bool = True, ti
     pause = _last_hit.get(parts.netloc, 0) + gap - time.monotonic()
     if wait and pause > 0:
         time.sleep(pause)
+
+
+def _refused(e: urllib.error.HTTPError) -> Exception:
+    if e.code in (401, 403, 451):
+        return Blocked(f"the site refused the request (HTTP {e.code})")
+    if e.code == 404:
+        return FetchError("page not found (HTTP 404): the address may have changed")
+    return FetchError(f"HTTP {e.code}")
+
+
+def fetch(url: str, etag: str = "", last_modified: str = "", ai: bool = True, timeout: float = TIMEOUT,
+          deadline: float | None = None, max_bytes: int = MAX_BYTES, wait: bool = True) -> Page:
+    """Get a page, or a 304 when it hasn't changed. ai=True means its text will go to Claude, so an
+    AI opt-out in robots.txt counts as a refusal. CC-182: deadline (a time.monotonic() value) bounds the whole
+    download, not just each read; wait=False skips the gap between requests to one site, for a single page a
+    member is waiting on."""
+    parts = urlsplit(url)
+    _polite(url, ai, timeout, wait)
     headers = {}
     if etag:
         headers["If-None-Match"] = etag
@@ -278,11 +292,31 @@ def fetch(url: str, etag: str = "", last_modified: str = "", ai: bool = True, ti
     except urllib.error.HTTPError as e:
         if e.code == 304:
             return Page(url=url, status=304, etag=etag, last_modified=last_modified)
-        if e.code in (401, 403, 451):
-            raise Blocked(f"the site refused the request (HTTP {e.code})") from e
-        if e.code == 404:
-            raise FetchError("page not found (HTTP 404): the address may have changed") from e
-        raise FetchError(f"HTTP {e.code}") from e
+        raise _refused(e) from e
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        raise FetchError(f"couldn't reach {parts.netloc}: {e}") from e
+    finally:
+        _last_hit[parts.netloc] = time.monotonic()
+
+
+@dataclass
+class File:
+    url: str
+    data: bytes
+    content_type: str
+
+
+def fetch_file(url: str, accept: str, max_bytes: int, timeout: float = TIMEOUT) -> File:
+    """CC-246: a file (an event's picture) by the same rules as a page: public hosts only, robots.txt, the gap, a
+    size cap and a deadline. Nothing fetched this way goes to Claude, so an AI opt-out doesn't apply."""
+    parts = urlsplit(url)
+    _polite(url, False, timeout, True)
+    try:
+        with _open(url, {"Accept": accept}, timeout) as r:
+            data = _read(r, max_bytes, time.monotonic() + timeout * 2)
+            return File(url=r.geturl(), data=data, content_type=r.headers.get("Content-Type", ""))
+    except urllib.error.HTTPError as e:
+        raise _refused(e) from e
     except (urllib.error.URLError, TimeoutError, OSError) as e:
         raise FetchError(f"couldn't reach {parts.netloc}: {e}") from e
     finally:

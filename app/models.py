@@ -336,6 +336,10 @@ class Event(Base):
     # so sourcing can tell which events still need one and an admin can check where it came from.
     image_key: Mapped[str | None] = mapped_column(String(200))
     image_source_url: Mapped[str] = mapped_column(Text, default="", server_default="")
+    # CC-246: sourcing's looks for its picture (app/discovery/pictures.py): how many, and when the last one was. Events
+    # from before CC-246 start at the most, since CC-250's search already looked for theirs.
+    picture_tries: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    picture_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(),
                                                  onupdate=func.now())
@@ -363,6 +367,11 @@ class Event(Base):
         """CC-250: the photo's address on the site, or None for the category water."""
         from .event_images import url_for  # here, so models stay free of storage code at import time
         return url_for(self.image_key)
+
+    @property
+    def image_credit_url(self) -> str | None:
+        """CC-246: the page the photo came from, credited on the event page; None without a photo or a page."""
+        return self.image_source_url or None if self.image_key else None
 
     # CC-66: set per request by app.picks.attach_picks (not stored); the owner's public pick, if any.
     pick = None

@@ -13,6 +13,8 @@ Reading as little as possible (agreed with the product owner):
 - CC-221: every venue with a website gets a source (venuesources.py), a few first reads a day
 - CC-88: a found event missing a date or show days has its own page read the day after it's found,
   then weekly for 4 weeks (needs.py); these come first within the 10 event pages per run
+- CC-246: newly approved events get their picture from their own page (pictures.py). That costs no tokens, so it runs
+  whatever the budget says
 - CC-198: a failed read's tokens count toward the budget, and a source whose reads keep failing waits longer each time
   (1, 2, 4, 8... days, up to 60). Check now still runs it. A page that can't be fetched costs nothing, so that's tomorrow.
 """
@@ -29,6 +31,7 @@ from .budget import alert_if_short, best_first, budget_state
 from .hours import apply_open_hours, apply_show_times, link_venue
 from .jsonld import complete, events_in
 from .needs import look_again, needs
+from .pictures import add_pictures
 from .pagetext import page_text, text_hash
 from .readers import ReadFailed, read_aic, read_page
 from .rules import apply_rules, norm_title
@@ -285,5 +288,7 @@ def run(db, client, today: date, only: int | None = None, force: bool = False) -
                 log(db, source, out, what="detail")
                 db.commit()
                 results.append((source.name + " (event page)", out))
+        for name, status, note in add_pictures(db):  # CC-246
+            results.append((name + " (picture)", Outcome(status=status, notes=[note])))
     alert_if_short(db)
     return results
