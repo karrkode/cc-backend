@@ -10,7 +10,7 @@ from .deps import DB
 from .db import SessionLocal, engine
 from .fromlink import warm_reader
 from .health import Recorder, RequestRecorder
-from .routers import admin, approvals, auth, crews, discovery, events, issues, me, photos, seo, traffic, venues
+from .routers import admin, approvals, auth, crews, discovery, events, issues, journal, me, photos, seo, traffic, venues
 
 settings = get_settings()
 
@@ -44,7 +44,7 @@ app.add_middleware(
 )
 app.add_middleware(RequestRecorder)  # CC-244: added last, so it's outermost and sees what the client got
 
-for r in (auth.router, events.router, venues.router, me.router, admin.router, traffic.router, discovery.router, crews.router, issues.router, photos.router, approvals.router, seo.router):
+for r in (auth.router, events.router, venues.router, me.router, journal.router, admin.router, traffic.router, discovery.router, crews.router, issues.router, photos.router, approvals.router, seo.router):
     app.include_router(r)
 
 

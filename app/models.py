@@ -445,6 +445,41 @@ class PhotoCheck(Base):
     checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 
 
+class JournalCategory(Base):
+    """CC-248: a category a member made for their own journal events. Private to them; the catalog keeps its three."""
+    __tablename__ = "journal_categories"
+    __table_args__ = (UniqueConstraint("user_id", "name", name="uq_journal_categories_name"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(30))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class OwnEvent(Base):
+    """CC-248: an event a member added to their own Cultural Journal because it isn't in the catalog. Private to
+    them: never shared, never on a public page, never shown to crews. A catalog category or one of their own (or
+    neither). Its photo is checked by Rekognition but has no approver, since only its member ever sees it."""
+    __tablename__ = "own_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    title: Mapped[str] = mapped_column(String(120))
+    on_date: Mapped[date] = mapped_column(Date)
+    venue: Mapped[str] = mapped_column(String(120), default="", server_default="")
+    category: Mapped[str | None] = mapped_column(String(40))  # one of app.categories.CATEGORIES
+    category_id: Mapped[int | None] = mapped_column(ForeignKey("journal_categories.id", ondelete="SET NULL"), index=True)
+    words: Mapped[str] = mapped_column(String(62), default="", server_default="")
+    review: Mapped[str] = mapped_column(String(1000), default="", server_default="")
+    recommend: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    photo_key: Mapped[str | None] = mapped_column(String(200), unique=True)  # where it's stored, as WentPhoto.key
+    photo_type: Mapped[str] = mapped_column(String(40), default="", server_default="")
+    photo_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    own_category: Mapped[JournalCategory | None] = relationship(lazy="joined")
+
+
 class Plan(Base):
     """A user's own plan for an event (CC-53): interested, or going on a date. Private to them unless
     they share it with crews they're in (PlanShare, CC-75)."""
