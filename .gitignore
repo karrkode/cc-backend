@@ -10,3 +10,4 @@ __pycache__/
 *.tfstate.*
 *.tfplan
 terraform.tfvars
+.event-images/

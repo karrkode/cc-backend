@@ -331,6 +331,11 @@ class Event(Base):
     # CC-133: set when removing Comedy and Educational withdrew it (its category, or its venue's name), for the
     # admin's review; cleared when an admin brings it back
     withdrawn_reason: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    # CC-250: the event's photo, a WebP in the event-images bucket served by the site's CloudFront at /<key>
+    # (app/event_images.py). NULL shows the category water. image_source_url is the page or file it came from,
+    # so sourcing can tell which events still need one and an admin can check where it came from.
+    image_key: Mapped[str | None] = mapped_column(String(200))
+    image_source_url: Mapped[str] = mapped_column(Text, default="", server_default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(),
                                                  onupdate=func.now())
@@ -352,6 +357,12 @@ class Event(Base):
         if self.credit_me and self.submitter is not None and self.submitter.display_name.strip():
             return self.submitter.display_name.strip()
         return None
+
+    @property
+    def image_url(self) -> str | None:
+        """CC-250: the photo's address on the site, or None for the category water."""
+        from .event_images import url_for  # here, so models stay free of storage code at import time
+        return url_for(self.image_key)
 
     # CC-66: set per request by app.picks.attach_picks (not stored); the owner's public pick, if any.
     pick = None

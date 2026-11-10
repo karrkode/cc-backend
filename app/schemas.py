@@ -406,7 +406,8 @@ class EventOut(ORM):
     min_price: float | None  # a JSON number for the page; stored exactly as NUMERIC
     category: str
     opera: bool = False  # CC-125: an opera (category Music), also listed under Theater and labelled "Opera"
-    url: str
+    url: str  # the venue or ticket page
+    image_url: str | None = None  # CC-250: the event's photo on the site; null shows the category water
     status: EventStatus
     publish_at: datetime | None  # set while an approved event is scheduled for later
     # "Suggested by …": the submitter's display name if they opted in for this event, else null.

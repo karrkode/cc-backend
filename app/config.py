@@ -56,6 +56,12 @@ class Settings(BaseSettings):
     photo_region: str = "us-east-2"  # the bucket's region, and Rekognition's
     photo_dir: str = "/tmp/culture-crew-photos"  # local storage
     photo_checker: str = ""  # "" works it out (photo_moderation): rekognition | none
+    # CC-250: event photos. Public through the site's CloudFront at /event-images/* (infra/aws/event_images.tf), so
+    # the API gives the site_url address. Locally a folder the web container serves at the same path.
+    event_image_backend: str = ""  # "" works it out (event_image_storage): s3 | local
+    event_image_bucket: str = "chiculturecrew-event-images"
+    event_image_region: str = "us-east-2"
+    event_image_dir: str = ".event-images"  # local storage; docker-compose.yml serves it on :4173
 
     # CC-124: Claude reads a member's link when the page has no event data. In production the key is read from
     # Parameter Store (the discovery key); locally it's off unless ANTHROPIC_API_KEY is set, as real reads cost money.
@@ -112,6 +118,10 @@ class Settings(BaseSettings):
     @property
     def photo_storage(self) -> str:  # CC-76: "s3" in production, a local folder otherwise
         return self.photo_backend or ("s3" if self.env == "prod" else "local")
+
+    @property
+    def event_image_storage(self) -> str:  # CC-250: "s3" in production, a local folder otherwise
+        return self.event_image_backend or ("s3" if self.env == "prod" else "local")
 
     @property
     def photo_moderation(self) -> str:  # CC-76: Amazon Rekognition in production; locally nothing is checked

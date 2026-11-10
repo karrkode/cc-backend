@@ -216,6 +216,7 @@ app/routers/         auth, events, venues, me, admin, traffic, discovery (source
                      issues (CC-84), photos (signed links, CC-76), approvals (approvers and the photo queue, CC-91)
 app/crewplans.py     plans shared with crews, and who's been (CC-75, CC-93)
 app/photos.py        "I've been" photos: Rekognition checks, private storage, signed links, the hourly sweep (CC-76)
+app/event_images.py  event photos: normalised to WebP, stored in the event-images bucket, served at /event-images/* (CC-250)
 alembic/             migrations
 app/seeding.py       loads seed/events.json into a database (local development and tests)
 scripts/seed.py      import seed/events.json
@@ -225,6 +226,8 @@ scripts/dolphins.py  turn the plan dolphins on for an account (CC-61)
 scripts/discover.py  check event sources that are due (CC-70; hourly on the server), then sweep away photos left behind (CC-76)
 scripts/recap.py     the weekly discovery recap email (CC-77; Tuesdays 10 AM; --print to preview)
 scripts/fill_venue_hours.py  fill venue hours and show times from what discovery found (CC-78)
+scripts/event_images.py  the first event photos (CC-250): upload (make and store them, write the manifest), then apply
+seed/event_images_cc250.json  that manifest: event ids, photo keys and where each came from
 app/discovery/       event discovery: polite fetching, page text, readers (Art Institute API, Claude Haiku 5.5), rules, holding list and skip rules,
                      what a found event still needs (needs.py: a date, show days; CC-88)
 scripts/dev_users.py the local test accounts (ENV=local only)

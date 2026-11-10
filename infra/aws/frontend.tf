@@ -132,6 +132,12 @@ resource "aws_cloudfront_distribution" "site" {
   }
 
   origin {
+    origin_id                = "event-images" # CC-250: event_images.tf
+    domain_name              = aws_s3_bucket.event_images.bucket_regional_domain_name
+    origin_access_control_id = aws_cloudfront_origin_access_control.site.id
+  }
+
+  origin {
     origin_id   = "api"
     domain_name = var.api_domain
     custom_origin_config {
@@ -158,6 +164,23 @@ resource "aws_cloudfront_distribution" "site" {
         event_type   = "viewer-request"
         function_arn = aws_cloudfront_function.canonical_host.arn
       }
+    }
+  }
+
+  # CC-250: event photos. Their keys change with their bytes, so they're cached as long as CloudFront allows.
+  ordered_cache_behavior {
+    path_pattern               = "/event-images/*"
+    target_origin_id           = "event-images"
+    viewer_protocol_policy     = "redirect-to-https"
+    allowed_methods            = ["GET", "HEAD"]
+    cached_methods             = ["GET", "HEAD"]
+    compress                   = false # WebP is already compressed
+    cache_policy_id            = local.cache_policy_caching_optimized
+    response_headers_policy_id = local.response_policy_security_headers
+
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.canonical_host.arn
     }
   }
 

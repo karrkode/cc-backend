@@ -56,6 +56,8 @@ services:
     volumes:
       - ${FRONTEND_DIR:-../cc-site/public}:/usr/share/nginx/html:ro
       - ./web.nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      # CC-250: event photos, stored locally by app/event_images.py, at the path CloudFront serves them on
+      - ${EVENT_IMAGE_DIR:-./.event-images}:/usr/share/nginx/photos:ro
 
 volumes:
   pgdata:
