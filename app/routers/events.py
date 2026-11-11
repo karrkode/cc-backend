@@ -2,7 +2,7 @@ from datetime import UTC, date
 from decimal import Decimal
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Response, status
 from sqlalchemy import and_, case, func, or_, select, true
 
 from ..areas import nearby_area, region_of
@@ -179,6 +179,20 @@ def get_event(event_id: int, db: DB, user: OptionalUser):
     if event is None or not visible_to(event, user):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Event not found")
     return attach_takes(db, attach_crew_plans(db, attach_picks(db, [event]), user)[0], user)  # CC-112
+
+
+@router.get("/{event_id}/calendar.ics", response_class=Response,
+            responses={200: {"content": {"text/calendar": {}}}})
+def event_calendar_file(event_id: int, db: DB, user: OptionalUser, on: Annotated[date, Query(alias="date")]):
+    """CC-170: "Add to calendar": the event on that day, as a calendar file. It takes the day rather than reading
+    your plan, so it holds nothing private and a plain link (no sign-in header) can fetch it."""
+    from .. import icsfile  # here: icsfile reads times through app.roundups, which imports this module
+    event = db.get(Event, event_id)
+    if event is None or not visible_to(event, user):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Event not found")
+    return Response(icsfile.build(event, on), media_type="text/calendar; charset=utf-8",
+                    headers={"Content-Disposition": f'inline; filename="{icsfile.filename(event)}"',
+                             "Cache-Control": "no-store"})
 
 
 @router.post("", response_model=EventOut, status_code=status.HTTP_201_CREATED)
