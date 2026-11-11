@@ -9,7 +9,7 @@ from fastapi import HTTPException, status
 from starlette.responses import JSONResponse
 
 MAX_BYTES = 1_000_000
-PHOTO_UPLOAD = re.compile(r"/me/(attended|own-events)/\d+/photo")  # CC-248: own events' photos too
+PHOTO_UPLOAD = re.compile(r"(?:/me/(?:attended|own-events)/\d+/photo|/events/\d+/image)")  # CC-265: admin image upload too
 TOO_BIG = "That's too much to send in one go."
 CLOSE = {"Connection": "close"}  # the rest of the body isn't wanted: don't wait for it
 

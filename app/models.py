@@ -336,6 +336,8 @@ class Event(Base):
     # so sourcing can tell which events still need one and an admin can check where it came from.
     image_key: Mapped[str | None] = mapped_column(String(200))
     image_source_url: Mapped[str] = mapped_column(Text, default="", server_default="")
+    # CC-265: a manual removal or replacement must not be overwritten by automatic sourcing.
+    image_override: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     # CC-246: sourcing's looks for its picture (app/discovery/pictures.py): how many, and when the last one was. Events
     # from before CC-246 start at the most, since CC-250's search already looked for theirs.
     picture_tries: Mapped[int] = mapped_column(Integer, default=0, server_default="0")

@@ -55,6 +55,13 @@ def test_seed_is_repeatable(Session, db, monkeypatch, tmp_path):
     assert hamlet.title == "Hamlet (extended)" and hamlet.status == EventStatus.approved
 
 
+def test_migrations_have_one_head():
+    """CC-265: two stories that both took the next number leave two heads, and `alembic upgrade head` then fails
+    when the container starts. This needs no database, so it runs on SQLite too."""
+    from alembic.script import ScriptDirectory
+    assert len(ScriptDirectory.from_config(Config("alembic.ini")).get_heads()) == 1
+
+
 @pytest.mark.skipif(not IS_POSTGRES, reason="migrations target Postgres; set TEST_DATABASE_URL to run")
 def test_migrations_match_models(engine):
     with engine.begin() as conn:  # start from an empty database
