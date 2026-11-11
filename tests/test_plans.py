@@ -5,6 +5,8 @@ from sqlalchemy import func, select
 
 from app.models import EventStatus, Plan
 
+from app.stats import today_in_chicago
+
 from .conftest import auth, register
 
 T = date.today()
@@ -144,3 +146,23 @@ def test_catalog_filter_by_my_plans(client, user_token, make_event):
     assert titles(other, mine="interested") == ([], 0)  # only your own plans, never someone else's
     assert client.get("/events", params={"mine": "interested"}).status_code == 401
     assert client.get("/events", params={"mine": "maybe"}, headers=auth(user_token)).status_code == 422
+
+
+def test_cc264_going_keeps_the_show_time(client, user_token, make_event):
+    ev = make_event("Hamlet")
+    day = (today_in_chicago() + timedelta(days=3)).isoformat()
+    r = put(client, user_token, ev.id, status="going", date=day, time="16:00")
+    assert r.status_code == 201 and (r.json()["date"], r.json()["time"]) == (day, "16:00")
+    assert client.get("/me/plans", headers=auth(user_token)).json()[0]["time"] == "16:00"
+    r = put(client, user_token, ev.id, status="going", date=day)  # a day with no listed time: none kept
+    assert r.json()["time"] is None
+    put(client, user_token, ev.id, status="going", date=day, time="11:00")
+    assert put(client, user_token, ev.id, status="interested").json()["time"] is None  # no longer going, no show
+
+
+def test_cc264_time_rules(client, user_token, make_event):
+    ev = make_event("Hamlet")
+    day = (today_in_chicago() + timedelta(days=3)).isoformat()
+    assert put(client, user_token, ev.id, status="interested", time="16:00").status_code == 422
+    for bad in ("4 PM", "24:00", "16:60", "1600", ""):
+        assert put(client, user_token, ev.id, status="going", date=day, time=bad).status_code == 422, bad

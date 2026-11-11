@@ -32,15 +32,15 @@ def attach_picks(db, events):
     events = [e for e in events if e is not None]
     if not events:
         return events
-    rows = db.execute(select(Plan.event_id, Plan.status, Plan.going_on, User.display_name)
+    rows = db.execute(select(Plan.event_id, Plan.status, Plan.going_on, Plan.going_at, User.display_name)
                       .join(User, User.id == Plan.user_id)
                       .where(User.dolphins, Plan.event_id.in_({e.id for e in events}))).all()
     best: dict[int, dict] = {}
-    for event_id, status, going_on, name in rows:
+    for event_id, status, going_on, going_at, name in rows:
         cur = best.get(event_id)
-        rank = (0 if status == PlanStatus.going else 1, going_on or date.max)
+        rank = (0 if status == PlanStatus.going else 1, going_on or date.max, going_at or "")
         if cur is None or rank < cur["_rank"]:
-            best[event_id] = {"status": status, "date": going_on, "by": (name or "").strip(), "_rank": rank}
+            best[event_id] = {"status": status, "date": going_on, "time": going_at, "by": (name or "").strip(), "_rank": rank}
     for e in events:
         p = best.get(e.id)
         e.pick = None if p is None else {k: v for k, v in p.items() if k != "_rank"}

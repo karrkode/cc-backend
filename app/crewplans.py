@@ -82,8 +82,8 @@ def _been_rows(db, crew_ids: set[int], event_ids: set[int] | None = None):
 
 
 def _shared_rows(db, crew_ids: set[int], event_ids: set[int] | None = None):
-    """(event id, crew id, crew name, user, status, going on) for plans shared with these crews."""
-    q = (select(PlanShare.event_id, Crew.id, Crew.name, User, Plan.status, Plan.going_on)
+    """(event id, crew id, crew name, user, status, going on, going at) for plans shared with these crews."""
+    q = (select(PlanShare.event_id, Crew.id, Crew.name, User, Plan.status, Plan.going_on, Plan.going_at)
          .join(Crew, Crew.id == PlanShare.crew_id)
          .join(Plan, (Plan.user_id == PlanShare.user_id) & (Plan.event_id == PlanShare.event_id))
          .join(User, User.id == PlanShare.user_id)
@@ -109,7 +109,7 @@ def attach_crew_plans(db, events, user: User | None):
 
     def entry_for(event_id, crew_id, crew_name):
         return by_event[event_id].setdefault(crew_id, {"crew_id": crew_id, "crew_name": crew_name, "going": [], "interested": [], "been": []})
-    for event_id, crew_id, crew_name, who, status, going_on in _shared_rows(db, crews, ids):
+    for event_id, crew_id, crew_name, who, status, _on, _at in _shared_rows(db, crews, ids):
         if who.id == user.id:
             continue
         entry_for(event_id, crew_id, crew_name)["going" if status == PlanStatus.going else "interested"].append(name_of(who))
@@ -147,11 +147,11 @@ def crew_board(db, crew_ids: set[int], viewer: User, today: date) -> dict[int, l
     ends = dict(db.execute(select(Event.id, Event.end_date).where(live_condition(), (Event.end_date.is_(None)) | (Event.end_date >= since))).all())
     live = {i for i, end in ends.items() if end is None or end >= today}
     boards: dict[int, dict[int, dict]] = defaultdict(dict)
-    for event_id, crew_id, _name, who, status, going_on in _shared_rows(db, crew_ids):
+    for event_id, crew_id, _name, who, status, going_on, going_at in _shared_rows(db, crew_ids):
         if event_id not in live or (status == PlanStatus.going and going_on and going_on < today):
             continue
         entry = boards[crew_id].setdefault(event_id, {"event_id": event_id, "people": [], "been": []})
-        entry["people"].append({"name": name_of(who), "status": status, "date": going_on, "you": who.id == viewer.id})
+        entry["people"].append({"name": name_of(who), "status": status, "date": going_on, "time": going_at, "you": who.id == viewer.id})
     for event_id, crew_id, who, photo in _been_rows(db, crew_ids):
         if event_id not in ends or who.id == viewer.id:
             continue

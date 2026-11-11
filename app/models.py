@@ -506,6 +506,7 @@ class Plan(Base):
     __tablename__ = "plans"
     __table_args__ = (
         CheckConstraint("(status = 'going') = (going_on IS NOT NULL)", name="ck_plans_going_has_a_date"),
+        CheckConstraint("going_at IS NULL OR status = 'going'", name="ck_plans_time_only_when_going"),
         Index("ix_plans_user_status", "user_id", "status"),
     )
 
@@ -513,6 +514,7 @@ class Plan(Base):
     event_id: Mapped[int] = mapped_column(ForeignKey("events.id", ondelete="CASCADE"), primary_key=True)
     status: Mapped[PlanStatus] = mapped_column(_enum(PlanStatus, "plan_status"))
     going_on: Mapped[date | None] = mapped_column(Date)
+    going_at: Mapped[str | None] = mapped_column(String(5))  # CC-264: the show's start time that day, 24-hour HH:MM
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(),
                                                  onupdate=func.now())

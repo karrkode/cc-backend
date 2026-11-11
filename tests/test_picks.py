@@ -4,6 +4,7 @@ from datetime import date, timedelta
 from sqlalchemy import select
 
 from app.models import User
+from app.stats import today_in_chicago
 
 from .conftest import auth, register
 
@@ -36,8 +37,8 @@ def test_owner_plans_show_to_everyone_and_members_plans_dont(client, db, user_to
     plan(client, me, b, "going", T + timedelta(days=3))
     plan(client, user_token, c, "going", T + timedelta(days=1))  # a regular member: private
     got = picks_by_title(client)  # signed out
-    assert got["Alpha"] == {"status": "interested", "date": None, "by": "Andrew"}
-    assert got["Bravo"] == {"status": "going", "date": (T + timedelta(days=3)).isoformat(), "by": "Andrew"}
+    assert got["Alpha"] == {"status": "interested", "date": None, "time": None, "by": "Andrew"}
+    assert got["Bravo"] == {"status": "going", "date": (T + timedelta(days=3)).isoformat(), "time": None, "by": "Andrew"}
     assert got["Charlie"] is None
     assert client.get(f"/events/{b.id}").json()["pick"]["status"] == "going"
     assert client.get("/events/lookup", params={"ids": str(a.id)}).json()[0]["pick"]["status"] == "interested"
@@ -50,7 +51,7 @@ def test_going_beats_interested_across_owner_accounts(client, db, make_event):
     one, two = owner(client, db), owner(client, db, email="info@example.com", name="Culture Crew")
     plan(client, one, ev, "interested")
     plan(client, two, ev, "going", T + timedelta(days=5))
-    assert picks_by_title(client)["Hamlet"] == {"status": "going", "date": (T + timedelta(days=5)).isoformat(), "by": "Culture Crew"}
+    assert picks_by_title(client)["Hamlet"] == {"status": "going", "date": (T + timedelta(days=5)).isoformat(), "time": None, "by": "Culture Crew"}
     client.delete(f"/me/plans/{ev.id}", headers=auth(two))
     assert picks_by_title(client)["Hamlet"]["status"] == "interested"
 
@@ -77,3 +78,11 @@ def test_turning_dolphins_off_hides_the_picks(client, db, make_event):
     db.scalar(select(User).where(User.email == "owner@example.com")).dolphins = False
     db.commit()
     assert picks_by_title(client)["Hamlet"] is None
+
+
+def test_cc264_a_pick_says_which_show(client, db, make_event):
+    ev = make_event("Hamlet")
+    me = owner(client, db)
+    day = (today_in_chicago() + timedelta(days=4)).isoformat()
+    assert client.put(f"/me/plans/{ev.id}", json={"status": "going", "date": day, "time": "16:00"}, headers=auth(me)).status_code == 201
+    assert picks_by_title(client)["Hamlet"] == {"status": "going", "date": day, "time": "16:00", "by": "Andrew"}
