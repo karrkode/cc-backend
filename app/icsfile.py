@@ -39,7 +39,8 @@ def _utc(d: date, hhmm: str) -> str:
 
 
 GALLERY = "Visual Art"
-GALLERY_TIME = "13:00"  # CC-170: the user's choice for an exhibition with no time of its own
+DEFAULT_TIME = "13:00"  # CC-170: the user's choice when the event lists no time that day
+UNSURE = "We couldn't find a time for the event so please verify!"  # said on a show given DEFAULT_TIME
 
 
 def _own_times(event: Event, d: date) -> list[str]:
@@ -50,14 +51,16 @@ def _own_times(event: Event, d: date) -> list[str]:
     return times or list((event.weekly or {}).get(WEEKDAYS[d.weekday()]) or [])
 
 
-def start_time(event: Event, d: date) -> str | None:
-    """The first start time it has on day d ("19:30"), or None when none is known (then it's an all-day entry).
-    A gallery's exhibition uses only times it lists itself (the venue's show times are for its other events), else 1 pm."""
+def start_time(event: Event, d: date) -> tuple[str, bool]:
+    """The first start time it has on day d ("19:30"), and whether that time is only a guess. With no time listed it's
+    1 pm, which is only a guess for a show; for a gallery's exhibition it's simply when to go. An exhibition uses only
+    times it lists itself (the venue's show times are for its other events)."""
     from .discovery.store import _hhmm
     from .roundups import times_on  # here: roundups imports the events router, which serves this file
-    listed = _own_times(event, d) if event.category == GALLERY else times_on(event, d) or []
+    gallery = event.category == GALLERY
+    listed = _own_times(event, d) if gallery else times_on(event, d) or []
     times = sorted(t for t in map(_hhmm, listed) if t)
-    return times[0] if times else GALLERY_TIME if event.category == GALLERY else None
+    return (times[0], False) if times else (DEFAULT_TIME, not gallery)
 
 
 def filename(event: Event) -> str:
@@ -69,23 +72,20 @@ def build(event: Event, d: date, now: datetime | None = None) -> str:
     link = f"{get_settings().site_url}/#e/{event.id}"  # the event's view in the site, as in emails (CC-117)
     where = ", ".join(p for p in (venue.name, full_address(venue.address, venue.city, venue.zip_code, venue.area,
                                                                        venue.neighborhood)) if p)
-    begins = start_time(event, d)
-    if begins:
-        h, m = (int(x) for x in begins.split(":"))
-        ends = (datetime.combine(d, time(h, m)) + LENGTH).strftime("%H:%M")
-        end_day = d if ends > begins else d + timedelta(days=1)  # a late show running past midnight
-        when = [f"DTSTART:{_utc(d, begins)}", f"DTEND:{_utc(end_day, ends)}"]
-    else:
-        when = [f"DTSTART;VALUE=DATE:{d:%Y%m%d}", f"DTEND;VALUE=DATE:{d + timedelta(days=1):%Y%m%d}"]
+    begins, guessed = start_time(event, d)
+    h, m = (int(x) for x in begins.split(":"))
+    ends = (datetime.combine(d, time(h, m)) + LENGTH).strftime("%H:%M")
+    end_day = d if ends > begins else d + timedelta(days=1)  # a late show running past midnight
+    about = f"{event.title} at {venue.name}. Event page: {link}"
     lines = [
         "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Culture Crew//Add to calendar//EN", "CALSCALE:GREGORIAN",
         "METHOD:PUBLISH", "BEGIN:VEVENT",
         f"UID:cc-{event.id}-{d:%Y%m%d}@chiculturecrew.com",
         f"DTSTAMP:{(now or datetime.now(UTC)).astimezone(UTC):%Y%m%dT%H%M%SZ}",
-        *when,
+        f"DTSTART:{_utc(d, begins)}", f"DTEND:{_utc(end_day, ends)}",
         f"SUMMARY:{_text(event.title)}",
         f"LOCATION:{_text(where)}",
-        f"DESCRIPTION:{_text(f'{event.title} at {venue.name}. Event page: {link}')}",
+        f"DESCRIPTION:{_text(f'{UNSURE}\n\n{about}' if guessed else about)}",
         f"URL:{link}",
         "END:VEVENT", "END:VCALENDAR",
     ]

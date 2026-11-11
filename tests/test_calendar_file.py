@@ -37,16 +37,17 @@ def test_a_show_with_a_time_gets_a_timed_entry_at_the_venue(client, db, make_eve
     assert f["SUMMARY"] == "Hamlet\\, Prince of Denmark"  # commas escaped
     assert f["LOCATION"] == "Goodman Theatre\\, 170 N Dearborn St\\, Chicago\\, IL 60601"
     assert f["URL"] == f"http://localhost:4173/#e/{ev.id}"
-    assert f"/#e/{ev.id}" in f["DESCRIPTION"]
+    assert f"/#e/{ev.id}" in f["DESCRIPTION"] and "couldn't find a time" not in f["DESCRIPTION"]
     assert f["UID"] == f"cc-{ev.id}-{day:%Y%m%d}@chiculturecrew.com"  # the same day again replaces, not duplicates
 
 
-def test_a_show_with_no_known_time_gives_an_all_day_entry(client, make_event):
+def test_a_show_with_no_known_time_starts_at_1pm_and_says_to_check(client, make_event):
     ev = make_event("New play")
     day = T + timedelta(days=1)
     f = unfold(get(client, ev.id, day).text)
-    assert f["DTSTART;VALUE=DATE"] == f"{day:%Y%m%d}"
-    assert f["DTEND;VALUE=DATE"] == f"{day + timedelta(days=1):%Y%m%d}"
+    start = datetime.fromisoformat(f"{day}T13:00").replace(tzinfo=__import__("zoneinfo").ZoneInfo("America/Chicago"))
+    assert f["DTSTART"] == start.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
+    assert f["DESCRIPTION"].startswith("We couldn't find a time for the event so please verify!\\n\\nNew play at")
     assert f["LOCATION"] == "Goodman Theatre"  # no address on file: just the venue's name
 
 
@@ -57,6 +58,7 @@ def test_a_gallery_show_starts_at_1pm_unless_it_lists_its_own_time(db, make_even
     friday = date(2026, 7, 10)
     f = unfold(build(ev, friday))
     assert (f["DTSTART"], f["DTEND"]) == ("20260710T180000Z", "20260710T200000Z")  # 1-3pm CDT
+    assert "couldn't find a time" not in f["DESCRIPTION"]  # 1 pm is a gallery's own default, not a guess
     ev.performances = [{"date": "2026-07-10", "time": "18:00"}]  # an opening night it lists itself
     db.commit()
     assert unfold(build(ev, friday))["DTSTART"] == "20260710T230000Z"
