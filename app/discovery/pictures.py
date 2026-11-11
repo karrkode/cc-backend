@@ -132,6 +132,8 @@ def _used_elsewhere(db, event: Event, webp: bytes) -> bool:
 def add_picture(db, event: Event, to=None) -> str:
     """Look for one event's picture on its page and store it. Returns a note for the run's log. Raises
     web.FetchError when it's worth trying again later; web.Blocked and NoPicture when it isn't."""
+    if event.image_override:  # CC-265: the admin's artwork choice always wins
+        raise NoPicture("picture chosen by admin")
     page = web.fetch(event.url, ai=False)  # nothing here goes to Claude
     candidates = preview_images(page.text, page.url)
     if not candidates:
@@ -160,7 +162,7 @@ def due(db, now: datetime, limit: int = PER_RUN) -> list[Event]:
     """Sourced, live events with no picture yet, oldest first, that haven't been tried too often or too lately."""
     return db.scalars(select(Event).where(
         Event.found_by_id.is_not(None), Event.status == EventStatus.approved, Event.image_key.is_(None), Event.url != "",
-        Event.picture_tries < MAX_TRIES,
+        Event.picture_tries < MAX_TRIES, Event.image_override.is_(False),
         or_(Event.picture_checked_at.is_(None), Event.picture_checked_at < now - RETRY_AFTER),
     ).order_by(Event.id).limit(limit)).all()
 
