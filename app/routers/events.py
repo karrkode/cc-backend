@@ -4,6 +4,7 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response, status
 from sqlalchemy import and_, case, func, or_, select, true
+from starlette.concurrency import run_in_threadpool
 
 from ..areas import nearby_area, region_of
 from ..categories import CATEGORIES, OPERA_IS, REMOVED, category_condition
@@ -338,13 +339,17 @@ async def replace_event_image(event_id: int, request: Request, db: DB, _: AdminU
         data.extend(chunk)
     if not kind_of(data, image_type):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "The file doesn't match its image type")
+    # CC-265: Pillow and storage block, so they run off the event loop, as the journal's photo upload does
+    return await run_in_threadpool(_store_event_image, db, event, bytes(data), TYPES[image_type])
+
+
+def _store_event_image(db, event: Event, data: bytes, ext: str) -> Event:
     try:
-        webp = event_images.normalise(bytes(data))
+        webp = event_images.normalise(data)
     except event_images.BadImage as err:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "That picture couldn't be read") from err
     # Validate and store before touching the event: a failed upload keeps the previous picture.
-    key = event_images.save(event.id, bytes(data), TYPES[image_type], webp=webp)
-    event.image_key = key
+    event.image_key = event_images.save(event.id, data, ext, webp=webp)
     event.image_source_url = ""  # an upload from the admin isn't credited to a remote source
     event.image_override = True
     db.commit()
