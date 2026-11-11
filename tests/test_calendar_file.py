@@ -87,3 +87,24 @@ def test_hidden_or_missing_events_and_bad_dates(client, make_event):
     live = make_event("Live")
     assert client.get(f"/events/{live.id}/calendar.ics", params={"date": "soon"}).status_code == 422
     assert client.get(f"/events/{live.id}/calendar.ics").status_code == 422
+
+
+def test_cc264_the_show_you_chose_not_the_first(client, db, make_event):
+    ev = make_event("Matinee and evening")
+    ev.weekly = {k: ["11:00", "16:00"] for k in ("mon", "tue", "wed", "thu", "fri", "sat", "sun")}
+    db.commit()
+    day = T + timedelta(days=2)
+    chicago = __import__("zoneinfo").ZoneInfo("America/Chicago")
+    utc = lambda hhmm: datetime.fromisoformat(f"{day}T{hhmm}").replace(tzinfo=chicago).astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
+    r = client.get(f"/events/{ev.id}/calendar.ics", params={"date": day.isoformat(), "time": "16:00"})
+    f = unfold(r.text)
+    assert (f["DTSTART"], f["DTEND"]) == (utc("16:00"), utc("18:00"))
+    assert "couldn't find a time" not in f["DESCRIPTION"]
+    assert unfold(get(client, ev.id, day).text)["DTSTART"] == utc("11:00")  # no time saved: the first show, as before
+    assert client.get(f"/events/{ev.id}/calendar.ics", params={"date": day.isoformat(), "time": "4pm"}).status_code == 422
+
+
+def test_cc264_a_chosen_time_on_a_day_with_none_listed_is_not_a_guess(make_event):
+    ev = make_event("New play")
+    f = unfold(build(ev, T + timedelta(days=1), at="20:00"))
+    assert "couldn't find a time" not in f["DESCRIPTION"]

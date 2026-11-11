@@ -67,12 +67,13 @@ def filename(event: Event) -> str:
     return f"{slug(event.title)}.ics"
 
 
-def build(event: Event, d: date, now: datetime | None = None) -> str:
+def build(event: Event, d: date, now: datetime | None = None, at: str | None = None) -> str:
+    """at: the show you chose that day (CC-264, "16:00"); without it, the day's first show (start_time)."""
     venue = event.venue
     link = f"{get_settings().site_url}/#e/{event.id}"  # the event's view in the site, as in emails (CC-117)
     where = ", ".join(p for p in (venue.name, full_address(venue.address, venue.city, venue.zip_code, venue.area,
                                                                        venue.neighborhood)) if p)
-    begins, guessed = start_time(event, d)
+    begins, guessed = (at, False) if at else start_time(event, d)
     h, m = (int(x) for x in begins.split(":"))
     ends = (datetime.combine(d, time(h, m)) + LENGTH).strftime("%H:%M")
     end_day = d if ends > begins else d + timedelta(days=1)  # a late show running past midnight

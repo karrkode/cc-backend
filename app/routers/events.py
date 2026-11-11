@@ -183,14 +183,16 @@ def get_event(event_id: int, db: DB, user: OptionalUser):
 
 @router.get("/{event_id}/calendar.ics", response_class=Response,
             responses={200: {"content": {"text/calendar": {}}}})
-def event_calendar_file(event_id: int, db: DB, user: OptionalUser, on: Annotated[date, Query(alias="date")]):
+def event_calendar_file(event_id: int, db: DB, user: OptionalUser, on: Annotated[date, Query(alias="date")],
+                        at: Annotated[str | None, Query(alias="time", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")] = None):
     """CC-170: "Add to calendar": the event on that day, as a calendar file. It takes the day rather than reading
-    your plan, so it holds nothing private and a plain link (no sign-in header) can fetch it."""
+    your plan, so it holds nothing private and a plain link (no sign-in header) can fetch it. CC-264: and the show's
+    start time, when your plan has one; without it, the day's first show."""
     from .. import icsfile  # here: icsfile reads times through app.roundups, which imports this module
     event = db.get(Event, event_id)
     if event is None or not visible_to(event, user):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Event not found")
-    return Response(icsfile.build(event, on), media_type="text/calendar; charset=utf-8",
+    return Response(icsfile.build(event, on, at=at), media_type="text/calendar; charset=utf-8",
                     headers={"Content-Disposition": f'inline; filename="{icsfile.filename(event)}"',
                              "Cache-Control": "no-store"})
 

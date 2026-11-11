@@ -359,6 +359,7 @@ class PickOut(BaseModel):
     """CC-66: the owner's public pick on an event (the dolphins on its card)."""
     status: PlanStatus
     date: date_ | None  # set for "going": the day they're going
+    time: str | None = None  # CC-264: and the show's start time, when they chose one
     by: str  # the account's display name ("" if it has none)
 
 
@@ -857,9 +858,11 @@ class StatsOut(BaseModel):
 # ---- attended --------------------------------------------------------------
 
 class PlanIn(BaseModel):
-    """status "interested", or "going" with the date (a day the event is on, not in the past)."""
+    """status "interested", or "going" with the date (a day the event is on, not in the past), and (CC-264) the
+    show's start time that day when it lists one."""
     status: Literal["interested", "going"]
     date: date_ | None = None
+    time: Clock | None = None
 
     @model_validator(mode="after")
     def _date_only_when_going(self):
@@ -867,6 +870,8 @@ class PlanIn(BaseModel):
             raise ValueError('Choose the date you\'re going ("date")')
         if self.status == "interested" and self.date is not None:
             raise ValueError('A date only goes with "going"')
+        if self.status == "interested" and self.time is not None:
+            raise ValueError('A time only goes with "going"')
         return self
 
 
@@ -874,6 +879,7 @@ class PlanOut(ORM):
     event: EventOut
     status: PlanStatus
     date: date_ | None = Field(validation_alias="going_on")
+    time: str | None = Field(None, validation_alias="going_at")  # CC-264: which show that day ("16:00")
     updated_at: datetime
     crews: list[int] = []  # CC-75: the crews it's shared with
 
@@ -1207,6 +1213,7 @@ class CrewPlanPerson(BaseModel):
     name: str
     status: PlanStatus
     date: date_ | None
+    time: str | None = None  # CC-264: the show they chose that day, so a crew can meet at the same one
     you: bool
 
 

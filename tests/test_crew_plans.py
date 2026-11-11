@@ -1,6 +1,8 @@
 """CC-75: sharing plans with crews: only the crews you choose, only their members, and gone when the plan is."""
 from datetime import date, timedelta
 
+from app.stats import today_in_chicago
+
 from .conftest import auth, register
 
 T = date.today()
@@ -82,3 +84,11 @@ def test_sharing_ends_with_the_plan_or_the_membership(client, make_event):
     assert client.post(f"/crews/{crew['id']}/leave", headers=p["Ben"]).status_code == 204
     assert client.get(f"/events/{sue.id}", headers=p["Ana"]).json()["crew_plans"] == []
     assert client.get("/me/plans", headers=p["Ben"]).json()[0]["crews"] == []
+
+
+def test_cc264_the_crew_board_says_which_show(client, make_event):
+    p, crew, _, hamlet, _ = setup(client, make_event)
+    day = (today_in_chicago() + timedelta(days=2)).isoformat()
+    plan(client, p["Ben"], hamlet, status="going", date=day, time="14:00"); share(client, p["Ben"], hamlet, [crew["id"]])
+    board = next(c for c in client.get("/crews", headers=p["Ana"]).json() if c["name"] == "Thursday Theater")["plans"]
+    assert [(x["name"], x["date"], x["time"]) for x in board[0]["people"]] == [("Ben", day, "14:00")]

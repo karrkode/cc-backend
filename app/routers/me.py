@@ -198,6 +198,7 @@ def set_plan(event_id: int, body: PlanIn, db: DB, user: CurrentUser, response: R
         response.status_code = status.HTTP_201_CREATED
     plan.status = PlanStatus(body.status)
     plan.going_on = body.date if body.status == "going" else None
+    plan.going_at = body.time if body.status == "going" else None  # CC-264
     db.commit()
     db.refresh(plan)
     return _plan_out(db, plan, user)
