@@ -2,13 +2,13 @@ from datetime import UTC, date
 from decimal import Decimal
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, HTTPException, Query, Response, status
+from fastapi import APIRouter, HTTPException, Query, Request, Response, status
 from sqlalchemy import and_, case, func, or_, select, true
 
 from ..areas import nearby_area, region_of
 from ..categories import CATEGORIES, OPERA_IS, REMOVED, category_condition
 from ..deps import DB, AdminUser, CurrentUser, OptionalUser, require_verified_email
-from .. import photos
+from .. import event_images, photos
 from ..autoreject import reject_if_caught
 from .. import fromlink
 from ..models import Area, Event, EventRunDate, EventStatus, Plan, PlanStatus, Region, Role, Venue, WentPhoto
@@ -310,6 +310,56 @@ def update_event(event_id: int, body: EventPatch, db: DB, _: AdminUser):
         accept_venue(db.get(Venue, event.venue_id), event.category, event.opera)
     if event.venue_id != old_venue_id:
         drop_if_unused(db, old_venue_id)
+    db.commit()
+    db.refresh(event)
+    return event
+
+
+# CC-265: a manual image choice appears everywhere via EventOut.image_url.
+# Caddy caps bodies at 4 MB; the middleware excludes this PUT from the 1 MB JSON cap.
+MAX_ADMIN_IMAGE_BYTES = 3_800_000
+
+
+@router.put("/{event_id}/image", response_model=EventOut)
+async def replace_event_image(event_id: int, request: Request, db: DB, _: AdminUser):
+    event = db.get(Event, event_id)
+    if event is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Event not found")
+    from ..discovery.pictures import TYPES, kind_of
+    image_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
+    if image_type not in TYPES:
+        raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "Use a JPEG, PNG, WebP, GIF or AVIF image")
+    if request.headers.get("content-length", "").isdigit() and int(request.headers["content-length"]) > MAX_ADMIN_IMAGE_BYTES:
+        raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, "Picture must be smaller than 3.8 MB")
+    data = bytearray()
+    async for chunk in request.stream():
+        if len(data) + len(chunk) > MAX_ADMIN_IMAGE_BYTES:
+            raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, "Picture must be smaller than 3.8 MB")
+        data.extend(chunk)
+    if not kind_of(data, image_type):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "The file doesn't match its image type")
+    try:
+        webp = event_images.normalise(bytes(data))
+    except event_images.BadImage as err:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "That picture couldn't be read") from err
+    # Validate and store before touching the event: a failed upload keeps the previous picture.
+    key = event_images.save(event.id, bytes(data), TYPES[image_type], webp=webp)
+    event.image_key = key
+    event.image_source_url = ""  # an upload from the admin isn't credited to a remote source
+    event.image_override = True
+    db.commit()
+    db.refresh(event)
+    return event
+
+
+@router.delete("/{event_id}/image", response_model=EventOut)
+def remove_event_image(event_id: int, db: DB, _: AdminUser):
+    event = db.get(Event, event_id)
+    if event is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Event not found")
+    event.image_key = None  # the category water displays whenever image_url is null
+    event.image_source_url = ""
+    event.image_override = True  # automatic sourcing must not restore art the admin rejected
     db.commit()
     db.refresh(event)
     return event
