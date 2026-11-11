@@ -41,13 +41,25 @@ def test_a_show_with_a_time_gets_a_timed_entry_at_the_venue(client, db, make_eve
     assert f["UID"] == f"cc-{ev.id}-{day:%Y%m%d}@chiculturecrew.com"  # the same day again replaces, not duplicates
 
 
-def test_no_known_time_gives_an_all_day_entry(client, make_event):
-    ev = make_event("Monet in the garden", category="Art")
+def test_a_show_with_no_known_time_gives_an_all_day_entry(client, make_event):
+    ev = make_event("New play")
     day = T + timedelta(days=1)
     f = unfold(get(client, ev.id, day).text)
     assert f["DTSTART;VALUE=DATE"] == f"{day:%Y%m%d}"
     assert f["DTEND;VALUE=DATE"] == f"{day + timedelta(days=1):%Y%m%d}"
     assert f["LOCATION"] == "Goodman Theatre"  # no address on file: just the venue's name
+
+
+def test_a_gallery_show_starts_at_1pm_unless_it_lists_its_own_time(db, make_event):
+    ev = make_event("Monet in the garden", category="Visual Art", venue_name="MCA", begin=None, end=None)
+    ev.venue.show_times = {"fri": ["20:00"]}  # the venue's performances, not the exhibition's
+    db.commit()
+    friday = date(2026, 7, 10)
+    f = unfold(build(ev, friday))
+    assert (f["DTSTART"], f["DTEND"]) == ("20260710T180000Z", "20260710T200000Z")  # 1-3pm CDT
+    ev.performances = [{"date": "2026-07-10", "time": "18:00"}]  # an opening night it lists itself
+    db.commit()
+    assert unfold(build(ev, friday))["DTSTART"] == "20260710T230000Z"
 
 
 def test_a_late_show_ends_the_next_day(db, make_event):

@@ -38,12 +38,26 @@ def _utc(d: date, hhmm: str) -> str:
     return datetime.combine(d, time(h, m), CHICAGO).astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
 
 
+GALLERY = "Visual Art"
+GALLERY_TIME = "13:00"  # CC-170: the user's choice for an exhibition with no time of its own
+
+
+def _own_times(event: Event, d: date) -> list[str]:
+    """The times the event itself lists for day d: a fixed run's date, a found performance, or its own weekly pattern."""
+    from .roundups import WEEKDAYS
+    times = [r.time for r in event.run_dates if r.date == d and r.time]
+    times += [p.get("time") or "" for p in event.performances or [] if p.get("date") == d.isoformat()]
+    return times or list((event.weekly or {}).get(WEEKDAYS[d.weekday()]) or [])
+
+
 def start_time(event: Event, d: date) -> str | None:
-    """The first start time it has on day d ("19:30"), or None when none is known (then it's an all-day entry)."""
+    """The first start time it has on day d ("19:30"), or None when none is known (then it's an all-day entry).
+    A gallery's exhibition uses only times it lists itself (the venue's show times are for its other events), else 1 pm."""
     from .discovery.store import _hhmm
     from .roundups import times_on  # here: roundups imports the events router, which serves this file
-    times = [t for t in map(_hhmm, times_on(event, d) or []) if t]
-    return times[0] if times else None
+    listed = _own_times(event, d) if event.category == GALLERY else times_on(event, d) or []
+    times = sorted(t for t in map(_hhmm, listed) if t)
+    return times[0] if times else GALLERY_TIME if event.category == GALLERY else None
 
 
 def filename(event: Event) -> str:
