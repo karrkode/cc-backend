@@ -20,7 +20,12 @@ DATA_RIGHTS = ("SELECT", "INSERT", "UPDATE", "DELETE")
 
 def migrate(owner_url: str) -> None:
     cfg = Config("alembic.ini")
-    cfg.set_main_option("sqlalchemy.url", owner_url.replace("%", "%%"))
+    url = make_url(owner_url)
+    if url.drivername.startswith("postgresql"):
+        # The old API is still serving while this runs: give up after 5 seconds instead of queueing a schema
+        # lock that would hold up every query on that table. The deploy fails and can simply be run again.
+        url = url.update_query_dict({"options": "-c lock_timeout=5s"})
+    cfg.set_main_option("sqlalchemy.url", url.render_as_string(hide_password=False).replace("%", "%%"))
     command.upgrade(cfg, "head")
 
 
@@ -89,14 +94,15 @@ def main() -> int:
         with app_engine.connect() as conn:
             conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
     except Exception as e:  # noqa: BLE001
-        print(f"{role} can't sign in with DATABASE_URL: {type(e).__name__}", file=sys.stderr)
+        # No role name here: it's parsed from the URL that holds the password, and scanners flag logging it.
+        print(f"The app role can't sign in with DATABASE_URL: {type(e).__name__}", file=sys.stderr)
         return 1
     finally:
         app_engine.dispose()
     with create_engine(owner_url).connect() as conn:
         rev = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
         owner = conn.execute(text("SELECT current_user")).scalar()
-    print(f"Schema at {rev} as {owner}; {role} can sign in")
+    print(f"Schema at {rev} as {owner}; the app role can sign in")
     return 0
 
 

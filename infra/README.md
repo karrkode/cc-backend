@@ -91,12 +91,15 @@ The server boots before any image exists, so push one and deploy it:
 cd ../..   # the cc-backend repo root
 REPO=$(terraform -chdir=infra/aws output -raw ecr_repository_url)
 aws ecr get-login-password | docker login --username AWS --password-stdin ${REPO%%/*}
-docker build -t "${REPO}:latest" -t "${REPO}:$(git rev-parse --short HEAD)" .
-docker push --all-tags "${REPO}"
+TAG=$(git rev-parse --short HEAD)   # CC-200: no "latest"; every tag is immutable
+docker build -t "${REPO}:${TAG}" .
+docker push "${REPO}:${TAG}"
+# A new or replaced server boots the tag recorded here (CI keeps it current after each deploy).
+aws ssm put-parameter --name /culture-crew/api-image-tag --type String --overwrite --value "${TAG}"
 
 aws ssm send-command --document-name AWS-RunShellScript \
   --targets Key=InstanceIds,Values=$(terraform -chdir=infra/aws output -raw api_instance_id) \
-  --parameters 'commands=["/usr/local/bin/culture-crew-deploy"]'
+  --parameters "commands=[\"/usr/local/bin/culture-crew-deploy ${TAG}\"]"
 ```
 
 The deploy runs the database migrations. To rebuild with the events, restore the database from
@@ -122,7 +125,10 @@ Then open https://chiculturecrew.com.
 |---|---|
 | Deploy the API | merge to `main`; GitHub Actions builds, pushes and deploys (see the repo README) |
 | Deploy by hand | push an image as in step 4, then `aws ssm send-command ... commands=["/usr/local/bin/culture-crew-deploy <tag>"]` |
-| Roll back | `culture-crew-deploy <older tag>` (ECR keeps the 15 newest images, each tagged with its commit) |
+| Roll back | `culture-crew-deploy <older tag>` (ECR keeps the 15 newest images, each tagged with its commit). Not to an image from before CC-200 (0055): it can't migrate as the app role, so the deploy fails and the current API keeps serving. |
+| After a hand deploy or roll back | record the tag, or a replaced server boots the old one: `aws ssm put-parameter --name /culture-crew/api-image-tag --type String --overwrite --value <tag>` |
+| Break-glass: run the API as the owner | on the server, in `/usr/local/bin/culture-crew-env` change the two lines to `DATABASE_URL=$(build_url "$DB_SECRET")` and `OWNER_DATABASE_URL=`, then run `culture-crew-deploy`. Both must change: with `OWNER_DATABASE_URL` still set, the migrate step checks the owner as if it were the app role and fails. Replacing the server undoes it. |
+| Before replacing the server | `/culture-crew/api-image-tag` must equal the live server's `/etc/culture-crew/deployed-tag`, and that image must be CC-200 or later. Reverting the infra to before CC-200 boots `latest`, which no longer moves: deploy a tag by hand afterwards. |
 | Shell on the server | `aws ssm start-session --target <api_instance_id>` |
 | API logs | CloudWatch → `/culture-crew/api` (streams `api`, `caddy`) |
 | Discovery and recap output | CloudWatch → `/culture-crew/discovery` |

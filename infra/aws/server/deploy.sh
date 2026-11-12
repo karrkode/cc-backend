@@ -43,6 +43,7 @@ docker network inspect cc >/dev/null 2>&1 || docker network create cc
 docker run --rm --network cc \
   --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m \
   --cap-drop ALL --security-opt no-new-privileges \
+  --memory 300m --memory-swap 300m --pids-limit 100 \
   --env-file /etc/culture-crew/api.env --env-file /etc/culture-crew/migrate.env \
   "$IMAGE" true
 
