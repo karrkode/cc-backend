@@ -29,6 +29,16 @@ mkdir -p /etc/culture-crew/mail-creds
 
 docker network inspect cc >/dev/null 2>&1 || docker network create cc
 
+# CC-200: migrate as the database owner in a one-off container, then start the API as the app role. If it fails,
+# the old API keeps serving and this deploy fails (and alerts). api.env and migrate.env share no keys. An image
+# from before CC-200 ignores OWNER_DATABASE_URL and only runs `alembic upgrade head` as the app role (a no-op
+# when nothing is pending).
+docker run --rm --network cc \
+  --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+  --cap-drop ALL --security-opt no-new-privileges \
+  --env-file /etc/culture-crew/api.env --env-file /etc/culture-crew/migrate.env \
+  "$IMAGE" true
+
 # The API is only on the private Docker network; Caddy is the only way in.
 # CC-183: a read-only filesystem (scratch space in /tmp only), no Linux capabilities, no privilege
 # gain, and memory and process limits so one runaway request can't starve the 1 GB server.
@@ -37,7 +47,7 @@ docker run -d --name api --network cc --restart unless-stopped \
   --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m \
   --cap-drop ALL --security-opt no-new-privileges \
   --memory 600m --memory-swap 600m --pids-limit 200 \
-  --env-file /etc/culture-crew/api.env \
+  --env-file /etc/culture-crew/api.env -e RUN_MIGRATIONS=0 \
   -v /etc/culture-crew/mail-creds:/run/aws:ro \
   -e AWS_SHARED_CREDENTIALS_FILE=/run/aws/credentials -e AWS_EC2_METADATA_DISABLED=true \
   --log-driver awslogs --log-opt awslogs-region="$REGION" \

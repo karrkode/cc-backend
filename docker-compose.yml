@@ -27,7 +27,9 @@ services:
     build: .
     environment:
       ENV: local
-      DATABASE_URL: postgresql+psycopg://culture:culture@db:5432/culture
+      # CC-200: the API runs as culture_app (rows only); the migration step runs as the owner. Local throwaway values.
+      DATABASE_URL: postgresql+psycopg://culture_app:local-app-only@db:5432/culture
+      OWNER_DATABASE_URL: postgresql+psycopg://culture:culture@db:5432/culture
       JWT_SECRET: local-dev-secret-not-for-production
       CORS_ORIGINS: http://localhost:4173,http://127.0.0.1:4173
       COOKIE_SECURE: "false"

@@ -25,6 +25,7 @@ GitHub Actions ─► OIDC roles (no stored keys) ─► push image / upload pag
 | `bootstrap/` | the S3 bucket for Terraform state and its TLS-only policy (applied once, again for CC-201; its state is local, so apply it from the main checkout) |
 | `aws/network.tf` | VPC, public + private subnets in 2 AZs, security groups (no NAT gateway) |
 | `aws/database.tf` | RDS Postgres; RDS generates and stores the password |
+| `aws/db_app_role.tf` | CC-200: password for the API's least-privilege role `culture_app` (secret `culture-crew/db-app`, about $0.40 a month); the server may read it. Rotate: bump `secret_string_wo_version`, apply, then run `culture-crew-deploy`. |
 | `aws/secrets.tf` | JWT signing key, written write-only so it never enters Terraform state |
 | `aws/server.tf`, `aws/server/` | the EC2 instance, its IAM role, and its boot and deploy scripts |
 | `aws/frontend.tf`, `aws/www-redirect.js.tftpl` | S3 bucket, CloudFront, ACM certificate, 404 page, www. redirect |

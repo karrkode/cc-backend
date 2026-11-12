@@ -8,16 +8,23 @@ source /etc/culture-crew/config
 
 DB_SECRET=$(aws secretsmanager get-secret-value --region "$REGION" --secret-id "$DB_SECRET_ARN" \
   --query SecretString --output text)
+# CC-200: the API connects as a least-privilege role; only the migration step gets the owner.
+APP_SECRET=$(aws secretsmanager get-secret-value --region "$REGION" --secret-id "$DB_APP_SECRET_ARN" \
+  --query SecretString --output text)
 JWT=$(aws ssm get-parameter --region "$REGION" --name "$JWT_PARAM" --with-decryption \
   --query Parameter.Value --output text)
 
 # The generated password can contain URL-special characters, so quote it properly.
-DATABASE_URL=$(DB_SECRET="$DB_SECRET" python3 -c '
+build_url() {
+  DB_SECRET="$1" DB_HOST="$DB_HOST" DB_NAME="$DB_NAME" python3 -c '
 import json, os, urllib.parse as u
 s = json.loads(os.environ["DB_SECRET"])
 print("postgresql+psycopg://%s:%s@%s:5432/%s?sslmode=require" % (
     u.quote(s["username"], safe=""), u.quote(s["password"], safe=""), os.environ["DB_HOST"], os.environ["DB_NAME"]))
-')
+'
+}
+DATABASE_URL=$(build_url "$APP_SECRET")
+OWNER_DATABASE_URL=$(build_url "$DB_SECRET")
 
 umask 077
 cat > /etc/culture-crew/api.env.tmp <<EOF
@@ -30,3 +37,8 @@ EMAIL_BACKEND=ses
 SITE_URL=$SITE_URL
 EOF
 mv /etc/culture-crew/api.env.tmp /etc/culture-crew/api.env
+# Owner credentials for the one-off migration container only; the running API never gets this file.
+cat > /etc/culture-crew/migrate.env.tmp <<EOF
+OWNER_DATABASE_URL=$OWNER_DATABASE_URL
+EOF
+mv /etc/culture-crew/migrate.env.tmp /etc/culture-crew/migrate.env

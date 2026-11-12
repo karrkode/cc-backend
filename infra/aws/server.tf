@@ -79,23 +79,24 @@ resource "aws_instance" "api" {
   }
 
   user_data = templatefile("${path.module}/server/user_data.sh.tftpl", {
-    region        = var.region
-    image_repo    = aws_ecr_repository.api.repository_url
-    image_tag     = var.api_image_tag
-    db_secret_arn = aws_db_instance.main.master_user_secret[0].secret_arn
-    db_host       = aws_db_instance.main.address
-    db_name       = aws_db_instance.main.db_name
-    jwt_param     = aws_ssm_parameter.jwt_secret.name
-    cors_origins  = local.cors_origins
-    log_group     = aws_cloudwatch_log_group.api.name
-    api_domain    = var.api_domain
-    acme_email    = var.alert_email
-    deploy_sh     = file("${path.module}/server/deploy.sh")
-    write_env_sh  = file("${path.module}/server/write-env.sh")
-    sync_sh       = file("${path.module}/server/sync.sh")
-    mail_creds_sh = file("${path.module}/server/mail-creds.sh")
-    site_url      = "https://${var.site_domain}"
-    mail_role_arn = aws_iam_role.email_sender.arn
+    region            = var.region
+    image_repo        = aws_ecr_repository.api.repository_url
+    image_tag         = var.api_image_tag
+    db_secret_arn     = aws_db_instance.main.master_user_secret[0].secret_arn
+    db_app_secret_arn = aws_secretsmanager_secret.db_app.arn # CC-200
+    db_host           = aws_db_instance.main.address
+    db_name           = aws_db_instance.main.db_name
+    jwt_param         = aws_ssm_parameter.jwt_secret.name
+    cors_origins      = local.cors_origins
+    log_group         = aws_cloudwatch_log_group.api.name
+    api_domain        = var.api_domain
+    acme_email        = var.alert_email
+    deploy_sh         = file("${path.module}/server/deploy.sh")
+    write_env_sh      = file("${path.module}/server/write-env.sh")
+    sync_sh           = file("${path.module}/server/sync.sh")
+    mail_creds_sh     = file("${path.module}/server/mail-creds.sh")
+    site_url          = "https://${var.site_domain}"
+    mail_role_arn     = aws_iam_role.email_sender.arn
   })
   # Changing the boot script replaces the server (it's disposable; data is in RDS, the
   # image in ECR). Caddy then fetches a new certificate, so avoid many replacements a week.
