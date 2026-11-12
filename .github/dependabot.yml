@@ -4,9 +4,15 @@ updates:
   - package-ecosystem: pip
     directory: /
     schedule: { interval: weekly }
+    # CC-195: minor and patch updates share one PR; each major arrives alone so one bad bump can't block the
+    # rest. Test tooling is its own group. No security-updates group, so a security update arrives by itself.
     groups:
+      python-dev:
+        patterns: ["pytest", "httpx2"]
       python:
         patterns: ["*"]
+        exclude-patterns: ["pytest", "httpx2"]
+        update-types: ["minor", "patch"]
   - package-ecosystem: docker
     directories: ["/", "/infra/aws/server/caddy"] # the API image's base, and the server's Caddy pin (CC-183)
     schedule: { interval: weekly }
