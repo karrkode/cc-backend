@@ -32,7 +32,7 @@ def test_theme_script_hash_is_in_terraform():
 
 def test_nginx_policies_equal_terraform_apart_from_local_sources():
     site, api = _nginx_policies()
-    assert site.replace(LOCAL_SOURCES, "") == _tf_policy("csp_site")
+    assert site.replace(LOCAL_SOURCES, "") == _tf_policy("csp_site")  # in img-src and connect-src
     assert api == _tf_policy("csp_api_pages")
 
 

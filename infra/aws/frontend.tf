@@ -123,7 +123,8 @@ locals {
   csp_api_pages = join("; ", [
     "default-src 'none'",
     "script-src '${local.csp_theme_hash}'",
-    "style-src 'unsafe-inline' https://fonts.googleapis.com",
+    # 'self': CloudFront may serve the site's 404 page (and its /css/404.css) on these paths
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src https://fonts.gstatic.com",
     "img-src 'self' data:",
     "frame-ancestors 'none'",
@@ -139,7 +140,7 @@ locals {
 
 # CC-193: replaces the managed SecurityHeadersPolicy, keeping what it sent (HSTS, nosniff, frame options,
 # referrer policy, X-XSS-Protection) and adding includeSubDomains, a Permissions-Policy and the CSP.
-# override = true: these replace what the origin sends (the API's own X-Frame-Options was SAMEORIGIN).
+# override = true: these replace what the origin sends (the managed policy's X-Frame-Options was SAMEORIGIN).
 resource "aws_cloudfront_response_headers_policy" "security" {
   for_each = local.security_header_policies
 
