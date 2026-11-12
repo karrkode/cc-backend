@@ -10,7 +10,7 @@ from app.mail import OUTBOX
 from app.models import RefreshToken, SentEmail, User
 from app.routers.auth import COOKIE
 
-from .conftest import auth, register
+from .conftest import auth, register, set_refresh_cookie
 
 PW = "correct-horse-1"
 
@@ -49,7 +49,7 @@ def test_sign_out_everywhere_ends_every_session_at_once(client, user_token):
     for token in (user_token, other_access):  # access tokens stop working now, not in 15 minutes
         assert client.get("/auth/me", headers=auth(token)).status_code == 401
     assert COOKIE not in client.cookies  # this device's cookie is cleared
-    client.cookies.set(COOKIE, other_cookie, path="/auth")
+    set_refresh_cookie(client, other_cookie)
     assert client.post("/auth/refresh").status_code == 401
     # signing in again works, with the new version
     fresh, _ = _second_device(client)
@@ -84,7 +84,7 @@ def test_reusing_a_stolen_refresh_token_ends_access_tokens_too(client, user_toke
     for t in db.scalars(select(RefreshToken).where(RefreshToken.revoked_at.is_not(None))):
         t.revoked_at -= timedelta(minutes=5)
     db.commit()
-    client.cookies.set(COOKIE, stolen, path="/auth")
+    set_refresh_cookie(client, stolen)
     assert client.post("/auth/refresh").status_code == 401
     assert client.get("/auth/me", headers=auth(current)).status_code == 401
 

@@ -12,7 +12,7 @@ from app.mail import OUTBOX
 from app.models import EmailToken, RefreshToken, User
 from app.routers.auth import COOKIE, FORGOT_REPLY
 
-from .conftest import age_sent_emails, auth, register
+from .conftest import age_sent_emails, auth, register, set_refresh_cookie
 
 PW, NEW = "correct-horse-1", "battery-staple-2"  # register()'s default password, and a new one
 
@@ -139,7 +139,7 @@ def test_reset_password_signs_in_and_out_everywhere_else(client, db):
     assert r.status_code == 200 and r.json()["user"]["email_verified"] is True  # they read its mail
     assert db.scalar(select(func.count(RefreshToken.id))) == 1  # only this new session
     assert client.post("/auth/refresh").status_code == 200
-    client.cookies.set(COOKIE, other_device, path="/auth")
+    set_refresh_cookie(client, other_device)
     assert client.post("/auth/refresh").status_code == 401
     assert client.post("/auth/login", json={"email": "ana@example.com", "password": NEW}).status_code == 200
     assert client.post("/auth/login", json={"email": "ana@example.com", "password": PW}).status_code == 401

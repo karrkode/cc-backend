@@ -4,7 +4,7 @@ from sqlalchemy import func, select
 from app.models import RefreshToken
 from app.routers.auth import COOKIE
 
-from .conftest import auth
+from .conftest import auth, set_refresh_cookie
 
 PW, NEW = "correct-horse-1", "battery-staple-2"  # register()'s default password, and a new one
 
@@ -36,7 +36,7 @@ def test_other_sessions_are_signed_out_and_this_one_kept(client, user_token, db)
     assert db.scalar(select(func.count(RefreshToken.id))) == 1  # only this tab's new session is left
 
     assert client.post("/auth/refresh").status_code == 200  # this tab carries on
-    client.cookies.set(COOKIE, other_device, path="/auth")
+    set_refresh_cookie(client, other_device)
     assert client.post("/auth/refresh").status_code == 401  # the other device has to sign in again
 
 

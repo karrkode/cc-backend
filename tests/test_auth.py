@@ -7,7 +7,7 @@ from app.config import get_settings
 from app.models import RefreshToken
 from app.routers.auth import COOKIE, REUSE_GRACE_SECONDS
 
-from .conftest import auth, register
+from .conftest import auth, register, set_refresh_cookie
 
 
 def test_register_signs_you_in(client):
@@ -83,7 +83,7 @@ def _age_swapped_tokens(db, seconds):
 def test_two_tabs_refreshing_at_once_both_succeed(client, user_token):
     shared = client.cookies[COOKIE]
     assert client.post("/auth/refresh").status_code == 200  # tab 1
-    client.cookies.set(COOKIE, shared, path="/auth")
+    set_refresh_cookie(client, shared)
     assert client.post("/auth/refresh").status_code == 200  # tab 2, same old cookie, moments later
     assert client.post("/auth/refresh").status_code == 200  # and the session carries on
 
@@ -94,10 +94,10 @@ def test_reusing_an_old_refresh_token_ends_every_session(client, user_token, db)
     current = client.cookies[COOKIE]
     _age_swapped_tokens(db, REUSE_GRACE_SECONDS + 1)
 
-    client.cookies.set(COOKIE, stolen, path="/auth")  # an attacker replays the old one later
+    set_refresh_cookie(client, stolen)  # an attacker replays the old one later
     assert client.post("/auth/refresh").status_code == 401
 
-    client.cookies.set(COOKIE, current, path="/auth")  # so the real user's session is ended too
+    set_refresh_cookie(client, current)  # so the real user's session is ended too
     assert client.post("/auth/refresh").status_code == 401
 
 
@@ -107,7 +107,7 @@ def test_logout_revokes_the_refresh_token(client, user_token):
     current = client.cookies[COOKIE]
     assert client.post("/auth/logout").status_code == 204
     for token in (current, old):  # neither works, even inside the grace period
-        client.cookies.set(COOKIE, token, path="/auth")
+        set_refresh_cookie(client, token)
         assert client.post("/auth/refresh").status_code == 401
 
 
