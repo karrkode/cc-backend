@@ -3,8 +3,15 @@
 set -e
 
 if [ "${RUN_MIGRATIONS:-1}" = "1" ]; then
-  alembic upgrade head
+  if [ -n "${OWNER_DATABASE_URL:-}" ]; then
+    # CC-200: the owner migrates and gives the app role (DATABASE_URL) its password.
+    python -m scripts.migrate
+  else
+    alembic upgrade head  # one database user: tests, CI, an env file from before CC-200
+  fi
 fi
+# What runs next connects only as DATABASE_URL, never as the owner.
+unset OWNER_DATABASE_URL
 
 # Local stack only: make sure the test accounts exist (logged to stderr so a script's output stays
 # clean). Production never sets DEV_ADMIN_* or DEV_USER_*, and the script itself refuses unless

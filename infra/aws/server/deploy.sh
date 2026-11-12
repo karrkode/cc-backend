@@ -6,7 +6,14 @@
 set -euo pipefail
 source /etc/culture-crew/config
 
-TAG="${1:-$(cat /etc/culture-crew/deployed-tag 2>/dev/null || echo "$IMAGE_TAG")}"
+# CC-200: no "latest". Without a tag from the deploy, use the one this server last ran, else the one CI recorded
+# in Parameter Store (a new or replaced server's first boot).
+TAG="${1:-$(cat /etc/culture-crew/deployed-tag 2>/dev/null || aws ssm get-parameter --region "$REGION" \
+  --name "/culture-crew/api-image-tag" --query Parameter.Value --output text 2>/dev/null || true)}"
+if [ -z "$TAG" ] || [ "$TAG" = "None" ]; then
+  echo "No image tag: pass one, or set /culture-crew/api-image-tag in Parameter Store" >&2
+  exit 1
+fi
 IMAGE="$IMAGE_REPO:$TAG"
 
 # CC-183: Caddy is pinned by digest. Deploys pass the current pin, so a Dependabot bump reaches the
@@ -29,6 +36,17 @@ mkdir -p /etc/culture-crew/mail-creds
 
 docker network inspect cc >/dev/null 2>&1 || docker network create cc
 
+# CC-200: migrate as the database owner in a one-off container, then start the API as the app role. If it fails,
+# the old API keeps serving and this deploy fails (and alerts). api.env and migrate.env share no keys. Needs an
+# image from CC-200 or later (scripts.migrate), and migration 0055 already applied: merge and deploy first, then
+# replace the server. Keep migrations expand-only: the old API serves while this runs.
+docker run --rm --network cc \
+  --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+  --cap-drop ALL --security-opt no-new-privileges \
+  --memory 300m --memory-swap 300m --pids-limit 100 \
+  --env-file /etc/culture-crew/api.env --env-file /etc/culture-crew/migrate.env \
+  "$IMAGE" true
+
 # The API is only on the private Docker network; Caddy is the only way in.
 # CC-183: a read-only filesystem (scratch space in /tmp only), no Linux capabilities, no privilege
 # gain, and memory and process limits so one runaway request can't starve the 1 GB server.
@@ -37,7 +55,7 @@ docker run -d --name api --network cc --restart unless-stopped \
   --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m \
   --cap-drop ALL --security-opt no-new-privileges \
   --memory 600m --memory-swap 600m --pids-limit 200 \
-  --env-file /etc/culture-crew/api.env \
+  --env-file /etc/culture-crew/api.env -e RUN_MIGRATIONS=0 \
   -v /etc/culture-crew/mail-creds:/run/aws:ro \
   -e AWS_SHARED_CREDENTIALS_FILE=/run/aws/credentials -e AWS_EC2_METADATA_DISABLED=true \
   --log-driver awslogs --log-opt awslogs-region="$REGION" \
