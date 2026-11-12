@@ -98,7 +98,7 @@ locals {
 # change to csp_enforce = true enforces it, once the live pages show no violations in the browser console.
 # Keep these lists equal to the ones in web.nginx.conf (tests/test_csp.py checks it).
 locals {
-  csp_enforce = false
+  csp_enforce = true
 
   # base64 sha256 of app/seo.py THEME_SCRIPT, which is also the body of the inline script in the site's
   # index.html and 404.html (cc-site scripts/test_csp.js pins the same value). tests/test_csp.py checks it.
