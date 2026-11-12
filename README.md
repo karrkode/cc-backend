@@ -139,6 +139,12 @@ The Postgres run also checks that the Alembic migrations produce exactly the sch
 in `app/models.py`. (Create the test database once with
 `docker compose exec db psql -U culture -c "create database culture_test"`.)
 
+### Database users (CC-200)
+
+The local API connects as `culture_app` (rows only) and migrations run as the owner `culture`, in the same
+`docker-entrypoint.sh` step (`scripts/migrate.py`). Both passwords in `docker-compose.yml` are local throwaway
+values. Scripts that change the schema must be migrations, because the API's role can't do it.
+
 ## Changing the schema
 
 Edit `app/models.py`, then with the database running:
