@@ -6,7 +6,14 @@
 set -euo pipefail
 source /etc/culture-crew/config
 
-TAG="${1:-$(cat /etc/culture-crew/deployed-tag 2>/dev/null || echo "$IMAGE_TAG")}"
+# CC-200: no "latest". Without a tag from the deploy, use the one this server last ran, else the one CI recorded
+# in Parameter Store (a new or replaced server's first boot).
+TAG="${1:-$(cat /etc/culture-crew/deployed-tag 2>/dev/null || aws ssm get-parameter --region "$REGION" \
+  --name "/culture-crew/api-image-tag" --query Parameter.Value --output text 2>/dev/null || true)}"
+if [ -z "$TAG" ] || [ "$TAG" = "None" ]; then
+  echo "No image tag: pass one, or set /culture-crew/api-image-tag in Parameter Store" >&2
+  exit 1
+fi
 IMAGE="$IMAGE_REPO:$TAG"
 
 # CC-183: Caddy is pinned by digest. Deploys pass the current pin, so a Dependabot bump reaches the

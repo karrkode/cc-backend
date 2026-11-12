@@ -73,7 +73,7 @@ variable "monthly_budget_usd" {
 }
 
 variable "api_image_tag" {
-  description = "Which image tag the server runs."
+  description = "Unused fallback: the server runs the tag CI records in Parameter Store (image_tag.tf)."
   type        = string
   default     = "latest"
 }

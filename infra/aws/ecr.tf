@@ -1,12 +1,8 @@
 resource "aws_ecr_repository" "api" {
   name = "${var.name}/api"
-  # CC-201: commit tags (the rollback targets) can never be overwritten; only "latest" moves.
-  # Fully IMMUTABLE needs the server's "latest" fallback removed, which replaces the server (see CC-200).
-  image_tag_mutability = "IMMUTABLE_WITH_EXCLUSION"
-  image_tag_mutability_exclusion_filter {
-    filter      = "latest"
-    filter_type = "WILDCARD"
-  }
+  # CC-201/CC-200: no tag can ever be overwritten. There is no "latest"; the server finds the current tag in
+  # Parameter Store (image_tag.tf).
+  image_tag_mutability = "IMMUTABLE"
 
   image_scanning_configuration {
     scan_on_push = true # known-vulnerability scan of every pushed image
