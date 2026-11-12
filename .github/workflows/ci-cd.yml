@@ -141,10 +141,14 @@ jobs:
         env:
           TAG: ${{ steps.image.outputs.tag }}
         run: |
-          # CC-200: a replacement server starts from this tag (no "latest" any more). Until the infra change that
-          # allows this write is applied, it's skipped with a warning instead of failing a good deploy.
-          aws ssm put-parameter --name /culture-crew/api-image-tag --type String --overwrite --value "$TAG" >/dev/null \
-            || echo "::warning::could not record the image tag in Parameter Store (infra not applied yet?)"
+          # CC-200: a replacement server starts from this tag (no "latest" any more). The deploy above already
+          # succeeded, but a stale record would boot an old image on the next server replacement, so a failed
+          # write fails the job. To fix by hand: aws ssm put-parameter --name /culture-crew/api-image-tag
+          # --type String --overwrite --value <tag>, then re-run this job.
+          if ! aws ssm put-parameter --name /culture-crew/api-image-tag --type String --overwrite --value "$TAG" >/dev/null; then
+            echo "::error::The deploy of $TAG succeeded, but its tag could not be recorded in Parameter Store (/culture-crew/api-image-tag). A replaced server would start an older image."
+            exit 1
+          fi
 
       - name: Check the live API
         run: |
