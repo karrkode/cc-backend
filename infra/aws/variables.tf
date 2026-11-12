@@ -72,12 +72,6 @@ variable "monthly_budget_usd" {
   default = 15
 }
 
-variable "api_image_tag" {
-  description = "Unused fallback: the server runs the tag CI records in Parameter Store (image_tag.tf)."
-  type        = string
-  default     = "latest"
-}
-
 # ---- CI/CD (GitHub Actions deploys through OIDC, no stored AWS keys) -------------
 
 variable "github_backend_repo" {

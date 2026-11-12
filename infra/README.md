@@ -103,8 +103,7 @@ aws ssm send-command --document-name AWS-RunShellScript \
 ```
 
 The deploy runs the database migrations. To rebuild with the events, restore the database from
-an RDS snapshot. (The Google Sheet sync that used to load them was retired in CC-72; the server
-still has a `culture-crew-sync` script from its first boot, which no longer works and isn't scheduled.)
+an RDS snapshot. (The Google Sheet sync that used to load them was retired in CC-72.)
 `https://api.chiculturecrew.com/health` should answer `{"status":"ok"}`.
 
 ### 5. The page

@@ -12,7 +12,6 @@ chmod 700 /etc/culture-crew
 cat > /etc/culture-crew/config <<'CONFIG'
 export REGION="${region}"
 export IMAGE_REPO="${image_repo}"
-export IMAGE_TAG="${image_tag}"
 export DB_SECRET_ARN="${db_secret_arn}"
 export DB_APP_SECRET_ARN="${db_app_secret_arn}"
 export DB_HOST="${db_host}"
@@ -69,16 +68,11 @@ cat > /usr/local/bin/culture-crew-env <<'SCRIPT'
 ${write_env_sh}
 SCRIPT
 
-cat > /usr/local/bin/culture-crew-sync <<'SCRIPT'
-${sync_sh}
-SCRIPT
-
 cat > /usr/local/bin/culture-crew-mail-creds <<'SCRIPT'
 ${mail_creds_sh}
 SCRIPT
 
-chmod 755 /usr/local/bin/culture-crew-deploy /usr/local/bin/culture-crew-env /usr/local/bin/culture-crew-sync \
-  /usr/local/bin/culture-crew-mail-creds
+chmod 755 /usr/local/bin/culture-crew-deploy /usr/local/bin/culture-crew-env /usr/local/bin/culture-crew-mail-creds
 
 cat > /etc/systemd/system/culture-crew.service <<'UNIT'
 [Unit]
