@@ -102,6 +102,16 @@ resource "aws_cloudwatch_event_rule" "guardduty_finding" {
 resource "aws_cloudwatch_event_target" "guardduty_finding" {
   rule = aws_cloudwatch_event_rule.guardduty_finding.name
   arn  = aws_sns_topic.alerts.arn
+  # CC-192: a one-line email instead of the raw event JSON.
+  input_transformer {
+    input_paths = {
+      title  = "$.detail.title"
+      sev    = "$.detail.severity"
+      type   = "$.detail.type"
+      region = "$.detail.region"
+    }
+    input_template = "\"GuardDuty (severity <sev>) in <region>: <title> [<type>]\""
+  }
 }
 
 # ---- IAM Access Analyzer (external access; free) -------------------------------------------
@@ -187,6 +197,15 @@ resource "aws_cloudwatch_event_rule" "root_sign_in" {
 resource "aws_cloudwatch_event_target" "root_sign_in" {
   rule = aws_cloudwatch_event_rule.root_sign_in.name
   arn  = aws_sns_topic.alerts.arn
+  # CC-192: a one-line email instead of the raw event JSON.
+  input_transformer {
+    input_paths = {
+      ip     = "$.detail.sourceIPAddress"
+      time   = "$.time"
+      result = "$.detail.responseElements.ConsoleLogin"
+    }
+    input_template = "\"Root console sign-in (<result>) from <ip> at <time>\""
+  }
 }
 
 # Only changes reach EventBridge from CloudTrail; read-only calls (Get, List) are not delivered.
@@ -202,4 +221,14 @@ resource "aws_cloudwatch_event_rule" "iam_change" {
 resource "aws_cloudwatch_event_target" "iam_change" {
   rule = aws_cloudwatch_event_rule.iam_change.name
   arn  = aws_sns_topic.alerts.arn
+  # CC-192: a one-line email instead of the raw event JSON.
+  input_transformer {
+    input_paths = {
+      event = "$.detail.eventName"
+      who   = "$.detail.userIdentity.arn"
+      ip    = "$.detail.sourceIPAddress"
+      time  = "$.time"
+    }
+    input_template = "\"IAM change <event> by <who> from <ip> at <time>\""
+  }
 }
