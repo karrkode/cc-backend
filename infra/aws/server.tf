@@ -78,6 +78,9 @@ resource "aws_instance" "api" {
     encrypted   = true
   }
 
+  # CC-200: the first boot reads this secret, so wait for its value and the policy that allows it.
+  depends_on = [aws_secretsmanager_secret_version.db_app, aws_iam_role_policy.api_db_app_secret]
+
   user_data = templatefile("${path.module}/server/user_data.sh.tftpl", {
     region            = var.region
     image_repo        = aws_ecr_repository.api.repository_url

@@ -4,6 +4,7 @@ import os
 import pytest
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ProgrammingError
@@ -58,7 +59,8 @@ def test_app_role_can_change_rows_but_not_the_schema(migrated):
         assert conn.execute(text("SELECT count(*) FROM venues WHERE name = 'CC-200 venue'")).scalar() == 1
         conn.execute(text("UPDATE venues SET name = 'CC-200 renamed' WHERE name = 'CC-200 venue'"))
         conn.execute(text("DELETE FROM venues WHERE name = 'CC-200 renamed'"))
-        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0055"
+        head = ScriptDirectory.from_config(Config("alembic.ini")).get_current_head()
+        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar() == head
         for sql in ("UPDATE alembic_version SET version_num = '0001'",
                     "CREATE TABLE cc200_nope (id int)",
                     "ALTER TABLE venues ADD COLUMN cc200_nope int",
@@ -81,7 +83,7 @@ def _app_url():
     return make_url(TEST_DATABASE_URL).set(username="culture_app", password=APP_PASSWORD).render_as_string(hide_password=False)
 
 
-def test_migrate_script_gives_the_app_role_a_login(migrated, monkeypatch):
+def test_migrate_script_gives_the_app_role_a_login(migrated):
     from scripts import migrate
     assert migrate.set_app_password(TEST_DATABASE_URL, _app_url()) == "culture_app"
     assert migrate.check_rights(TEST_DATABASE_URL, "culture_app") == []
@@ -106,3 +108,11 @@ def test_migrate_script_main_reports_and_fails_without_both_urls(monkeypatch):
     from scripts import migrate
     monkeypatch.delenv("OWNER_DATABASE_URL", raising=False)
     assert migrate.main() == 2
+
+
+def test_migrate_script_main_migrates_as_the_owner_even_with_the_app_url_set(migrated, monkeypatch):
+    """The whole point: DATABASE_URL (the app role) is in the environment, but migrations must use the owner URL."""
+    monkeypatch.setenv("OWNER_DATABASE_URL", TEST_DATABASE_URL)
+    monkeypatch.setenv("DATABASE_URL", _app_url())
+    from scripts import migrate
+    assert migrate.main() == 0
