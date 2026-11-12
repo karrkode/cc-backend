@@ -51,3 +51,12 @@ output "deploy_backend_role_arn" {
 output "deploy_frontend_role_arn" {
   value = aws_iam_role.deploy_frontend.arn
 }
+
+# CC-192: where the account's activity log is kept, and the GuardDuty detector (for sample findings).
+output "cloudtrail_bucket" {
+  value = aws_s3_bucket.cloudtrail.id
+}
+
+output "guardduty_detector_id" {
+  value = aws_guardduty_detector.main.id
+}
