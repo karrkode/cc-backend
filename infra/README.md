@@ -22,7 +22,7 @@ GitHub Actions ─► OIDC roles (no stored keys) ─► push image / upload pag
 
 | File | What it makes |
 |---|---|
-| `bootstrap/` | the S3 bucket for Terraform state (applied once) |
+| `bootstrap/` | the S3 bucket for Terraform state and its TLS-only policy (applied once, again for CC-201; its state is local, so apply it from the main checkout) |
 | `aws/network.tf` | VPC, public + private subnets in 2 AZs, security groups (no NAT gateway) |
 | `aws/database.tf` | RDS Postgres; RDS generates and stores the password |
 | `aws/secrets.tf` | JWT signing key, written write-only so it never enters Terraform state |
@@ -33,6 +33,7 @@ GitHub Actions ─► OIDC roles (no stored keys) ─► push image / upload pag
 | `aws/scheduler.tf` | the scheduler's role for running commands on the server |
 | `aws/ses.tf` | SES: the sending domain, its DKIM records, the email-sender role the API container uses, bounce and complaint alerts |
 | `aws/photos.tf` | the private, encrypted bucket for "I've been" photos, and the container's permission to store them and check them with Rekognition (CC-76) |
+| `aws/storage.tf` | S3 account-wide Block Public Access (CC-201): no bucket in the account can be made public; serve public files through CloudFront |
 | `aws/discovery.tf` | event discovery: the API key's slot, the hourly checks, the Tuesday recap email |
 | `aws/monitoring.tf` | log groups, alarms, failed-command alerts, monthly budget |
 | `aws/github.tf` | OIDC deploy roles for both repos |

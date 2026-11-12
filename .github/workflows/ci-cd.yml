@@ -100,8 +100,15 @@ jobs:
           REPO: ${{ steps.ecr.outputs.registry }}/culture-crew/api
         run: |
           TAG="${GITHUB_SHA::7}"
-          docker build -t "$REPO:$TAG" -t "$REPO:latest" .
-          docker push "$REPO:$TAG"
+          # CC-201: commit tags are immutable in ECR. A re-run for the same commit reuses the image
+          # already there (and moves "latest" to it) instead of pushing a different build to that tag.
+          if docker manifest inspect "$REPO:$TAG" >/dev/null 2>&1; then
+            docker pull "$REPO:$TAG"
+            docker tag "$REPO:$TAG" "$REPO:latest"
+          else
+            docker build -t "$REPO:$TAG" -t "$REPO:latest" .
+            docker push "$REPO:$TAG"
+          fi
           docker push "$REPO:latest"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 

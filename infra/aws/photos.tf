@@ -35,6 +35,17 @@ resource "aws_s3_bucket_versioning" "photos" {
   versioning_configuration { status = "Disabled" }
 }
 
+# CC-201: an upload that never finished leaves hidden, billable parts behind; drop them after a day.
+resource "aws_s3_bucket_lifecycle_configuration" "photos" {
+  bucket = aws_s3_bucket.photos.id
+  rule {
+    id     = "abort-incomplete-multipart-uploads"
+    status = "Enabled"
+    filter {}
+    abort_incomplete_multipart_upload { days_after_initiation = 1 }
+  }
+}
+
 resource "aws_s3_bucket_policy" "photos_tls_only" {
   bucket = aws_s3_bucket.photos.id
   policy = jsonencode({
