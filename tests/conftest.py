@@ -86,6 +86,14 @@ def auth(token):
     return {"Authorization": f"Bearer {token}"}
 
 
+def set_refresh_cookie(client, value):
+    """CC-195: replace the client's refresh cookie. The server's own cookie (set by login) has a domain and the
+    test's has none, so httpx2 2.16 may send either one; deleting first leaves exactly one, as before."""
+    from app.routers.auth import COOKIE
+    client.cookies.delete(COOKIE)
+    client.cookies.set(COOKIE, value, path="/auth")
+
+
 def age_sent_emails(db, **delta):
     """CC-184: move every recorded email back in time, e.g. age_sent_emails(db, minutes=2), to get past a cap."""
     from app.models import SentEmail
