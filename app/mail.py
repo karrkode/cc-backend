@@ -107,16 +107,16 @@ def redeem_token(db: Session, raw: str, purpose: EmailTokenPurpose) -> User | No
     return user
 
 
-def already_confirmed_by(db: Session, raw: str) -> User | None:
-    """The user, if this confirm link was already used and the address it was sent to is still
-    theirs and confirmed. Mail scanners often open links before the person does; they then
-    see "already confirmed" instead of an error."""
+def already_confirmed(db: Session, raw: str) -> bool:
+    """True if this confirm link was already used, hasn't expired, and the address it was sent to is still
+    theirs and confirmed. Mail scanners often open links before the person does; they then see
+    "already confirmed" instead of an error. CC-204: a yes/no only, so a link never hands back account details."""
     token = db.scalar(select(EmailToken).where(EmailToken.token_hash == hash_token(raw),
                                                EmailToken.purpose == EmailTokenPurpose.verify_email))
-    if token is None or token.used_at is None:
-        return None
+    if token is None or token.used_at is None or _utc(token.expires_at) <= datetime.now(UTC):
+        return False
     user = db.get(User, token.user_id)
-    return user if user is not None and user.email == token.email and user.email_verified else None
+    return user is not None and user.email == token.email and bool(user.email_verified)
 
 
 # ---- the emails ------------------------------------------------------------------

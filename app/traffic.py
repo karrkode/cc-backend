@@ -24,6 +24,7 @@ from datetime import date, timedelta
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 
+from . import keys
 from .config import get_settings
 from .models import (TrafficCount, TrafficJoinSignup, TrafficJoinVisit, TrafficSourceCount, TrafficSourceVisit,
                      TrafficVisitor, TrafficVisitorDay)
@@ -71,7 +72,7 @@ def is_bot(user_agent: str) -> bool:
 
 def visitor_key(vid: str | None, day: date, address: str, user_agent: str) -> tuple[str, bool]:
     """(hash, lasting): lasting is False for the day-only stand-in used when there's no browser ID."""
-    secret = get_settings().jwt_secret
+    secret = keys.visitor_hash_secret()
     if vid:
         return hashlib.sha256(f"{secret}|vid|{vid}".encode()).hexdigest()[:40], True
     return "d:" + hashlib.sha256(f"{secret}|day|{day}|{address}|{user_agent}".encode()).hexdigest()[:38], False
@@ -79,7 +80,7 @@ def visitor_key(vid: str | None, day: date, address: str, user_agent: str) -> tu
 
 def address_key(day: date, address: str) -> str:
     """CC-190: what the limits below know an address by, so that not even memory keeps the address itself."""
-    return hashlib.sha256(f"{get_settings().jwt_secret}|address|{day}|{address}".encode()).hexdigest()[:40]
+    return hashlib.sha256(f"{keys.visitor_hash_secret()}|address|{day}|{address}".encode()).hexdigest()[:40]
 
 
 class PingLimits:

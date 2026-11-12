@@ -21,6 +21,7 @@ from pathlib import Path
 
 from sqlalchemy import func, select
 
+from . import keys
 from .config import get_settings
 from .models import OwnEvent, PhotoCheck, WentPhoto
 
@@ -126,7 +127,7 @@ def store():
 # ---- signed links ---------------------------------------------------------------------------
 
 def _sig(photo_id: int, exp: int, kind: bytes = b"went-photo-link:") -> str:
-    key = hashlib.sha256(kind + get_settings().jwt_secret.encode()).digest()
+    key = hashlib.sha256(kind + keys.photo_link_secret().encode()).digest()
     return hmac.new(key, f"{photo_id}:{exp}".encode(), hashlib.sha256).hexdigest()[:32]
 
 

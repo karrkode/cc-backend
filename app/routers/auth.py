@@ -277,7 +277,7 @@ def resend_verification(db: DB, user: CurrentUser, tasks: BackgroundTasks):
     return MessageOut(detail=f"We've sent a new link to {user.email}.")
 
 
-@router.post("/verify-email", response_model=UserOut, dependencies=[Depends(limit_auth_attempts)])
+@router.post("/verify-email", response_model=UserOut | MessageOut, dependencies=[Depends(limit_auth_attempts)])
 def verify_email(body: TokenIn, db: DB, tasks: BackgroundTasks):
     """Confirm an address from the emailed link. No sign-in needed: the link may be opened
     on another device. Links work once, expire, and only for the address they were sent to.
@@ -286,10 +286,9 @@ def verify_email(body: TokenIn, db: DB, tasks: BackgroundTasks):
     user = mail.redeem_token(db, body.token, EmailTokenPurpose.verify_email)
     if user is None:
         db.rollback()
-        user = mail.already_confirmed_by(db, body.token)
-        if user is None:
+        if not mail.already_confirmed(db, body.token):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "This link has expired or was already used")
-        return user
+        return MessageOut(detail="This email address is already confirmed.")  # CC-204: nothing about the account
     user.email_verified_at = datetime.now(UTC)
     _welcome_once(user, tasks)
     db.commit()

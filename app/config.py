@@ -68,6 +68,12 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     anthropic_key_param: str = "/culture-crew/anthropic-api-key"
     ssm_region: str = "us-east-2"
+    # CC-204: photo links and visitor hashing each have their own key, so rotating one leaves the others alone.
+    # Unset: read from Parameter Store in prod (app/keys.py), and until it holds a real value, derive from jwt_secret.
+    photo_link_secret: str = ""
+    visitor_hash_secret: str = ""
+    photo_link_secret_param: str = "/culture-crew/photo-link-key"
+    visitor_hash_secret_param: str = "/culture-crew/visitor-hash-key"
 
     # CC-241: admins turn a member's report into a Jira ticket. jira_backend: api (Jira Cloud), fake (an in-memory
     # Jira, for trying it locally), none (off). Unset: api in production, none elsewhere. In production the account
@@ -99,6 +105,13 @@ class Settings(BaseSettings):
     def _real_secret_in_prod(cls, v, info):
         if info.data.get("env") == "prod" and (v == "change-me-local-only" or len(v) < 32):
             raise ValueError("JWT_SECRET must be set to a random value of 32+ characters in prod")
+        return v
+
+    @field_validator("photo_link_secret", "visitor_hash_secret")
+    @classmethod
+    def _purpose_key_long_enough(cls, v, info):  # CC-204
+        if info.data.get("env") == "prod" and v and len(v) < 32:
+            raise ValueError(f"{info.field_name.upper()} must be 32+ characters when set")
         return v
 
     @model_validator(mode="after")

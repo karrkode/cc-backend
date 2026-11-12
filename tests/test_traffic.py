@@ -2,7 +2,7 @@
 import json
 from datetime import timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.config import get_settings
 from app.models import TrafficVisitor, TrafficVisitorDay
@@ -262,3 +262,15 @@ def test_the_limits_start_again_each_day():
 def test_the_limits_keep_no_address():
     assert "203.0.113.1" not in address_key(TODAY, "203.0.113.1")
     assert address_key(TODAY, "203.0.113.1") != address_key(TODAY + timedelta(days=1), "203.0.113.1")
+
+
+def test_visitor_counts_survive_a_sign_in_key_change(client, db, monkeypatch):  # CC-204
+    monkeypatch.setattr(get_settings(), "visitor_hash_secret", "v" * 40)
+    ping(client, view="home", vid=VID_A)
+    v = db.scalar(select(TrafficVisitor)); v.first_day = TODAY - timedelta(days=3)
+    db.add(TrafficVisitorDay(day=TODAY - timedelta(days=3), visitor=v.visitor)); db.commit()
+    monkeypatch.setattr(get_settings(), "jwt_secret", "rotated-sign-in-key-of-32-characters!")
+    ping(client, view="home", vid=VID_A)
+    # the same browser is still the same visitor (the old admin token no longer signs in, so look in the tables)
+    assert db.scalar(select(func.count()).select_from(TrafficVisitor)) == 1
+    assert db.scalar(select(func.count()).select_from(TrafficVisitorDay).where(TrafficVisitorDay.day == TODAY)) == 1

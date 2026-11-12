@@ -51,7 +51,8 @@ def test_sign_up_emails_a_link_that_confirms_the_address(client, db):
     assert r.status_code == 200 and r.json()["email_verified"] is True
     assert me(client, token)["email_verified"] is True
     again = client.post("/auth/verify-email", json={"token": raw})  # e.g. after a mail scanner opened it first
-    assert again.status_code == 200 and again.json()["email_verified"] is True
+    # CC-204: only "already confirmed", nothing about the account
+    assert again.status_code == 200 and again.json() == {"detail": "This email address is already confirmed."}
     assert raw not in {t.token_hash for t in db.scalars(select(EmailToken))}  # only the hash is stored
 
 
@@ -59,6 +60,15 @@ def test_bad_and_expired_links(client, db):
     register(client)
     raw = link_token("verify")
     assert client.post("/auth/verify-email", json={"token": "x" * 43}).status_code == 400
+    expire_all(db)
+    r = client.post("/auth/verify-email", json={"token": raw})
+    assert r.status_code == 400 and r.json()["detail"] == "This link has expired or was already used"
+
+
+def test_an_expired_used_link_is_refused(client, db):  # CC-204
+    register(client)
+    raw = link_token("verify")
+    assert client.post("/auth/verify-email", json={"token": raw}).status_code == 200
     expire_all(db)
     r = client.post("/auth/verify-email", json={"token": raw})
     assert r.status_code == 400 and r.json()["detail"] == "This link has expired or was already used"

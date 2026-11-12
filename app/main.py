@@ -8,6 +8,7 @@ from .bodylimit import BodyLimit
 from .config import get_settings
 from .deps import DB
 from .db import SessionLocal, engine
+from . import keys
 from .fromlink import warm_reader
 from .health import Recorder, RequestRecorder
 from .routers import admin, approvals, auth, crews, discovery, events, issues, journal, me, photos, seo, traffic, venues
@@ -18,6 +19,7 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     warm_reader()  # CC-216
+    keys.warm()  # CC-204: read the photo-link and visitor keys now, so no request waits for them
     # CC-244: the Site health page's numbers. Tests write them directly, so they don't run the thread.
     recorder = Recorder(engine, SessionLocal) if settings.env != "test" else None
     if recorder:
