@@ -1,5 +1,5 @@
 """CC-70: event discovery: polite fetching, reading as little as possible, the holding list."""
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -203,6 +203,9 @@ def test_pre_opening_checks_read_just_the_event_page(db, pages):
     runner.run(db, FakeClaude(SEASON[:1]), TODAY)
     item = db.scalar(select(DiscoveredItem))
     opening = item.begin_date
+    # The item was stamped with the real clock; pin it to the simulated day so the "found today, look again
+    # next run" rule can't fire when a simulated day below happens to be the real date (it did on 2026-11-12).
+    item.first_seen_at = datetime(2026, 10, 20, 12, tzinfo=UTC); db.commit()
     # 70 days out: nothing; 59 days out: the 60-day check; 44 days out: the 45-day check; then no more
     for days_before, expect in ((70, []), (59, [60]), (44, [45, 60]), (30, [45, 60])):
         calls.clear()
