@@ -1,6 +1,6 @@
 # One-time setup: the S3 bucket that holds the main stack's Terraform state.
 # This small stack keeps its own state locally (terraform.tfstate here, gitignored);
-# it is only ever applied once.
+# apply it again only when this file changes (CC-201 added the TLS-only policy below).
 #
 #   cd infra/bootstrap && terraform init && terraform apply
 
@@ -47,6 +47,20 @@ resource "aws_s3_bucket_public_access_block" "state" {
   block_public_policy     = true
   ignore_public_acls      = true
   restrict_public_buckets = true
+}
+
+# CC-201: refuse any request to the state bucket that is not over TLS.
+resource "aws_s3_bucket_policy" "state" {
+  bucket = aws_s3_bucket.state.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid       = "TlsOnly", Effect = "Deny", Principal = "*", Action = "s3:*"
+      Resource  = [aws_s3_bucket.state.arn, "${aws_s3_bucket.state.arn}/*"]
+      Condition = { Bool = { "aws:SecureTransport" = "false" } }
+    }]
+  })
+  depends_on = [aws_s3_bucket_public_access_block.state]
 }
 
 output "state_bucket" {

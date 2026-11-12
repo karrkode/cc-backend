@@ -100,9 +100,22 @@ jobs:
           REPO: ${{ steps.ecr.outputs.registry }}/culture-crew/api
         run: |
           TAG="${GITHUB_SHA::7}"
-          docker build -t "$REPO:$TAG" -t "$REPO:latest" .
-          docker push "$REPO:$TAG"
-          docker push "$REPO:latest"
+          # CC-201: commit tags are immutable in ECR. A re-run for the same commit reuses the image
+          # already there instead of pushing a different build to that tag. The check and the move of
+          # "latest" use only the API (no layer pull), within the deploy role's current permissions.
+          MANIFEST=$(aws ecr batch-get-image --repository-name culture-crew/api \
+            --image-ids "imageTag=$TAG" --query 'images[0].imageManifest' --output text)
+          if [ -n "$MANIFEST" ] && [ "$MANIFEST" != "None" ]; then
+            echo "Image $TAG already exists; not rebuilding."
+            # ImageAlreadyExistsException is normal here: "latest" may already point at this image.
+            aws ecr put-image --repository-name culture-crew/api --image-tag latest \
+              --image-manifest "$MANIFEST" >/dev/null 2>/tmp/put.err \
+              || grep -q ImageAlreadyExistsException /tmp/put.err || { cat /tmp/put.err; exit 1; }
+          else
+            docker build -t "$REPO:$TAG" -t "$REPO:latest" .
+            docker push "$REPO:$TAG"
+            docker push "$REPO:latest"
+          fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
       - name: Deploy on the server (SSM Run Command)

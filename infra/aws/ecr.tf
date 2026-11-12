@@ -1,6 +1,12 @@
 resource "aws_ecr_repository" "api" {
-  name                 = "${var.name}/api"
-  image_tag_mutability = "MUTABLE" # "latest" moves; each image is also tagged with its git commit
+  name = "${var.name}/api"
+  # CC-201: commit tags (the rollback targets) can never be overwritten; only "latest" moves.
+  # Fully IMMUTABLE needs the server's "latest" fallback removed, which replaces the server (see CC-200).
+  image_tag_mutability = "IMMUTABLE_WITH_EXCLUSION"
+  image_tag_mutability_exclusion_filter {
+    filter      = "latest"
+    filter_type = "WILDCARD"
+  }
 
   image_scanning_configuration {
     scan_on_push = true # known-vulnerability scan of every pushed image
