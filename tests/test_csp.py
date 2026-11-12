@@ -44,7 +44,7 @@ def test_no_script_source_allows_inline_or_eval():
 
 def _executable_inline_scripts(html: str) -> list[str]:
     # JSON-LD and other data blocks never run, so the policy does not govern them
-    return [m.group(2) for m in re.finditer(r"<script([^>]*)>(.*?)</script>", html, re.S | re.I)
+    return [m.group(2) for m in re.finditer(r"<script([^>]*)>(.*?)</script[^>]*>", html, re.S | re.I)
             if "ld+json" not in m.group(1)]
 
 
