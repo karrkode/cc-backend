@@ -44,9 +44,9 @@ def _refresh(name: str) -> None:
         if len(got) >= 32 and got != "unset":
             value = got
         elif value is None:
-            log.warning("keys: %s isn't set yet, using the derived key", name)
+            log.warning("keys: a purpose key isn't set yet, using the derived key")
     except Exception:  # noqa: BLE001
-        log.warning("keys: couldn't read %s", name)
+        log.warning("keys: couldn't read a purpose key from Parameter Store")
         wait = _RETRY_SECONDS
     with _lock:
         _cache[name] = {"value": value, "next": monotonic() + wait, "busy": False}
