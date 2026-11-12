@@ -139,7 +139,7 @@ locals {
 }
 
 # CC-193: replaces the managed SecurityHeadersPolicy, keeping what it sent (HSTS, nosniff, frame options,
-# referrer policy, X-XSS-Protection) and adding includeSubDomains, a Permissions-Policy and the CSP.
+# referrer policy, X-XSS-Protection) and adding a Permissions-Policy and the CSP.
 # override = true: these replace what the origin sends (the managed policy's X-Frame-Options was SAMEORIGIN).
 resource "aws_cloudfront_response_headers_policy" "security" {
   for_each = local.security_header_policies
@@ -150,7 +150,7 @@ resource "aws_cloudfront_response_headers_policy" "security" {
   security_headers_config {
     strict_transport_security {
       access_control_max_age_sec = 31536000
-      include_subdomains         = true
+      include_subdomains         = false # CC-193: true would also cover email.chiculturecrew.com (GoDaddy webmail, no valid HTTPS)
       override                   = true
     }
     content_type_options { override = true }

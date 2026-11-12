@@ -29,7 +29,7 @@ GitHub Actions ─► OIDC roles (no stored keys) ─► push image / upload pag
 | `aws/db_app_role.tf` | CC-200: password for the API's least-privilege role `culture_app` (secret `culture-crew/db-app`, about $0.40 a month); the server may read it. Rotate: bump `secret_string_wo_version`, apply, then run `culture-crew-deploy`. |
 | `aws/secrets.tf` | JWT signing key, written write-only so it never enters Terraform state |
 | `aws/server.tf`, `aws/server/` | the EC2 instance, its IAM role, and its boot and deploy scripts |
-| `aws/frontend.tf`, `aws/www-redirect.js.tftpl` | S3 bucket, CloudFront, ACM certificate, 404 page, www. redirect, and the security-header policies (CC-193: HSTS, Permissions-Policy and a CSP that is Report-Only until `csp_enforce = true`) |
+| `aws/frontend.tf`, `aws/www-redirect.js.tftpl` | S3 bucket, CloudFront, ACM certificate, 404 page, www. redirect, and the security-header policies (CC-193: Permissions-Policy and a CSP that is Report-Only until `csp_enforce = true`) |
 | `aws/dns.tf` | the Route 53 zone, site and API records |
 | `aws/dns_mail.tf` | email and Microsoft 365 records, copied from GoDaddy; change only when the mail provider asks |
 | `aws/scheduler.tf` | the scheduler's role for running commands on the server |
