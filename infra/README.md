@@ -35,13 +35,15 @@ GitHub Actions ─► OIDC roles (no stored keys) ─► push image / upload pag
 | `aws/photos.tf` | the private, encrypted bucket for "I've been" photos, and the container's permission to store them and check them with Rekognition (CC-76) |
 | `aws/discovery.tf` | event discovery: the API key's slot, the hourly checks, the Tuesday recap email |
 | `aws/monitoring.tf` | log groups, alarms, failed-command alerts, monthly budget |
+| `aws/security.tf` | account monitoring (CC-192): CloudTrail and its private log bucket, GuardDuty, Access Analyzer, and emails on a root sign-in or any IAM change |
 | `aws/github.tf` | OIDC deploy roles for both repos |
 
 Rough cost while free-tier eligible: about $1–2/month out of pocket (Route 53 zone $0.50,
 a Parameter Store/Secrets Manager secret $0.40; the server, database and public IPv4
 address are covered). After the free tier: about $25/month, mostly RDS, EC2 and the
 public IPv4 address ($3.60). Photos add Rekognition's $0.001 a photo (about $10 for 10,000) and a few
-cents a month of S3 storage.
+cents a month of S3 storage. Account monitoring (CC-192) adds about $1.50–5 a month, mostly GuardDuty after
+its 30-day trial (check `aws guardduty get-usage-statistics` around day 25).
 
 ## First deployment
 
@@ -158,4 +160,4 @@ GoDaddy first (`ns51`/`ns52.domaincontrol.com`), with the email records re-creat
 (copy them from `dns_mail.tf`; GoDaddy no longer keeps a copy).
 Then: set `db_deletion_protection = false` in `terraform.tfvars`, `terraform apply`, and
 `terraform destroy`. RDS keeps a final snapshot (`culture-crew-db-final`), which you can
-delete in the console.
+delete in the console. Empty the CloudTrail bucket (`cloudtrail_bucket` output) first, or the destroy stops there.
