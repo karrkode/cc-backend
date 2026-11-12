@@ -29,6 +29,9 @@ FastAPI + SQLAlchemy 2 + Alembic on Postgres. See README.md (setup, endpoints, l
   deploy's own step (`scripts/migrate.py`, a one-off container before the API restarts). Scripts run with
   `docker exec` run as `culture_app` too, so a schema change must be a migration. Never downgrade 0055 in
   production while the API runs as `culture_app`.
+- CC-200: ECR tags are all immutable and there is no `latest`. CI records each deployed tag in the SSM parameter
+  `/culture-crew/api-image-tag` (not managed by Terraform); a new or replaced server starts from it, and
+  `culture-crew-deploy` fails if it finds no tag.
 - The container uses short-lived credentials from the email_sender role (`infra/aws/server/mail-creds.sh`). The
   IMDS hop limit is 1, so the container can't use the instance role.
 - Don't change `infra/aws/server/write-env.sh` or user_data: either one replaces the server. To change a production
