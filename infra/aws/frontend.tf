@@ -91,8 +91,106 @@ resource "aws_cloudfront_function" "canonical_host" {
 
 locals {
   # AWS managed policies
-  cache_policy_caching_optimized   = "658327ea-f89d-4fab-a63d-7e88639e58f6"
-  response_policy_security_headers = "67f7725c-6f97-4210-82d7-5512b31e9d03" # HSTS, nosniff, frame-options...
+  cache_policy_caching_optimized = "658327ea-f89d-4fab-a63d-7e88639e58f6"
+}
+
+# CC-193: the Content-Security-Policy. It ships as Content-Security-Policy-Report-Only first; the one-line
+# change to csp_enforce = true enforces it, once the live pages show no violations in the browser console.
+# Keep these lists equal to the ones in web.nginx.conf (tests/test_csp.py checks it).
+locals {
+  csp_enforce = false
+
+  # base64 sha256 of app/seo.py THEME_SCRIPT, which is also the body of the inline script in the site's
+  # index.html and 404.html (cc-site scripts/test_csp.js pins the same value). tests/test_csp.py checks it.
+  csp_theme_hash = "sha256-fKtflTlilgoEdPhIIhjI+ISyYPQ2B0LkNrNMqwKPy3U="
+
+  # The site: S3 pages, scripts and styles from 'self'. style-src-attr allows the inline style="" attributes
+  # (a follow-up story removes them); api.github.com is for the unlinked deployments.html.
+  csp_site = join("; ", [
+    "default-src 'self'",
+    "script-src 'self' '${local.csp_theme_hash}'",
+    "style-src 'self' https://fonts.googleapis.com",
+    "style-src-attr 'unsafe-inline'",
+    "font-src https://fonts.gstatic.com",
+    "img-src 'self' data: blob: https:",
+    "connect-src 'self' https://api.chiculturecrew.com https://api.github.com",
+    "frame-ancestors 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+  ])
+
+  # The pages the API renders (/e/, /chicago/): no script files, and their CSS is inline in the page.
+  csp_api_pages = join("; ", [
+    "default-src 'none'",
+    "script-src '${local.csp_theme_hash}'",
+    "style-src 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src https://fonts.gstatic.com",
+    "img-src 'self' data:",
+    "frame-ancestors 'none'",
+    "base-uri 'self'",
+    "form-action 'none'",
+  ])
+
+  security_header_policies = {
+    site      = { csp = local.csp_site, comment = "Site, 404 page and event photos (CC-193)" }
+    api_pages = { csp = local.csp_api_pages, comment = "Pages the API renders: /e/, /chicago/ (CC-193)" }
+  }
+}
+
+# CC-193: replaces the managed SecurityHeadersPolicy, keeping what it sent (HSTS, nosniff, frame options,
+# referrer policy, X-XSS-Protection) and adding includeSubDomains, a Permissions-Policy and the CSP.
+# override = true: these replace what the origin sends (the API's own X-Frame-Options was SAMEORIGIN).
+resource "aws_cloudfront_response_headers_policy" "security" {
+  for_each = local.security_header_policies
+
+  name    = "${var.name}-${replace(each.key, "_", "-")}-security-headers"
+  comment = each.value.comment
+
+  security_headers_config {
+    strict_transport_security {
+      access_control_max_age_sec = 31536000
+      include_subdomains         = true
+      override                   = true
+    }
+    content_type_options { override = true }
+    frame_options {
+      frame_option = "DENY"
+      override     = true
+    }
+    referrer_policy {
+      referrer_policy = "strict-origin-when-cross-origin"
+      override        = true
+    }
+    xss_protection {
+      mode_block = true
+      protection = true
+      override   = true
+    }
+
+    dynamic "content_security_policy" {
+      for_each = local.csp_enforce ? [1] : []
+      content {
+        content_security_policy = each.value.csp
+        override                = true
+      }
+    }
+  }
+
+  custom_headers_config {
+    items {
+      header   = "Permissions-Policy"
+      value    = "camera=(), microphone=(), geolocation=()"
+      override = true
+    }
+    dynamic "items" {
+      for_each = local.csp_enforce ? [] : [1]
+      content {
+        header   = "Content-Security-Policy-Report-Only"
+        value    = each.value.csp
+        override = true
+      }
+    }
+  }
 }
 
 # CC-108: event pages, the sitemap and robots.txt come from the API, which renders them as plain HTML
@@ -158,7 +256,7 @@ resource "aws_cloudfront_distribution" "site" {
       cached_methods             = ["GET", "HEAD"]
       compress                   = true
       cache_policy_id            = aws_cloudfront_cache_policy.api_pages.id
-      response_headers_policy_id = local.response_policy_security_headers
+      response_headers_policy_id = aws_cloudfront_response_headers_policy.security["api_pages"].id
 
       function_association {
         event_type   = "viewer-request"
@@ -176,7 +274,7 @@ resource "aws_cloudfront_distribution" "site" {
     cached_methods             = ["GET", "HEAD"]
     compress                   = false # WebP is already compressed
     cache_policy_id            = local.cache_policy_caching_optimized
-    response_headers_policy_id = local.response_policy_security_headers
+    response_headers_policy_id = aws_cloudfront_response_headers_policy.security["site"].id
 
     function_association {
       event_type   = "viewer-request"
@@ -191,7 +289,7 @@ resource "aws_cloudfront_distribution" "site" {
     cached_methods             = ["GET", "HEAD"]
     compress                   = true
     cache_policy_id            = local.cache_policy_caching_optimized
-    response_headers_policy_id = local.response_policy_security_headers
+    response_headers_policy_id = aws_cloudfront_response_headers_policy.security["site"].id
 
     function_association {
       event_type   = "viewer-request"
