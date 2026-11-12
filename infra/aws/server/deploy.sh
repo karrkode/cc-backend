@@ -30,9 +30,9 @@ mkdir -p /etc/culture-crew/mail-creds
 docker network inspect cc >/dev/null 2>&1 || docker network create cc
 
 # CC-200: migrate as the database owner in a one-off container, then start the API as the app role. If it fails,
-# the old API keeps serving and this deploy fails (and alerts). api.env and migrate.env share no keys. An image
-# from before CC-200 ignores OWNER_DATABASE_URL and only runs `alembic upgrade head` as the app role (a no-op
-# when nothing is pending).
+# the old API keeps serving and this deploy fails (and alerts). api.env and migrate.env share no keys. Needs an
+# image from CC-200 or later (scripts.migrate), and migration 0055 already applied: merge and deploy first, then
+# replace the server. Keep migrations expand-only: the old API serves while this runs.
 docker run --rm --network cc \
   --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m \
   --cap-drop ALL --security-opt no-new-privileges \

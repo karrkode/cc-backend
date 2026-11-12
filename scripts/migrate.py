@@ -83,6 +83,16 @@ def main() -> int:
     if problems:
         print("The app role can't do its job:\n  " + "\n  ".join(problems), file=sys.stderr)
         return 1
+    # Prove the app role can really sign in and read before the deploy stops the old API.
+    app_engine = create_engine(app_url)
+    try:
+        with app_engine.connect() as conn:
+            conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
+    except Exception as e:  # noqa: BLE001
+        print(f"{role} can't sign in with DATABASE_URL: {type(e).__name__}", file=sys.stderr)
+        return 1
+    finally:
+        app_engine.dispose()
     with create_engine(owner_url).connect() as conn:
         rev = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
         owner = conn.execute(text("SELECT current_user")).scalar()

@@ -22,7 +22,7 @@ def upgrade() -> None:
     if op.get_bind().dialect.name != 'postgresql':
         return
     op.execute("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'culture_app') "
-               "THEN CREATE ROLE culture_app NOLOGIN; END IF; END $$")
+               "THEN CREATE ROLE culture_app NOLOGIN; END IF; EXCEPTION WHEN duplicate_object THEN NULL; END $$")
     op.execute("GRANT USAGE ON SCHEMA public TO culture_app")
     op.execute("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO culture_app")
     # `alembic current` runs as the app role and only needs to read the revision.
