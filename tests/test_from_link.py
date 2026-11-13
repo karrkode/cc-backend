@@ -327,3 +327,14 @@ def test_a_claude_timeout_is_tried_once_then_the_member_fills_it_in(client, user
 def test_only_the_link_read_gets_the_tight_limit(stalled_claude):
     other = fromlink.claude_client()  # the Add a venue form's read
     assert (other.timeout, other.max_retries) == (60.0, 1)
+
+
+def test_venue_names_match_exactly_not_as_patterns(db):
+    """CC-199: % and _ in a page's venue name are plain characters; case still doesn't matter."""
+    db.add(Venue(name="Steppenwolf Theatre", neighborhood="Lincoln Park")); db.commit()
+    today = today_in_chicago()
+    def hood(name):
+        e = FoundEvent(title="X", kind="production", venue_name=name)
+        return fromlink._draft(db, e, "https://x.example", {}, "claude", today, 0)["neighborhood"]
+    assert hood("STEPPENWOLF THEATRE") == "Lincoln Park"
+    assert hood("%") != "Lincoln Park" and hood("Steppenwol_ Theatre") != "Lincoln Park"

@@ -1,5 +1,3 @@
-import csv
-import io
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
@@ -9,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Query, Response, status
 from pydantic import ValidationError
 from sqlalchemy import delete, func, select, update
 
+from .. import csvsafe
 from ..deps import DB, AdminUser
 from ..discovery.budget import budget_state, set_monthly_budget
 from ..discovery.needs import needs
@@ -249,15 +248,14 @@ SHORT_RUN_DAYS = 6  # CC-212: on for under a week (opening to closing within 6 d
 def items_csv(db: DB, _: AdminUser, show: Show = "waiting", source: int | None = None, price: Has = "any", dates: Has = "any"):
     """The same list as a spreadsheet."""
     rows = db.scalars(_filtered(show, source, price, dates).order_by(DiscoveredItem.first_seen_at.desc(), DiscoveredItem.id.desc())).all()
-    buf = io.StringIO()
-    w = csv.writer(buf)
-    w.writerow(["Title", "Venue", "Neighborhood", "Opens", "Closes", "Open run", "Price", "Link", "Source", "Found", "Status"])
-    for item in rows:
-        o = _item_out(db, item)
-        w.writerow([o.title, o.venue_name, o.neighborhood, o.begin_date or "", o.end_date or "", "yes" if o.open_run else "",
-                    o.cost_text, o.url, o.source_name, o.first_seen_at.date().isoformat(), o.status])
+    # CC-199: every cell goes through the shared helper, so a title like =HYPERLINK(...) stays text
+    body = csvsafe.to_csv(
+        ["Title", "Venue", "Neighborhood", "Opens", "Closes", "Open run", "Price", "Link", "Source", "Found", "Status"],
+        ([o.title, o.venue_name, o.neighborhood, o.begin_date or "", o.end_date or "", "yes" if o.open_run else "",
+          o.cost_text, o.url, o.source_name, o.first_seen_at.date().isoformat(), o.status]
+         for o in (_item_out(db, item) for item in rows)))
     name = f"discovered-{show}-{date.today().isoformat()}.csv"
-    return Response(buf.getvalue(), media_type="text/csv; charset=utf-8",
+    return Response(body, media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 

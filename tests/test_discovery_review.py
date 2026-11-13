@@ -154,3 +154,13 @@ def test_filter_by_price_and_dates(client, admin_token, db):
     assert client.get("/admin/discovery/items", params={"price": "maybe"}, headers=h).status_code == 422
     rows = list(csv.reader(io.StringIO(client.get("/admin/discovery/items.csv", params={"dates": "none"}, headers=h).text)))
     assert sorted(r[0] for r in rows[1:]) == ["Free, no dates", "Neither"]
+
+
+def test_csv_formula_cells_stay_text(client, admin_token, db):
+    """CC-199: a title or price that starts like a formula is exported as text."""
+    s = make_source(db)
+    record(db, s, found('=HYPERLINK("https://x.example","Tickets")', "https://goodman.example/x", begin_date="2027-01-10", cost_text="-5"), "")
+    db.commit()
+    r = client.get("/admin/discovery/items.csv", headers=auth(admin_token))
+    row = list(csv.reader(io.StringIO(r.text)))[1]
+    assert row[0] == '\'=HYPERLINK("https://x.example","Tickets")' and row[6] == "'-5"

@@ -92,7 +92,7 @@ def test_the_public_page_and_event_data_have_it_only_when_set(client, db, make_e
     db.commit()
     text = client.get(f"/e/{ev.id}-open-show").text
     assert "1 &lt;Odd&gt; &amp; Co St, Oak Park, IL 60601" in text and "<Odd>" not in text.split("ld+json")[0]
-    assert "google.com/maps/search" in text and '"streetAddress": "1 <Odd> & Co St"' in text
+    assert "google.com/maps/search" in text and '"streetAddress": "1 \\u003cOdd\\u003e \\u0026 Co St"' in text  # CC-199: escaped inside the script block
     assert '"postalCode": "60601"' in text and '"addressLocality": "Oak Park"' in text
 
 

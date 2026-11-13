@@ -49,9 +49,10 @@ def members(db: DB, _: AdminUser, q: Annotated[str, Query(max_length=100)] = "",
             show: Literal["all", "approvers"] = "all", limit: Annotated[int, Query(ge=1, le=200)] = 50):
     """Members by name, to offer or remove the approver permission. Approvers and open offers first."""
     query = select(User)
-    if q.strip():
-        like = f"%{q.strip().lower()}%"
-        query = query.where(or_(func.lower(User.display_name).like(like), User.email.like(like)))
+    term = q.strip()
+    if term:  # CC-199: autoescape, so % and _ in the search are plain characters
+        query = query.where(or_(User.display_name.icontains(term, autoescape=True),
+                                User.email.icontains(term, autoescape=True)))
     if show == "approvers":
         query = query.where(or_(User.approver, User.approver_offered_at.is_not(None)))
     rows = db.scalars(query.order_by(User.approver.desc(), User.approver_offered_at.is_(None),
