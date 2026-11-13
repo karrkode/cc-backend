@@ -2,7 +2,6 @@
 through short-lived signed links, and removed with its mark or event."""
 import io
 import os
-import threading
 import time
 from datetime import UTC, datetime, timedelta
 
@@ -17,10 +16,9 @@ from app.models import PhotoCheck, User, WentPhoto
 from .conftest import auth
 
 
-
-def picture(fmt="JPEG", size=(40, 20), exif=False, icc=False, mode="RGB", colour=(200, 60, 40)):
+def picture(fmt="JPEG", size=(40, 20), exif=False, icc=False, mode="RGB", colour=(200, 60, 40), comment=None):
     """CC-197: a real image, since uploads are decoded and re-saved now."""
-    im = Image.new(mode, size, colour if mode == "RGB" else colour + (128,))
+    im = Image.new(mode, size, colour + (128,) if mode == "RGBA" else colour)
     kw = {}
     if exif:
         ex = Image.Exif()
@@ -31,6 +29,8 @@ def picture(fmt="JPEG", size=(40, 20), exif=False, icc=False, mode="RGB", colour
     if icc:
         from PIL import ImageCms
         kw["icc_profile"] = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
+    if comment:
+        kw["comment"] = comment  # a JPEG COM marker
     out = io.BytesIO()
     im.save(out, fmt, **kw)
     return out.getvalue()

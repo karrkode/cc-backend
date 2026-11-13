@@ -3,10 +3,12 @@ clash leaves no file behind, and two decisions on one photo can't both win."""
 import io
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 
 import pytest
 from PIL import Image
 from sqlalchemy import delete, select
+from sqlalchemy.orm import Session
 
 from app import photos
 from app.models import Attended, OwnEvent, PhotoCheck, WentPhoto
@@ -44,6 +46,33 @@ def test_metadata_is_removed_and_the_orientation_applied(client, user_token, mak
     assert im.format == "JPEG" and im.size == (20, 40)  # orientation 6 turns it upright
     assert len(im.getexif()) == 0 and "icc_profile" not in im.info and b"TestCam" not in kept
     assert sent == [kept]  # Rekognition saw the very bytes we keep
+
+
+@pytest.mark.parametrize("kw", [{"comment": b"SECRET-COMMENT"}, {"comment": b"SECRET-COMMENT", "exif": True},
+                                {"comment": b"SECRET-COMMENT", "mode": "L", "colour": (90,)}])
+def test_a_jpeg_comment_is_removed_too(client, user_token, make_event, seen, kw):
+    root, _ = seen
+    ev = make_event("Hamlet")
+    been(client, user_token, ev.id)
+    assert b"SECRET-COMMENT" in picture("JPEG", **kw)
+    assert upload(client, user_token, ev.id, picture("JPEG", **kw)).status_code == 200
+    assert b"SECRET-COMMENT" not in only_file(root)
+
+
+def test_a_phone_sized_picture_is_taken_and_decodes_that_wait_too_long_are_turned_away(client, user_token, make_event, db, seen, monkeypatch):
+    root, sent = seen
+    ev = make_event("Hamlet")
+    been(client, user_token, ev.id)
+    assert photos.MAX_PIXELS >= 4032 * 3024
+    monkeypatch.setattr(photos, "DECODE_WAIT", 0.01)
+    for _ in range(2):  # both decoders taken
+        assert photos.DECODERS.acquire(timeout=1)
+    try:
+        r = upload(client, user_token, ev.id)
+    finally:
+        photos.DECODERS.release()
+        photos.DECODERS.release()
+    assert r.status_code == 503 and files(root) == [] and sent == [] and db.scalar(select(PhotoCheck)) is None
 
 
 def test_a_webp_comes_back_as_a_jpeg_and_a_big_one_is_shrunk(client, user_token, make_event, seen):
@@ -109,20 +138,31 @@ def test_a_storage_failure_after_the_check_counts_and_leaves_nothing(client, use
     assert files(root) == [] and [c.outcome for c in db.scalars(select(PhotoCheck))] == ["failed"]
 
 
-def test_a_replaced_photo_keeps_its_old_file_until_the_new_one_is_committed(client, user_token, make_event, db, stored, monkeypatch):
+def test_a_replaced_photo_keeps_its_old_file_when_the_swap_fails_to_commit(client, user_token, make_event, db, stored, monkeypatch):
     root, _ = stored
     ev = make_event("Hamlet")
     been(client, user_token, ev.id)
     assert upload(client, user_token, ev.id).status_code == 200
     old = files(root)
+    real_put, real_commit = photos.LocalStore.put, Session.commit
+    armed = []
 
-    def put_then_fail(self, key, data, content_type):  # the new file lands, then the database refuses the swap
-        (root / key).parent.mkdir(parents=True, exist_ok=True)
-        (root / key).write_bytes(data)
-        monkeypatch.setattr(photos, "WentPhoto", None)  # the swap now raises
-    monkeypatch.setattr(photos.LocalStore, "put", put_then_fail)
+    def put_then_arm(self, key, data, content_type):
+        real_put(self, key, data, content_type)
+        armed.append(1)  # the new file has landed: the next commit (the swap) fails
+    monkeypatch.setattr(photos.LocalStore, "put", put_then_arm)
+
+    def commit(self):
+        if armed:
+            armed.clear()
+            raise OSError("database went away")
+        return real_commit(self)
+    monkeypatch.setattr(Session, "commit", commit)
     assert upload(client, user_token, ev.id).status_code == 503
-    assert files(root) == old  # the new file was deleted, the old one kept
+    assert files(root) == old  # the new file was deleted; the old one is kept, as is its row
+    db.expire_all()
+    assert db.scalar(select(WentPhoto.key)) == f"photos/{old[0]}"
+    assert sorted(c.outcome for c in db.scalars(select(PhotoCheck))) == ["failed", "stored"]
 
 
 # ---- parallel (Postgres only) -----------------------------------------------------------------
@@ -165,8 +205,15 @@ def test_parallel_uploads_never_pass_the_daily_limit(client, user_token, make_ev
 
 
 @needs_postgres
-def test_two_decisions_on_one_photo_never_both_win(client, user_token, admin_token, make_event, db, engine, stored):
+def test_two_decisions_on_one_photo_never_both_win(client, user_token, admin_token, make_event, db, engine, stored, monkeypatch):
     root, _ = stored
+
+    class SlowClock(datetime):  # a wide gap between reading the photo and committing, so a missing lock shows
+        @classmethod
+        def now(cls, tz=None):
+            time.sleep(0.2)
+            return super().now(tz)
+    monkeypatch.setattr("app.routers.approvals.datetime", SlowClock)
     ev = make_event("Hamlet")
     been(client, user_token, ev.id)
     try:

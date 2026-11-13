@@ -44,8 +44,11 @@ def _photo_saved(db, user, event_id: int, data: bytes, content_type: str) -> Wen
     if photos.kind_of(data, content_type) is None:
         raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "Send a JPEG or WebP photo.")
     # CC-197: the photo we check and keep is our own re-save, never the upload
+    db.rollback()  # no transaction held open while this waits for its turn to decode
     try:
         data = photos.clean(data)
+    except photos.Busy:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Photos can't be sent right now. Try again later.") from None
     except photos.BadPhoto:
         raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "Send a JPEG or WebP photo.") from None
     check_id = photos.reserve(db, user.id)  # under the member's lock; None at the limit

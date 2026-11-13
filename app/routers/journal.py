@@ -115,8 +115,11 @@ def _own_photo_saved(db, user, own_id: int, data: bytes, content_type: str) -> O
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "That's 10 photos today. Try again tomorrow.")
     if photos.kind_of(data, content_type) is None:
         raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "Send a JPEG or WebP photo.")
+    db.rollback()  # no transaction held open while this waits for its turn to decode
     try:  # CC-197: the photo we check and keep is our own re-save, never the upload
         data = photos.clean(data)
+    except photos.Busy:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Photos can't be sent right now. Try again later.") from None
     except photos.BadPhoto:
         raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "Send a JPEG or WebP photo.") from None
     check_id = photos.reserve(db, user.id)  # under the member's lock; None at the limit

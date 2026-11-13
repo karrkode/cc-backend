@@ -24,7 +24,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from sqlalchemy import func, select, text
-from sqlalchemy.exc import IntegrityError, InvalidRequestError
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm.exc import ObjectDeletedError, StaleDataError
 
 from . import keys
 from .config import get_settings
@@ -34,9 +35,10 @@ MAX_BYTES = 3_000_000  # after the browser shrinks it; about 200 KB is usual
 UPLOADS_PER_DAY = 10
 LINK_MINUTES = 15
 CHECK_USD = 0.001  # Rekognition DetectModerationLabels, the first million photos a month
-MAX_PIXELS = 12_000_000  # CC-197: width x height we'll decode (a phone camera is about 12 MP)
+MAX_PIXELS = 12_582_912  # CC-197: width x height we'll decode: 12 x 2^20, so a phone's 4032 x 3024 fits
 MAX_SIDE = 1600  # CC-197: the longest side we keep, as the browser already sends
 DECODERS = threading.BoundedSemaphore(2)  # CC-197: decodes at once, so parallel uploads can't fill a small server
+DECODE_WAIT = 10  # seconds a decode waits its turn before the upload is turned away
 MAGIC = {"image/jpeg": (b"\xff\xd8\xff",), "image/webp": (b"RIFF",)}
 REFUSE_AT = 90.0  # confidence (%) at which these are refused outright
 REFUSE = {"Explicit Nudity", "Explicit", "Explicit Sexual Activity", "Sex Toys", "Graphic Violence",
@@ -50,6 +52,10 @@ class Refused(Exception):
 
 class BadPhoto(ValueError):
     """CC-197: the bytes aren't a photo we can read, or it's too large."""
+
+
+class Busy(Exception):
+    """CC-197: too many photos are being decoded at once."""
 
 
 class Clash(Exception):
@@ -66,41 +72,49 @@ def kind_of(data: bytes, content_type: str) -> str | None:
 
 def clean(data: bytes) -> bytes:
     """CC-197: any JPEG or WebP -> a new JPEG: orientation applied, colours in sRGB, no metadata, at most MAX_SIDE.
-    Rekognition and storage both get these bytes, never the upload. Raises BadPhoto."""
+    Rekognition and storage both get these bytes, never the upload. Raises BadPhoto, or Busy if the decoders
+    stay taken for DECODE_WAIT seconds."""
+    if not DECODERS.acquire(timeout=DECODE_WAIT):
+        raise Busy()
+    try:
+        return _clean(data)
+    except BadPhoto:
+        raise
+    except Exception as err:  # Pillow raises several kinds for unreadable files
+        raise BadPhoto(str(err)) from err
+    finally:
+        DECODERS.release()
+
+
+def _clean(data: bytes) -> bytes:
     from PIL import Image, ImageOps  # Pillow only loads where photos are made, not on every API request
 
-    with DECODERS:
+    im = Image.open(io.BytesIO(data), formats=["JPEG", "WEBP"])
+    if im.width * im.height > MAX_PIXELS:  # before load(), which is what takes the memory
+        raise BadPhoto("too many pixels")
+    im.load()  # an animated WebP gives its first frame
+    im.thumbnail((MAX_SIDE, MAX_SIDE), Image.Resampling.LANCZOS)  # first, so the steps below work on the small copy
+    im = ImageOps.exif_transpose(im)
+    profile = im.info.get("icc_profile")
+    has_alpha = im.mode in ("RGBA", "LA", "PA") or "transparency" in im.info
+    if profile:  # browsers assume sRGB once the profile is gone, so convert rather than drop it
+        from PIL import ImageCms
         try:
-            im = Image.open(io.BytesIO(data), formats=["JPEG", "WEBP"])
-            if im.width * im.height > MAX_PIXELS:  # before load(), which is what takes the memory
-                raise BadPhoto("too many pixels")
-            im.load()  # an animated WebP gives its first frame
-            im = ImageOps.exif_transpose(im)
-            profile = im.info.get("icc_profile")
-            has_alpha = im.mode in ("RGBA", "LA", "PA") or "transparency" in im.info
-            if profile:  # browsers assume sRGB once the profile is gone, so convert rather than drop it
-                from PIL import ImageCms
-                try:
-                    im = ImageCms.profileToProfile(im, ImageCms.ImageCmsProfile(io.BytesIO(profile)),
-                                                   ImageCms.createProfile("sRGB"),
-                                                   outputMode="RGBA" if has_alpha else "RGB")
-                except Exception:  # a broken profile: keep the pixels as they are
-                    pass
-            if has_alpha:  # JPEG has no transparency: put it on white
-                im = im.convert("RGBA")
-                flat = Image.new("RGB", im.size, (255, 255, 255))
-                flat.paste(im, mask=im.getchannel("A"))
-                im = flat
-            else:
-                im = im.convert("RGB")
-            im.thumbnail((MAX_SIDE, MAX_SIDE), Image.Resampling.LANCZOS)
-            out = io.BytesIO()
-            im.save(out, "JPEG", quality=85)  # no exif= or icc_profile=, so no metadata is written
-            return out.getvalue()
-        except BadPhoto:
-            raise
-        except Exception as err:  # Pillow raises several kinds for unreadable files
-            raise BadPhoto(str(err)) from err
+            im = ImageCms.profileToProfile(im, ImageCms.ImageCmsProfile(io.BytesIO(profile)),
+                                           ImageCms.createProfile("sRGB"), outputMode="RGBA" if has_alpha else "RGB")
+        except Exception:  # a broken profile: keep the pixels as they are
+            pass
+    if has_alpha:  # JPEG has no transparency: put it on white
+        im = im.convert("RGBA")
+        flat = Image.new("RGB", im.size, (255, 255, 255))
+        flat.paste(im, mask=im.getchannel("A"))
+        im = flat
+    else:
+        im = im.convert("RGB")
+    im.info.clear()  # Pillow's JPEG writer falls back to info["comment"], so a COM marker would survive
+    out = io.BytesIO()
+    im.save(out, "JPEG", quality=85)  # no exif= or icc_profile=, so no metadata is written
+    return out.getvalue()
 
 
 # ---- checking (Amazon Rekognition) ----------------------------------------------------------
@@ -292,7 +306,7 @@ def _failed(db, check_id: int, key: str, err: Exception):
     db.rollback()
     _delete_quietly(key)
     _outcome(db, check_id, "failed")
-    if isinstance(err, (IntegrityError, InvalidRequestError)):  # InvalidRequestError: the own event is gone
+    if isinstance(err, (IntegrityError, StaleDataError, ObjectDeletedError)):  # the mark or own event changed or is gone
         raise Clash() from err
     raise err
 
@@ -332,7 +346,7 @@ def save_own(db, own: OwnEvent, check_id: int, data: bytes, content_type: str) -
     _put(db, check_id, key, data)
     try:
         _user_lock(db, user_id)
-        db.refresh(own)  # a second upload may have replaced the photo while this one was checked
+        db.refresh(own, with_for_update={"of": OwnEvent})  # a second upload may have replaced the photo while this one was checked
         old_key = own.photo_key
         own.photo_key, own.photo_type, own.photo_at = key, content_type, datetime.now(UTC)
         check = db.get(PhotoCheck, check_id)
