@@ -44,3 +44,4 @@ FastAPI + SQLAlchemy 2 + Alembic on Postgres. See README.md (setup, endpoints, l
 - Path parameters that are UUIDs need the `uuid.UUID` type.
 - One migration per story, numbered in sequence in `alembic/versions/`.
 - Comments say why, briefly, with the story key (e.g. `# CC-83: ...`).
+- Never hand-edit `requirements.txt` or `requirements-dev.txt`: they are generated from the `.in` files (README, "Changing a dependency").

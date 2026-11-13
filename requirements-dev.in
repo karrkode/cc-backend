@@ -1,0 +1,5 @@
+# CC-194: test tooling on top of requirements.in. -c keeps every shared package at the version in requirements.txt.
+-c requirements.txt
+-r requirements.in
+pytest==9.2.0
+httpx2==2.16.0  # used by Starlette's TestClient (successor to httpx)

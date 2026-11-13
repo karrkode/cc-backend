@@ -37,7 +37,7 @@ jobs:
           python-version: "3.14" # same as the Docker image
           cache: pip
           cache-dependency-path: requirements-dev.txt
-      - run: pip install -r requirements-dev.txt
+      - run: pip install --require-hashes -r requirements-dev.txt
       - name: Tests on SQLite
         run: pytest -q
       - name: Tests on Postgres (includes "migrations match the models")
@@ -67,10 +67,31 @@ jobs:
       # Plans and applies stay on the maintainer's machine: a CI identity that could read
       # the whole account (as `terraform plan` needs) isn't worth the risk for this project.
 
+  # CC-194: build the API image on every PR, so a lock or Dockerfile change is tested before it reaches main.
+  image:
+    name: Image
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: docker build -t api:ci .
+      - name: The image imports its packages
+        run: docker run --rm --entrypoint python api:ci -c "import fastapi, sqlalchemy, psycopg, PIL, bcrypt, uvloop, alembic"
+      - name: The image has no pip
+        run: |
+          for py in python /usr/local/bin/python; do
+            for mod in pip ensurepip; do
+              if docker run --rm --entrypoint "$py" api:ci -m "$mod" --version; then
+                echo "$mod is still in the image ($py)"; exit 1
+              fi
+            done
+          done
+      - name: The image's commands run
+        run: docker run --rm --entrypoint sh api:ci -c "uvicorn --version && alembic --version"
+
   deploy:
     name: Deploy to production
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [test, infra]
+    needs: [test, infra, image]
     runs-on: ubuntu-24.04-arm # native arm64, matching the Graviton server
     environment:
       name: production
