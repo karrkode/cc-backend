@@ -131,7 +131,7 @@ def test_password_change_emails_a_notice(client, user_token):
                 json={"current_password": PW, "new_password": "new-horse-battery-2"})
     [notice] = OUTBOX
     assert notice.to == "ana@example.com"
-    assert notice.subject == "Your Culture Crew password was changed"
+    assert notice.subject == "Your Chi Culture Crew password was changed"
     assert "changed" in notice.text and "info@chiculturecrew.com" in notice.text
 
 
@@ -139,7 +139,7 @@ def test_password_reset_emails_a_notice(client, user_token):
     client.post("/auth/forgot-password", json={"email": "ana@example.com"})
     client.post("/auth/reset-password", json={"token": _reset_token(), "new_password": "new-horse-battery-2"})
     notice = OUTBOX[-1]
-    assert notice.to == "ana@example.com" and notice.subject == "Your Culture Crew password was changed"
+    assert notice.to == "ana@example.com" and notice.subject == "Your Chi Culture Crew password was changed"
     assert "was just reset" in notice.text
 
 
@@ -151,7 +151,7 @@ def test_email_change_tells_the_old_address(client, user_token):
     by_to = {e.to: e for e in OUTBOX}
     assert set(by_to) == {"ana.new@example.com", "ana@example.com"}  # confirm link, and the notice
     notice = by_to["ana@example.com"]
-    assert notice.subject == "The email for your Culture Crew account was changed"
+    assert notice.subject == "The email for your Chi Culture Crew account was changed"
     assert "ana.new@example.com" not in notice.text  # never tells the old address where the account went
 
 

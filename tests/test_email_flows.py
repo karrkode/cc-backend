@@ -125,7 +125,7 @@ def test_forgot_password_answers_the_same_for_any_address(client):
     assert known.status_code == unknown.status_code == 202
     assert known.json() == unknown.json() == {"detail": FORGOT_REPLY}
     assert [e.to for e in OUTBOX] == ["ana@example.com"]  # only the real account is emailed
-    assert OUTBOX[0].subject == "Reset your Culture Crew password" and "expires in 60 minutes" in OUTBOX[0].text
+    assert OUTBOX[0].subject == "Reset your Chi Culture Crew password" and "expires in 60 minutes" in OUTBOX[0].text
 
 
 def test_reset_password_signs_in_and_out_everywhere_else(client, db):

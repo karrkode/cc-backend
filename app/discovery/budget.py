@@ -97,7 +97,7 @@ def alert_email(state: str, spent: float, budget: float) -> Email:
     return Email(to=s.recap_to,
                  subject="Event discovery: budget used up" if state == "paused" else "Event discovery: over 80% of the budget spent",
                  text=f"${spent:.2f} of the ${budget:.0f} monthly budget is spent.\n\n{now_what}\n\n"
-                      f"To change the budget, go to the Source grid: {s.site_url.rstrip('/')}/#sources\n\nCulture Crew\n")
+                      f"To change the budget, go to the Source grid: {s.site_url.rstrip('/')}/#sources\n\nChi Culture Crew\n")
 
 
 def alert_if_short(db, now: datetime | None = None) -> bool:

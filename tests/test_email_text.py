@@ -1,4 +1,5 @@
 """CC-185: every email's subject and opening lines are our own wording; members' names are plain one-line text."""
+import re
 from sqlalchemy import select
 
 from app import mail
@@ -20,7 +21,7 @@ def user(name: str, email: str = "ana@example.com") -> User:
 
 def test_confirm_and_reset_emails_open_with_our_own_greeting():
     for email in (mail.verify_email(user(PROSE), "tok"), mail.reset_password(user(PROSE), "tok")):
-        assert email.subject in ("ChiCultureCrew needs you to validate your email!", "Reset your Culture Crew password")
+        assert email.subject in ("ChiCultureCrew needs you to validate your email!", "Reset your Chi Culture Crew password")
         assert email.text.startswith(("Hi,\n\n", "Hello hello and welcome to Chi Culture Crew!"))
         assert "evil" not in email.text and "order" not in email.text  # the name isn't in these emails at all
         assert email.html == ""  # text only, so there's no HTML copy to differ from it
@@ -28,9 +29,9 @@ def test_confirm_and_reset_emails_open_with_our_own_greeting():
 
 def test_crew_invite_has_a_cleaned_subject_and_labels_the_members_names():
     email = mail.crew_invite("ben@example.com", "Ana\nClick https://evil.example", "Claim prize at evil.example", 14)
-    assert email.subject == "Ana Click invited you to a crew on Culture Crew"  # one line, no link, capped
+    assert email.subject == "Ana Click invited you to a crew on Chi Culture Crew"  # one line, no link, capped
     opening = email.text.split("Invited by:")[0]
-    assert opening == "Hi,\n\nYou've been invited to join a crew on Culture Crew, to find and plan Chicago culture outings together.\n\n"
+    assert opening == "Hi,\n\nYou've been invited to join a crew on Chi Culture Crew, to find and plan Chicago culture outings together.\n\n"
     assert "Invited by: Ana Click\nCrew: Claim prize at\n" in email.text
     assert "evil" not in email.text and "https" not in email.text
     assert "If you don't know who invited you" in email.text
@@ -38,7 +39,7 @@ def test_crew_invite_has_a_cleaned_subject_and_labels_the_members_names():
 
 def test_crew_invite_names_are_capped():
     email = mail.crew_invite("ben@example.com", "A" * 80, "B" * 200, 14)
-    assert email.subject == f"{'A' * 39}… invited you to a crew on Culture Crew"
+    assert email.subject == f"{'A' * 39}… invited you to a crew on Chi Culture Crew"
     assert f"Invited by: {'A' * 39}…\n" in email.text and f"Crew: {'B' * 59}…\n" in email.text
 
 
@@ -49,7 +50,7 @@ def test_an_invite_sent_through_the_api_uses_the_fixed_wording(client):
     OUTBOX.clear()
     assert client.post(f"/crews/{crew['id']}/email-invites", json={"email": "ben@example.com"}, headers=ana).status_code == 202
     [email] = OUTBOX
-    assert email.subject == "Ana C. invited you to a crew on Culture Crew"
+    assert email.subject == "Ana C. invited you to a crew on Chi Culture Crew"
     assert "Invited by: Ana C.\nCrew: Visit now\n" in email.text and "evil" not in email.text
 
 
@@ -68,7 +69,7 @@ def test_the_recap_keeps_reporters_text_on_one_line_and_escaped(db):
 
 def test_a_name_that_is_only_a_link_isnt_in_the_subject():
     email = mail.crew_invite("ben@example.com", "URGENT:verify-at-evil.example", "Crew", 14)
-    assert email.subject == "A member invited you to a crew on Culture Crew"
+    assert email.subject == "A member invited you to a crew on Chi Culture Crew"
 
 
 def test_plain_name():
@@ -123,3 +124,20 @@ def test_names_saved_before_the_rules_still_show_and_can_be_kept(client, db):
                                        "current_password": "correct-horse-1"}, headers=h)
     assert r.status_code == 200 and r.json()["display_name"] == "Culture Crew"
     assert ana.role == Role.user
+
+
+# ---- CC-266: the name is "Chi Culture Crew" in every email ------------------------------------
+
+def test_every_email_says_chi_culture_crew(db):
+    from app.config import get_settings
+    from app.discovery.budget import alert_email
+
+    u = user("Ana")
+    emails = [mail.verify_email(u, "tok"), mail.reset_password(u, "tok"), mail.password_changed(u, "reset"),
+              mail.email_changed("old@example.com"), mail.welcome(u),
+              mail.crew_invite("ben@example.com", "Ana", "Crew", 14),
+              build_recap(db), alert_email("warn", 8.0, 10), alert_email("paused", 10.0, 10)]
+    for e in emails:
+        assert not re.search(r"(?<!Chi )Culture Crew", e.subject + e.text + e.html), e.subject
+    assert "Chi Culture Crew" in build_recap(db).html
+    assert get_settings().mail_from.startswith("Chi Culture Crew <")
