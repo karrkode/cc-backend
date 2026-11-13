@@ -285,7 +285,7 @@ def as_text(w: Week) -> str:
     lines += ["", f"CHECKS THIS WEEK: {_n(w.checks, 'check')}, {_n(w.pages, 'page')} read, about ${w.week_cost:.2f}",
               f"This month: ${w.spent:.2f} of the ${w.budget:.0f} budget." + (f" {budget_note(w)}" if budget_note(w) else "")]
     lines += _cols([("Source", "How often", "Next check")] + w.sources)
-    lines += ["", f"Source grid: {w.link('sources')}", "Sent every Tuesday at 10 AM.", "Culture Crew"]
+    lines += ["", f"Source grid: {w.link('sources')}", "Sent every Tuesday at 10 AM.", "Chi Culture Crew"]
     return "\n".join(lines) + "\n"
 
 
@@ -337,7 +337,7 @@ def as_html(w: Week) -> str:
     to_check = len(w.unreadable) + len(w.by_hand)
     parts = [
         f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>'
-        f'<td style="font-family:{DISPLAY};font-weight:600;font-size:15px;color:{TEXT}"><span style="color:{LEAD}">&#10038;</span> Culture Crew</td>'
+        f'<td style="font-family:{DISPLAY};font-weight:600;font-size:15px;color:{TEXT}"><span style="color:{LEAD}">&#10038;</span> Chi Culture Crew</td>'
         f'<td style="text-align:right;font-size:12px;color:{MUTED}">Weekly discovery &middot; {_md(w.first)}&ndash;{_md(w.last)}</td></tr></table>',
         f'<h1 style="margin:16px 0 0;font-family:{DISPLAY};font-weight:600;font-size:22px;line-height:1.25;color:{TEXT}">'
         f'{escape(hello)} Here\'s what\'s changed in the last week.</h1>',

@@ -142,9 +142,9 @@ Andrew Carr
 
 def reset_password(user: User, raw: str) -> Email:
     s = get_settings()
-    return Email(user.email, "Reset your Culture Crew password", f"""Hi,
+    return Email(user.email, "Reset your Chi Culture Crew password", f"""Hi,
 
-Someone (hopefully you) asked to reset the password for your Culture Crew account.
+Someone (hopefully you) asked to reset the password for your Chi Culture Crew account.
 To choose a new one, open this link:
 
 {s.site_url}/#reset={raw}
@@ -152,7 +152,7 @@ To choose a new one, open this link:
 The link works once and expires in {s.reset_link_minutes} minutes. Resetting your password signs
 you out everywhere. If you didn't ask for this, ignore this email; your password stays the same.
 
-Culture Crew
+Chi Culture Crew
 {s.site_url}
 """)
 
@@ -160,9 +160,9 @@ Culture Crew
 def password_changed(user: User, how: str) -> Email:
     """CC-203: the account's password was changed (from the account page) or reset (from an emailed link)."""
     s = get_settings()
-    return Email(user.email, "Your Culture Crew password was changed", f"""Hi,
+    return Email(user.email, "Your Chi Culture Crew password was changed", f"""Hi,
 
-The password for your Culture Crew account was just {how}. Any other devices that were signed in
+The password for your Chi Culture Crew account was just {how}. Any other devices that were signed in
 have been signed out.
 
 If this was you, there's nothing more to do. If it wasn't, reset your password now with
@@ -170,7 +170,7 @@ If this was you, there's nothing more to do. If it wasn't, reset your password n
 
 {s.site_url}/#account
 
-Culture Crew
+Chi Culture Crew
 {s.site_url}
 """)
 
@@ -179,15 +179,15 @@ def email_changed(old_email: str) -> Email:
     """CC-203: sent to the address an account used to have. It doesn't name the new address, which
     may not belong to whoever reads this."""
     s = get_settings()
-    return Email(old_email, "The email for your Culture Crew account was changed", f"""Hi,
+    return Email(old_email, "The email for your Chi Culture Crew account was changed", f"""Hi,
 
-The email address for the Culture Crew account that used this address has just been changed,
+The email address for the Chi Culture Crew account that used this address has just been changed,
 so we won't send account emails here any more.
 
 If this was you, there's nothing more to do. If it wasn't, write to us at {CONTACT} and we'll
 help you get the account back.
 
-Culture Crew
+Chi Culture Crew
 {s.site_url}
 """)
 
@@ -269,9 +269,9 @@ def crew_invite(to: str, inviter: str, crew: str, days: int) -> Email:
     s = get_settings()
     inviter, crew = plain_name(inviter, "A member"), plain_name(crew, "A crew", cap=60)
     confirm = " (a new account confirms its email address first)" if s.require_verified_email else ""
-    return Email(to, f"{inviter} invited you to a crew on Culture Crew", f"""Hi,
+    return Email(to, f"{inviter} invited you to a crew on Chi Culture Crew", f"""Hi,
 
-You've been invited to join a crew on Culture Crew, to find and plan Chicago culture outings together.
+You've been invited to join a crew on Chi Culture Crew, to find and plan Chicago culture outings together.
 
 Invited by: {inviter}
 Crew: {crew}
@@ -284,6 +284,6 @@ the invite under "Waiting for you":
 
 The invite waits for {days} days. If you don't know who invited you, you can ignore this email.
 
-Culture Crew
+Chi Culture Crew
 {s.site_url}
 """)

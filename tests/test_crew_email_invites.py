@@ -109,7 +109,7 @@ def test_the_invite_is_emailed_once_per_crew_while_it_waits(client, db):
     send(client, ana, crew, "BEN@example.com")  # already waiting: no second email
     assert [e.to for e in OUTBOX] == ["ben@example.com", "nobody@example.com"]
     a, b = OUTBOX
-    assert a.subject == "Ana C. invited you to a crew on Culture Crew"  # CC-185: the cleaned name only
+    assert a.subject == "Ana C. invited you to a crew on Chi Culture Crew"  # CC-185: the cleaned name only
     assert "Invited by: Ana C.\nCrew: Thursday Theater\n" in a.text
     assert a.text.replace("ben@", "x@") == b.text.replace("nobody@", "x@")  # the same whether or not there's an account
     assert "Cruz" not in a.text and "/#account" in a.text and "14 days" in a.text
