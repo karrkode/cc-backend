@@ -24,6 +24,8 @@ from multiprocessing import forkserver
 from time import monotonic
 from urllib.parse import urlsplit
 
+from sqlalchemy import func
+
 from .config import get_settings
 from .discovery import fetch as web
 from .discovery.budget import budget_state
@@ -261,7 +263,7 @@ def _draft(db, e: FoundEvent, url: str, place: dict, how: str, today: date, othe
     venue_name, town, ld_category = place.get("venue", ""), place.get("town", ""), place.get("category")
     venue_name = (e.venue_name or venue_name).strip()
     source = _source_for(db, url)
-    named = db.query(Venue).filter(Venue.name.ilike(venue_name), Venue.pending.is_(False))  # CC-188: members don't see pending ones
+    named = db.query(Venue).filter(func.lower(Venue.name) == venue_name.lower(), Venue.pending.is_(False))  # CC-188: members don't see pending ones; CC-199: an exact match, not a LIKE pattern
     if source and not (venue_name and named.first()):
         # a venue's own site whose page names a stage ("Albert Theatre") or nothing: discovery knows the venue
         venue_name = source.venue.name if source.venue else source.venue_name or venue_name
@@ -269,7 +271,7 @@ def _draft(db, e: FoundEvent, url: str, place: dict, how: str, today: date, othe
     begin, end = e.begin_date, e.end_date if place.get("end_given", True) else None
     if (end or begin or "9999") < today.isoformat():  # over, or a placeholder date (Goodman's pages give 1970-01-01)
         begin = end = None
-    known = db.query(Venue).filter(Venue.name.ilike(venue_name), Venue.pending.is_(False)).all() if venue_name else []
+    known = db.query(Venue).filter(func.lower(Venue.name) == venue_name.lower(), Venue.pending.is_(False)).all() if venue_name else []
     hoods = {v.neighborhood for v in known if v.neighborhood.strip()}
     if len(hoods) == 1:
         hood = hoods.pop()

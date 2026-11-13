@@ -289,6 +289,11 @@ def _takes_html(takes: list[dict]) -> str:
             f'<ol>{"".join(items)}</ol></section>')
 
 
+def script_json(data) -> str:
+    """CC-199: JSON for a <script> block. < > & as unicode escapes, so no title can close the block or open a comment."""
+    return json.dumps(data, ensure_ascii=False).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+
+
 def render_event(event: Event, today: date, takes: list[dict] = ()) -> str:
     site = get_settings().site_url
     e = lambda s: escape(s, quote=True)  # noqa: E731
@@ -319,8 +324,8 @@ def render_event(event: Event, today: date, takes: list[dict] = ()) -> str:
     ld = json_ld(event, today)
     extra = ""
     if ld and not closed:
-        # "</" can't appear inside a script block, so the JSON escapes it
-        extra = '<script type="application/ld+json">' + json.dumps(ld, ensure_ascii=False).replace("</", "<\\/") + "</script>"
+        # CC-199: script_json escapes < > &, so nothing in the JSON can close the block
+        extra = '<script type="application/ld+json">' + script_json(ld) + "</script>"
     return _page(title, desc, site + path_for(event), "\n".join(body), extra)
 
 

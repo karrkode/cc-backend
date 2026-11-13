@@ -102,3 +102,13 @@ def test_the_recap_counts_photos_waiting(client, user_token, make_event, db, sto
     upload(client, user_token, ev.id)
     email = build_recap(db)
     assert "PHOTOS WAITING FOR APPROVAL: 1" in email.text and "#approvals" in email.text and "1 photo waiting" in email.html
+
+
+def test_member_search_treats_wildcards_as_plain_characters(client, admin_token, user_token):
+    """CC-199: % and _ don't match everything; case still doesn't matter."""
+    register(client, email="pct@example.com", name="100% Sam")
+    get = lambda q: client.get("/admin/members", params={"q": q}, headers=auth(admin_token)).json()
+    assert get("%") != [] and all("%" in m["display_name"] + m["email"] for m in get("%"))
+    assert get("_") == [] and get("\\") == [] and get("a\\") == []  # a trailing backslash used to 500 on Postgres
+    assert [m["display_name"] for m in get("100%")] == ["100% Sam"]
+    assert [m["display_name"] for m in get("ANA")] == ["Ana"]

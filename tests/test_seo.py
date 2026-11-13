@@ -129,3 +129,14 @@ def test_missing_event_page_is_lakefront_too(client):
     for old in OLD_LOOK:
         assert old not in page, old
     assert '<div class="lost"><h1>That event isn’t on the list</h1>' in page and 'class="deck"' in page
+
+
+def test_awkward_title_cannot_break_out_of_the_json_ld_block(client, make_event):
+    """CC-199: < > & in a title are unicode-escaped inside the script block, and still read back as the title."""
+    title = "Tom & Jerry <!--<script> </script>"
+    ev = make_event(title=title)
+    page = client.get(f"/e/{ev.id}-tom").text
+    block = re.search(r'<script type="application/ld\+json">(.*?)</script>', page, re.S).group(1)
+    assert not any(c in block for c in "<>&")
+    assert ld_of(page)["name"] == title
+    assert "<h1>Tom &amp; Jerry &lt;!--&lt;script&gt; &lt;/script&gt;</h1>" in page
