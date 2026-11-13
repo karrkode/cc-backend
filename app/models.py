@@ -458,7 +458,8 @@ class WentPhoto(Base):
 
 class PhotoCheck(Base):
     """CC-76: one Rekognition check of an uploaded photo, kept for the daily upload limit and the monthly cost.
-    outcome: stored | refused (refused photos are never stored)."""
+    outcome: stored | refused (refused photos are never stored) | failed (checked, then not saved: it still counts)
+    | checking (CC-197: reserved before Rekognition is called; it holds the daily limit)."""
     __tablename__ = "photo_checks"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)

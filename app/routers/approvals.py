@@ -118,7 +118,8 @@ def approvals(db: DB, user: ApproverUser, show: Literal["waiting", "approved", "
 @router.post("/approvals/{photo_id}", response_model=ApprovalOut)
 def decide(photo_id: int, body: DecisionIn, db: DB, user: ApproverUser):
     """Approve the photo, or reject it (it's deleted from storage; the member sees the reason)."""
-    photo = db.get(WentPhoto, photo_id)
+    # CC-197: lock the row, so a second decision waits and then sees it's no longer waiting
+    photo = db.scalar(select(WentPhoto).where(WentPhoto.id == photo_id).with_for_update())
     if photo is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Photo not found")
     if photo.user_id == user.id:
@@ -128,10 +129,10 @@ def decide(photo_id: int, body: DecisionIn, db: DB, user: ApproverUser):
     photo.status = "approved" if body.decision == "approve" else "rejected"
     photo.reason = body.reason.strip() if body.decision == "reject" else ""
     photo.reviewed_by, photo.reviewed_at = user.id, datetime.now(UTC)
-    if photo.status == "rejected":
+    db.commit()
+    if photo.status == "rejected":  # CC-197: after the commit, so a failed decision never loses the file
         try:
             photos.store().delete(photo.key)
         except Exception:  # noqa: BLE001 - the row says rejected; the file is never shown again
             pass
-    db.commit()
     return _approval_out(db, photo)

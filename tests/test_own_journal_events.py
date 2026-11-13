@@ -12,8 +12,7 @@ from app.routers import journal
 from app.stats import today_in_chicago
 
 from .conftest import auth, register
-
-JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 2000
+from .test_went_photos import JPEG, opens_as_jpeg  # CC-197: a real image
 
 
 @pytest.fixture(autouse=True)
@@ -139,7 +138,7 @@ def test_own_event_photo_has_no_approver_and_goes_with_the_event(client, user_to
     r = put()
     assert r.status_code == 200 and r.json()["photo_url"].startswith(f"/photos/own/{ev['id']}?exp=")
     shown = client.get(r.json()["photo_url"])
-    assert shown.status_code == 200 and shown.content == JPEG and shown.headers["cache-control"] == "private, max-age=600"
+    assert shown.status_code == 200 and opens_as_jpeg(shown.content) and shown.headers["cache-control"] == "private, max-age=600"
     assert client.get(r.json()["photo_url"].replace("sig=", "sig=0")).status_code == 404
     exp = int(time.time()) + 60
     assert client.get(f"/photos/{ev['id']}?exp={exp}&sig={photos._sig(ev['id'], exp, photos.OWN)}").status_code == 404
