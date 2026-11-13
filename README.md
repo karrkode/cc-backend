@@ -139,6 +139,13 @@ The Postgres run also checks that the Alembic migrations produce exactly the sch
 in `app/models.py`. (Create the test database once with
 `docker compose exec db psql -U culture -c "create database culture_test"`.)
 
+### Changing a dependency (CC-194)
+
+`requirements.txt` and `requirements-dev.txt` are generated, with a hash for every package, and the image and CI
+install them with `--require-hashes`. To change one: edit `requirements.in` (or `requirements-dev.in`), then lock
+inside the pinned base image so the result matches the image: `docker run --rm -v "$PWD":/w -w /w python:3.14-slim@<digest from the Dockerfile> sh -c 'pip install pip-tools==7.6.2 && pip-compile --generate-hashes --allow-unsafe --strip-extras -o requirements.txt requirements.in && pip-compile --generate-hashes --allow-unsafe --strip-extras -o requirements-dev.txt requirements-dev.in'`.
+Commit the `.in` and `.txt` files together.
+
 ### Database users (CC-200)
 
 The local API connects as `culture_app` (rows only) and migrations run as the owner `culture`, in the same

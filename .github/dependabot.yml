@@ -2,7 +2,7 @@
 version: 2
 updates:
   - package-ecosystem: pip
-    directory: /
+    directory: / # CC-194: reads requirements.in and the hash-locked requirements*.txt made from it
     schedule: { interval: weekly }
     # CC-195: minor and patch updates share one PR; each major arrives alone so one bad bump can't block the
     # rest. Test tooling is its own group. No security-updates group, so a security update arrives by itself.
@@ -16,6 +16,11 @@ updates:
   - package-ecosystem: docker
     directories: ["/", "/infra/aws/server/caddy"] # the API image's base, and the server's Caddy pin (CC-183)
     schedule: { interval: weekly }
+    # CC-194: the base is pinned to python:3.14-slim by digest. Digest bumps arrive; a new minor (3.15) is its own
+    # story, because CI must build and test the image on it first.
+    ignore:
+      - dependency-name: python
+        update-types: ["version-update:semver-minor"]
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: weekly }
