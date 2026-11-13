@@ -16,6 +16,9 @@ FROM base
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH=/opt/venv/bin:$PATH
+# CC-194: take the Debian security fixes published since the pinned base was built (zlib 1.3.1-1+deb13u1 closed two
+# High CVEs). Less reproducible than the digest alone; drop this once the base digest includes the fixes.
+RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
 RUN pip uninstall -y pip && rm -rf /usr/local/lib/python3.*/ensurepip
 COPY --from=build /opt/venv /opt/venv
 
