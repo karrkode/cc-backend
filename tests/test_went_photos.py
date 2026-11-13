@@ -1,10 +1,12 @@
 """CC-76: a photo with "I've been": checked by Amazon Rekognition (mocked here), stored privately, shown
 through short-lived signed links, and removed with its mark or event."""
+import io
 import os
 import time
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from PIL import Image
 from sqlalchemy import select
 
 from app import photos
@@ -13,8 +15,35 @@ from app.models import PhotoCheck, User, WentPhoto
 
 from .conftest import auth
 
-JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 2000  # enough of a JPEG for the type check
-WEBP = b"RIFF\x00\x00\x00\x00WEBPVP8 " + b"\x00" * 500
+
+def picture(fmt="JPEG", size=(40, 20), exif=False, icc=False, mode="RGB", colour=(200, 60, 40), comment=None):
+    """CC-197: a real image, since uploads are decoded and re-saved now."""
+    im = Image.new(mode, size, colour + (128,) if mode == "RGBA" else colour)
+    kw = {}
+    if exif:
+        ex = Image.Exif()
+        ex[0x0112] = 6  # orientation: rotate 90
+        ex[0x010F] = "TestCam"  # make
+        ex.get_ifd(0x8825)[1] = "N"  # GPS latitude ref
+        kw["exif"] = ex
+    if icc:
+        from PIL import ImageCms
+        kw["icc_profile"] = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
+    if comment:
+        kw["comment"] = comment  # a JPEG COM marker
+    out = io.BytesIO()
+    im.save(out, fmt, **kw)
+    return out.getvalue()
+
+
+def opens_as_jpeg(data: bytes) -> Image.Image:
+    im = Image.open(io.BytesIO(data))
+    assert im.format == "JPEG"
+    return im
+
+
+JPEG = picture("JPEG")
+WEBP = picture("WEBP")
 
 
 @pytest.fixture
@@ -55,7 +84,7 @@ def test_a_photo_is_checked_stored_privately_and_shown_by_signed_link(client, us
     assert mine["status"] == "waiting" and mine["url"].startswith(f"/photos/{mine['id']}?exp=")
 
     shown = client.get(mine["url"])  # no sign-in needed: the link is the permission
-    assert shown.status_code == 200 and shown.content == JPEG and shown.headers["content-type"] == "image/jpeg"
+    assert shown.status_code == 200 and opens_as_jpeg(shown.content) and shown.headers["content-type"] == "image/jpeg"
     assert shown.headers["cache-control"] == "private, max-age=600" and shown.headers["x-content-type-options"] == "nosniff"
     assert client.get(mine["url"].replace("sig=", "sig=0")).status_code == 404
     past = int(time.time()) - 1
@@ -66,7 +95,7 @@ def test_a_photo_is_checked_stored_privately_and_shown_by_signed_link(client, us
 
     # a new one replaces it, and WebP works too
     r = upload(client, user_token, ev.id, WEBP, "image/webp")
-    assert r.status_code == 200 and len(files(root)) == 1 and files(root)[0].endswith(".webp")
+    assert r.status_code == 200 and len(files(root)) == 1 and files(root)[0].endswith(".jpg")  # CC-197: always a JPEG
 
 
 def test_rekognition_refuses_unsafe_photos_and_blurs_borderline_ones(client, user_token, make_event, db, stored):

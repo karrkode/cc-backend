@@ -94,6 +94,11 @@ can't approve your own photo, so add one as the test user or a crew member and a
 production photos go to the private S3 bucket `chiculturecrew-went-photos` (`infra/aws/photos.tf`) and are
 checked first (`PHOTO_BACKEND`, `PHOTO_CHECKER`, `PHOTO_BUCKET`, `PHOTO_REGION` and `PHOTO_DIR` override
 this; production needs none of them set).
+CC-197: the server decodes every photo and saves it again as a JPEG (longest side 1600 px, at most 12 megapixels
+in), turned upright and with no location, camera details or colour profile; Rekognition sees and the store keeps only
+that copy. A member's photo count is taken under a per-member lock, and a check is recorded (`photo_checks`) before
+Rekognition is called, so parallel uploads can't pass 10 a day. A Rekognition outage doesn't count; a refused,
+failed or stored check does. Photos stored before CC-197 keep their metadata.
 
 **Email locally.** Signing up, changing your email, "Forgot password?" and inviting to a crew by email send emails,
 some with single-use links. The local stack never really sends them: each one is written to the API log,
@@ -175,7 +180,7 @@ applies new migrations when it starts.
 | Review | `GET /admin/events?status=pending`, `GET /admin/events/scheduled`, `GET /admin/events/other-types` (CC-125: types outside the three), `GET /admin/events/removed` (CC-133: withdrawn when Comedy and Educational went; bring one back with `PATCH /events/{id}` and a category), `POST /admin/events/{id}/approve` (publishes now), `/reject`; auto-reject rules: `GET`/`POST /admin/submission-rules`, `DELETE /admin/submission-rules/{id}`, and what they caught: `GET /admin/events?status=rejected&caught=true` | admin |
 | Discovery | `/admin/discovery/sources` (CC-221: each source also gives its grid numbers: `label`, `state`, `size`, `events_year`, `found`, `approved`, `website`; CC-133: `DELETE /admin/discovery/sources/{id}` deletes one, keeping what it found), `/items` (`show=needs` for events missing a date or show days), `/items/{id}/approve`, `/reject`, `/accept`, `/dismiss`, `/rules`, `/budget` | admin |
 | Venues | `GET /venues` (only accepted, unhidden venues; admins also get pending and hidden ones, CC-188, CC-219), `POST /venues` (the street, city and ZIP are required, CC-218), `POST /venues/from-event` (a new venue while editing an event, no address); `GET /venues/manage`, `PATCH /venues/{id}` (hours, show times, standard cost, website, address), merge, delete, `POST /venues/{id}/hide` and `/unhide` (CC-219); `GET /venues/website-suggestions`, `POST /venues/{id}/website` (confirm), `POST /venues/{id}/website/dismiss` (CC-213); `GET /venues/address-suggestions`, `POST /venues/{id}/address` (confirm), `POST /venues/{id}/address/dismiss` (CC-218); `GET /admin/out-of-town` (CC-217: the venues, event ids and active sources left to clean up; the Venues page deletes with `DELETE /events/{id}` and `DELETE /venues/{id}`) | anyone / admin |
-| Me | `GET /me/attended`, `PUT`/`DELETE /me/attended/{event_id}`, `PUT`/`DELETE /me/attended/{event_id}/photo` (the body is the photo), `PUT /me/attended/{event_id}/journal`, `PUT /me/attended/{event_id}/share` (CC-112: `{shared, anonymous}`), `/me/plans`, CC-248: `GET`/`POST /me/own-events`, `PUT`/`DELETE /me/own-events/{id}`, `PUT`/`DELETE /me/own-events/{id}/photo` (your own journal events, private; the photo has no approver), `GET`/`POST /me/categories`, `PUT`/`DELETE /me/categories/{id}` (your own categories; deleting one leaves its events uncategorised), `GET /me/submissions`, `/me/issues`, `POST /me/approver` (answer the approver offer) | signed in |
+| Me | `GET /me/attended`, `PUT`/`DELETE /me/attended/{event_id}`, `PUT`/`DELETE /me/attended/{event_id}/photo` (the body is the photo; 409 if the mark changed while it was saved), `PUT /me/attended/{event_id}/journal`, `PUT /me/attended/{event_id}/share` (CC-112: `{shared, anonymous}`), `/me/plans`, CC-248: `GET`/`POST /me/own-events`, `PUT`/`DELETE /me/own-events/{id}`, `PUT`/`DELETE /me/own-events/{id}/photo` (your own journal events, private; the photo has no approver), `GET`/`POST /me/categories`, `PUT`/`DELETE /me/categories/{id}` (your own categories; deleting one leaves its events uncategorised), `GET /me/submissions`, `/me/issues`, `POST /me/approver` (answer the approver offer) | signed in |
 | Crews | `/crews` (your crews with their shared plans and who's been), invites by link and by email, join, leave, members | signed in |
 | Photos | `GET /photos/{id}?exp&sig` (a link signed for 15 minutes) | anyone with the link |
 | Approvals | `GET /approvals?show=waiting\|approved\|rejected`, `POST /approvals/{id}` (approve, or reject with a reason) | approvers and admins |
@@ -228,7 +233,7 @@ app/deps.py          database session, current user, admin and approver checks
 app/routers/         auth, events, venues, me, admin, traffic, discovery (sources; found events to review, CC-71), crews (CC-74),
                      issues (CC-84), photos (signed links, CC-76), approvals (approvers and the photo queue, CC-91)
 app/crewplans.py     plans shared with crews, and who's been (CC-75, CC-93)
-app/photos.py        "I've been" photos: Rekognition checks, private storage, signed links, the hourly sweep (CC-76)
+app/photos.py        "I've been" photos: re-saved as JPEG (CC-197), Rekognition checks, private storage, signed links, the hourly sweep (CC-76)
 app/event_images.py  event photos: normalised to WebP, stored in the event-images bucket, served at /event-images/* (CC-250)
 alembic/             migrations
 app/seeding.py       loads seed/events.json into a database (local development and tests)

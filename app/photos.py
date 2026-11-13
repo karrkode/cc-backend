@@ -1,9 +1,11 @@
 """Photos with "I've been" (CC-76), as agreed with the product owner.
 
 - Optional: "I've been" never needs one. One photo per member per event; a new one replaces it.
-- The browser shrinks it (longest side about 1600px) and re-encodes it as JPEG, which drops location and
-  camera details. The API takes JPEG or WebP only, up to MAX_BYTES, and up to UPLOADS_PER_DAY a member.
-- Amazon Rekognition (DetectModerationLabels, $0.001 a photo) checks it before it's stored. Explicit,
+- The browser shrinks it (longest side about 1600px) and re-encodes it as JPEG. CC-197: the server does it
+  again (clean) whatever it's sent, so the stored file is always a JPEG with no location, camera details or
+  colour profile, and its orientation applied. The API takes JPEG or WebP only, up to MAX_BYTES, and up to
+  UPLOADS_PER_DAY a member.
+- Amazon Rekognition (DetectModerationLabels, $0.001 a photo) checks the cleaned photo before it's stored. Explicit,
   graphically violent or hateful content at high confidence is refused and never stored. Anything else
   it finds blurs the photo for approvers (CC-91), with its labels. Every photo waits for an approver.
 - Stored privately: an S3 bucket in production (encrypted, no public access), a folder locally. Shown
@@ -14,12 +16,16 @@
 """
 import hashlib
 import hmac
+import io
+import threading
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm.exc import ObjectDeletedError, StaleDataError
 
 from . import keys
 from .config import get_settings
@@ -29,6 +35,10 @@ MAX_BYTES = 3_000_000  # after the browser shrinks it; about 200 KB is usual
 UPLOADS_PER_DAY = 10
 LINK_MINUTES = 15
 CHECK_USD = 0.001  # Rekognition DetectModerationLabels, the first million photos a month
+MAX_PIXELS = 12_582_912  # CC-197: width x height we'll decode: 12 x 2^20, so a phone's 4032 x 3024 fits
+MAX_SIDE = 1600  # CC-197: the longest side we keep, as the browser already sends
+DECODERS = threading.BoundedSemaphore(2)  # CC-197: decodes at once, so parallel uploads can't fill a small server
+DECODE_WAIT = 10  # seconds a decode waits its turn before the upload is turned away
 MAGIC = {"image/jpeg": (b"\xff\xd8\xff",), "image/webp": (b"RIFF",)}
 REFUSE_AT = 90.0  # confidence (%) at which these are refused outright
 REFUSE = {"Explicit Nudity", "Explicit", "Explicit Sexual Activity", "Sex Toys", "Graphic Violence",
@@ -40,12 +50,71 @@ class Refused(Exception):
     """Rekognition found content we never store."""
 
 
+class BadPhoto(ValueError):
+    """CC-197: the bytes aren't a photo we can read, or it's too large."""
+
+
+class Busy(Exception):
+    """CC-197: too many photos are being decoded at once."""
+
+
+class Clash(Exception):
+    """CC-197: the mark, the event or the old photo changed while this one was being saved."""
+
+
 def kind_of(data: bytes, content_type: str) -> str | None:
     """The photo's type, if it's one we take and its bytes agree."""
     ct = (content_type or "").split(";")[0].strip().lower()
     if ct == "image/webp" and not (data[:4] == b"RIFF" and data[8:12] == b"WEBP"):
         return None
     return ct if ct in MAGIC and data.startswith(MAGIC[ct]) else None
+
+
+def clean(data: bytes) -> bytes:
+    """CC-197: any JPEG or WebP -> a new JPEG: orientation applied, colours in sRGB, no metadata, at most MAX_SIDE.
+    Rekognition and storage both get these bytes, never the upload. Raises BadPhoto, or Busy if the decoders
+    stay taken for DECODE_WAIT seconds."""
+    if not DECODERS.acquire(timeout=DECODE_WAIT):
+        raise Busy()
+    try:
+        return _clean(data)
+    except BadPhoto:
+        raise
+    except Exception as err:  # Pillow raises several kinds for unreadable files
+        raise BadPhoto(str(err)) from err
+    finally:
+        DECODERS.release()
+
+
+def _clean(data: bytes) -> bytes:
+    from PIL import Image, ImageOps  # Pillow only loads where photos are made, not on every API request
+
+    im = Image.open(io.BytesIO(data), formats=["JPEG", "WEBP"])
+    if im.width * im.height > MAX_PIXELS:  # before load(), which is what takes the memory
+        raise BadPhoto("too many pixels")
+    im.load()  # an animated WebP gives its first frame
+    im.thumbnail((MAX_SIDE, MAX_SIDE), Image.Resampling.LANCZOS)  # first, so the steps below work on the small copy
+    im = ImageOps.exif_transpose(im)
+    profile = im.info.get("icc_profile")
+    has_alpha = im.mode in ("RGBA", "LA", "PA") or "transparency" in im.info
+    if profile:  # browsers assume sRGB once the profile is gone, so convert rather than drop it
+        from PIL import ImageCms
+        try:
+            im = ImageCms.profileToProfile(im, ImageCms.ImageCmsProfile(io.BytesIO(profile)),
+                                           ImageCms.createProfile("sRGB"), outputMode="RGBA" if has_alpha else "RGB")
+        except Exception:  # a broken profile: keep the pixels as they are
+            pass
+    if has_alpha:  # JPEG has no transparency: put it on white
+        im = im.convert("RGBA")
+        flat = Image.new("RGB", im.size, (255, 255, 255))
+        flat.paste(im, mask=im.getchannel("A"))
+        im = flat
+    else:
+        im = im.convert("RGB")
+    im.info.clear()  # Pillow's JPEG writer falls back to info["comment"], so a COM marker would survive
+    out = io.BytesIO()
+    im.save(out, "JPEG", quality=85)  # no exif= or icc_profile=, so no metadata is written
+    return out.getvalue()
 
 
 # ---- checking (Amazon Rekognition) ----------------------------------------------------------
@@ -162,46 +231,131 @@ def uploads_today(db, user_id) -> int:
                                                                        PhotoCheck.checked_at >= since)) or 0
 
 
-def _checked(db, user_id, data: bytes) -> tuple[list[dict], bool]:
-    """Rekognition's labels and whether to blur. Raises Refused. Every upload counts toward the daily limit and the cost."""
-    labels = moderation_labels(data)
-    check = PhotoCheck(user_id=user_id, outcome="stored")
+def _user_lock(db, user_id) -> None:
+    """On Postgres, one request at a time per member, so parallel uploads can't both pass the daily limit.
+    Held until the next commit or rollback, so never across Rekognition or storage (pattern: emailcaps._lock).
+    SQLite (tests) runs one request at a time anyway."""
+    if db.get_bind().dialect.name == "postgresql":
+        db.execute(text("SELECT pg_advisory_xact_lock(1843, hashtext(:key))"), {"key": str(user_id)})
+
+
+def reserve(db, user_id) -> int | None:
+    """CC-197: under the member's lock, count today's checks; None at the limit, else record a "checking" one
+    and commit (which frees the lock) before Rekognition is called. That committed row is what holds the limit."""
+    _user_lock(db, user_id)
+    if uploads_today(db, user_id) >= UPLOADS_PER_DAY:
+        db.rollback()
+        return None
+    check = PhotoCheck(user_id=user_id, outcome="checking")
     db.add(check)
+    db.flush()
+    check_id = check.id
+    db.commit()
+    return check_id
+
+
+def _outcome(db, check_id: int, outcome: str) -> None:
+    check = db.get(PhotoCheck, check_id)
+    if check is not None:
+        check.outcome = outcome
+        db.commit()
+
+
+def _checked(db, check_id: int, data: bytes) -> tuple[list[dict], bool]:
+    """Rekognition's labels and whether to blur. Raises Refused (counted). If Rekognition itself fails, the
+    check is deleted: nothing was billed, so it doesn't use up one of the member's photos."""
     try:
+        labels = moderation_labels(data)
         return labels, judge(labels)
     except Refused:
-        check.outcome = "refused"  # the photo itself is never stored
+        _outcome(db, check_id, "refused")  # the photo itself is never stored
+        raise
+    except Exception:
+        db.rollback()
+        check = db.get(PhotoCheck, check_id)
+        if check is not None:
+            db.delete(check)
+            db.commit()
         raise
 
 
-def _new_key(content_type: str) -> str:
-    return f"photos/{uuid.uuid4().hex}.{'webp' if content_type == 'image/webp' else 'jpg'}"
+def _new_key() -> str:
+    return f"photos/{uuid.uuid4().hex}.jpg"  # clean() always makes a JPEG
 
 
-def save(db, user_id, event_id: int, data: bytes, content_type: str) -> WentPhoto:
-    """Check, store and record a member's photo for an event they've been to. Raises Refused. Doesn't commit."""
-    labels, blurred = _checked(db, user_id, data)
-    key = _new_key(content_type)
-    store().put(key, data, content_type)
-    old = db.scalar(select(WentPhoto).where(WentPhoto.user_id == user_id, WentPhoto.event_id == event_id))
-    if old is not None:
-        store().delete(old.key)
-        db.delete(old)
-        db.flush()
-    photo = WentPhoto(user_id=user_id, event_id=event_id, key=key, content_type=content_type, size=len(data),
-                      status="waiting", blurred=blurred, labels=labels)
-    db.add(photo)
+def _delete_quietly(key: str | None) -> None:
+    if key:
+        try:
+            store().delete(key)
+        except Exception:  # noqa: BLE001 - the sweep gets it next time
+            pass
+
+
+def _put(db, check_id: int, key: str, data: bytes) -> None:
+    try:
+        store().put(key, data, "image/jpeg")
+    except Exception:
+        db.rollback()
+        _delete_quietly(key)  # a put that failed part-way may have left something
+        _outcome(db, check_id, "failed")  # Rekognition was billed, so it counts
+        raise
+
+
+def _failed(db, check_id: int, key: str, err: Exception):
+    """Any failure after the file was put: no file, no row, a counted check. A clash becomes Clash."""
+    db.rollback()
+    _delete_quietly(key)
+    _outcome(db, check_id, "failed")
+    if isinstance(err, (IntegrityError, StaleDataError, ObjectDeletedError)):  # the mark or own event changed or is gone
+        raise Clash() from err
+    raise err
+
+
+def save(db, user_id, event_id: int, check_id: int, data: bytes, content_type: str) -> WentPhoto:
+    """Check, store and record a member's photo for an event they've been to. data is clean()'s output and
+    check_id is reserve()'s. Raises Refused, or Clash if the mark changed meanwhile. Commits."""
+    labels, blurred = _checked(db, check_id, data)
+    key = _new_key()
+    _put(db, check_id, key, data)
+    try:
+        _user_lock(db, user_id)
+        old = db.scalar(select(WentPhoto).where(WentPhoto.user_id == user_id, WentPhoto.event_id == event_id))
+        old_key = old.key if old is not None else None
+        if old is not None:
+            db.delete(old)
+            db.flush()
+        photo = WentPhoto(user_id=user_id, event_id=event_id, key=key, content_type=content_type, size=len(data),
+                          status="waiting", blurred=blurred, labels=labels)
+        db.add(photo)
+        check = db.get(PhotoCheck, check_id)
+        if check is not None:
+            check.outcome = "stored"
+        db.commit()
+    except Exception as err:
+        _failed(db, check_id, key, err)
+    _delete_quietly(old_key)  # only once the new photo is committed
     return photo
 
 
-def save_own(db, own: OwnEvent, data: bytes, content_type: str) -> None:
-    """CC-248: check and store the photo for a member's own event, replacing any it had. Raises Refused.
-    No approver, so blurring doesn't apply. Doesn't commit."""
-    _checked(db, own.user_id, data)
-    key = _new_key(content_type)
-    store().put(key, data, content_type)
-    remove_own(own)
-    own.photo_key, own.photo_type, own.photo_at = key, content_type, datetime.now(UTC)
+def save_own(db, own: OwnEvent, check_id: int, data: bytes, content_type: str) -> None:
+    """CC-248: check and store the photo for a member's own event, replacing any it had. Raises Refused, or Clash.
+    No approver, so blurring doesn't apply. Commits."""
+    user_id = own.user_id
+    _checked(db, check_id, data)
+    key = _new_key()
+    _put(db, check_id, key, data)
+    try:
+        _user_lock(db, user_id)
+        db.refresh(own, with_for_update={"of": OwnEvent})  # a second upload may have replaced the photo while this one was checked
+        old_key = own.photo_key
+        own.photo_key, own.photo_type, own.photo_at = key, content_type, datetime.now(UTC)
+        check = db.get(PhotoCheck, check_id)
+        if check is not None:
+            check.outcome = "stored"
+        db.commit()
+    except Exception as err:
+        _failed(db, check_id, key, err)
+    _delete_quietly(old_key)
 
 
 def remove_own(own: OwnEvent) -> None:

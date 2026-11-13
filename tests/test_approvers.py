@@ -9,7 +9,7 @@ from app.discovery.recap import build_recap
 from app.models import User, WentPhoto
 
 from .conftest import auth, register
-from .test_went_photos import JPEG, been, files, upload
+from .test_went_photos import JPEG, been, files, opens_as_jpeg, upload
 
 
 @pytest.fixture
@@ -68,7 +68,7 @@ def test_approvers_approve_or_reject_photos(client, admin_token, user_token, db,
     item = page["items"][0]
     assert page["counts"] == {"waiting": 1}
     assert (item["event"]["title"], item["venue"], item["member"], item["blurred"]) == ("Hamlet", "Goodman Theatre", "Jordan R.", True)
-    assert item["labels"][0]["name"] == "Suggestive" and client.get(item["url"]).content == JPEG
+    assert item["labels"][0]["name"] == "Suggestive" and opens_as_jpeg(client.get(item["url"]).content)
 
     assert client.post(f"/approvals/{item['id']}", json={"decision": "approve"}, headers=auth(user_token)).status_code == 403
     r = client.post(f"/approvals/{item['id']}", json={"decision": "approve"}, headers=auth(admin_token))

@@ -41,19 +41,28 @@ def _photo_saved(db, user, event_id: int, data: bytes, content_type: str) -> Wen
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Mark it \u201cI've been\u201d first")
     if photos.uploads_today(db, user.id) >= photos.UPLOADS_PER_DAY:
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "That's 10 photos today. Try again tomorrow.")
-    kind = photos.kind_of(data, content_type)
-    if kind is None:
+    if photos.kind_of(data, content_type) is None:
         raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "Send a JPEG or WebP photo.")
+    # CC-197: the photo we check and keep is our own re-save, never the upload
+    db.rollback()  # no transaction held open while this waits for its turn to decode
     try:
-        photo = photos.save(db, user.id, event_id, data, kind)
-    except photos.Refused:
-        db.commit()  # the check counts toward the limit; the photo was never stored
+        data = photos.clean(data)
+    except photos.Busy:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Photos can't be sent right now. Try again later.") from None
+    except photos.BadPhoto:
+        raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "Send a JPEG or WebP photo.") from None
+    check_id = photos.reserve(db, user.id)  # under the member's lock; None at the limit
+    if check_id is None:
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "That's 10 photos today. Try again tomorrow.")
+    try:
+        photo = photos.save(db, user.id, event_id, check_id, data, "image/jpeg")
+    except photos.Refused:  # the check counts toward the limit; the photo was never stored
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "This photo can't be used. Try another.") from None
+    except photos.Clash:
+        raise HTTPException(status.HTTP_409_CONFLICT, "That photo was changed at the same time. Try again.") from None
     except Exception:  # Rekognition or storage unreachable: nothing was stored
-        db.rollback()
         log.exception("Couldn't check or store a photo")
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Photos can't be sent right now. Try again later.") from None
-    db.commit()
     db.refresh(photo)
     return photo
 
