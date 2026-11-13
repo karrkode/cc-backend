@@ -35,7 +35,7 @@ def test_cannot_mark_missing_or_unapproved_events(client, user_token, make_event
 def test_deleting_an_event_removes_attended_marks(client, user_token, admin_token, make_event):
     ev = make_event("Hamlet")
     client.put(f"/me/attended/{ev.id}", headers=auth(user_token))
-    assert client.delete(f"/events/{ev.id}", headers=auth(admin_token)).status_code == 204
+    assert client.delete(f"/events/{ev.id}?live=true", headers=auth(admin_token)).status_code == 204
     assert client.get("/me/attended", headers=auth(user_token)).json() == []
 
 

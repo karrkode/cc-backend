@@ -159,7 +159,7 @@ def test_removing_the_mark_or_the_event_removes_the_photo(client, user_token, ad
     assert len(files(root)) == 2
     assert client.delete(f"/me/attended/{a.id}", headers=auth(user_token)).status_code == 204
     assert len(files(root)) == 1
-    assert client.delete(f"/events/{b.id}", headers=auth(admin_token)).status_code == 204
+    assert client.delete(f"/events/{b.id}?live=true", headers=auth(admin_token)).status_code == 204
     assert files(root) == [] and db.scalar(select(WentPhoto)) is None
 
     been(client, user_token, a.id)

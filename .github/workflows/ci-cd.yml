@@ -95,7 +95,7 @@ jobs:
     runs-on: ubuntu-24.04-arm # native arm64, matching the Graviton server
     environment:
       name: production
-      url: https://api.chiculturecrew.com/docs
+      url: https://api.chiculturecrew.com/health
     concurrency:
       group: deploy-production
       cancel-in-progress: false # never stop a deploy halfway; queue the next one

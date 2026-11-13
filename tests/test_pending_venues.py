@@ -150,7 +150,8 @@ def test_a_discovery_source_keeps_a_pending_venue(client, user_token, admin_toke
 
 def test_deleting_an_event_never_removes_a_live_venue(client, admin_token, db):
     event = _submit(client, admin_token, publish="now")
-    client.delete(f"/events/{event['id']}", headers=auth(admin_token))
+    # CC-202: a live event needs ?live=true, and the test must really delete it for the venue check to mean anything
+    assert client.delete(f"/events/{event['id']}?live=true", headers=auth(admin_token)).status_code == 204
     assert _venue_row(db) is not None
 
 

@@ -156,7 +156,7 @@ def test_running_the_clean_up_leaves_city_and_suburbs_alone(client, admin_token,
         for src in v["sources"]:
             assert client.patch(f"/admin/discovery/sources/{src['id']}", json={"active": False}, headers=h).status_code == 200
     for eid in overview(client, admin_token)["event_ids"]:
-        assert client.delete(f"/events/{eid}", headers=h).status_code == 204
+        assert client.delete(f"/events/{eid}?live=true", headers=h).status_code == 204
     left = overview(client, admin_token)
     assert left["event_ids"] == [] and [v["events"] for v in left["venues"]] == [0]
     assert client.delete(f"/venues/{far.id}", headers=h).status_code == 204

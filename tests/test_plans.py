@@ -88,7 +88,7 @@ def test_withdrawn_events_drop_out_and_deleted_ones_take_their_plans(client, use
     for ev in (keep, hide, gone):
         put(client, user_token, ev.id, status="interested")
     client.patch(f"/events/{hide.id}", json={"status": "withdrawn"}, headers=auth(admin_token))
-    client.delete(f"/events/{gone.id}", headers=auth(admin_token))
+    client.delete(f"/events/{gone.id}?live=true", headers=auth(admin_token))
     assert [t for t, _, _ in plans(client, user_token)] == ["Keep"]
     assert db.scalar(select(func.count()).select_from(Plan)) == 2  # the withdrawn one is kept, in case it returns
     client.patch(f"/events/{hide.id}", json={"status": "approved"}, headers=auth(admin_token))

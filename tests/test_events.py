@@ -191,9 +191,23 @@ def test_only_admins_edit_and_delete(client, user_token, admin_token, make_event
     bad = client.patch(f"/events/{ev.id}", json={"end_date": "2000-01-01"}, headers=auth(admin_token))
     assert bad.status_code == 422
 
-    assert client.delete(f"/events/{ev.id}", headers=auth(admin_token)).status_code == 204
+    assert client.delete(f"/events/{ev.id}?live=true", headers=auth(admin_token)).status_code == 204
     assert client.get(f"/events/{ev.id}").status_code == 404
     assert client.delete(f"/events/{ev.id}", headers=auth(admin_token)).status_code == 404
+
+
+def test_deleting_a_live_event_needs_the_flag(client, user_token, admin_token, make_event):
+    """CC-202: approved events need ?live=true; withdrawn and pending ones don't; the flag is not a permission."""
+    h = auth(admin_token)
+    live = make_event("Live one")
+    r = client.delete(f"/events/{live.id}", headers=h)
+    assert r.status_code == 409 and "Withdraw it first" in r.json()["detail"]
+    assert client.get(f"/events/{live.id}").status_code == 200  # still there
+    assert client.delete(f"/events/{live.id}?live=true", headers=auth(user_token)).status_code == 403
+    assert client.delete(f"/events/{live.id}?live=true", headers=h).status_code == 204
+    for status in (EventStatus.withdrawn, EventStatus.pending):
+        ev = make_event(f"Not live {status.value}", status=status)
+        assert client.delete(f"/events/{ev.id}", headers=h).status_code == 204
 
 
 def test_review_queue(client, user_token, admin_token, make_event):
