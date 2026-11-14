@@ -371,10 +371,13 @@ def remove_event_image(event_id: int, db: DB, _: AdminUser):
 
 
 @router.delete("/{event_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_event(event_id: int, db: DB, _: AdminUser):
+def delete_event(event_id: int, db: DB, _: AdminUser, live: bool = False):
     event = db.get(Event, event_id)
     if event is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Event not found")
+    # CC-202: a live (approved) event needs ?live=true. It guards against mistakes; it is not a permission.
+    if event.status == EventStatus.approved and not live:
+        raise HTTPException(status.HTTP_409_CONFLICT, "This event is live. Withdraw it first, then delete it.")
     photos.remove(db, db.scalars(select(WentPhoto).where(WentPhoto.event_id == event_id)))  # CC-76: from storage too
     venue_id = event.venue_id
     db.delete(event)

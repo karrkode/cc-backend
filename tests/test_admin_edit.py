@@ -55,7 +55,7 @@ def test_delete_also_removes_marks_and_plans(client, admin_token, user_token, ma
     for e in (ev, keep):
         client.put(f"/me/attended/{e.id}", headers=auth(user_token))
         client.put(f"/me/plans/{e.id}", json={"status": "interested"}, headers=auth(user_token))
-    assert client.delete(f"/events/{ev.id}", headers=auth(admin_token)).status_code == 204
+    assert client.delete(f"/events/{ev.id}?live=true", headers=auth(admin_token)).status_code == 204
     assert db.scalar(select(func.count()).select_from(Attended)) == 1
     assert db.scalar(select(func.count()).select_from(Plan)) == 1
     assert [p["event"]["title"] for p in client.get("/me/plans", headers=auth(user_token)).json()] == ["Bug"]

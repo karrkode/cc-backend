@@ -29,7 +29,13 @@ async def lifespan(_: FastAPI):
         recorder.stop()
 
 
+def docs_urls(env: str) -> dict:
+    """CC-202: no interactive docs or schema in production; nothing there reads them."""
+    return {"docs_url": None, "redoc_url": None, "openapi_url": None} if env == "prod" else {}
+
+
 app = FastAPI(
+    **docs_urls(settings.env),
     lifespan=lifespan,
     title="Culture Crew API",
     version="0.1.0",

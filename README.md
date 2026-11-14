@@ -38,7 +38,7 @@ docker compose run --rm api python -m scripts.seed            # load seed/events
 ```
 
 - API: http://localhost:8000
-- Interactive docs (try every endpoint): http://localhost:8000/docs
+- Interactive docs (try every endpoint): http://localhost:8000/docs (local only: `/docs`, `/redoc` and `/openapi.json` are off when `ENV=prod`)
 
 To run the whole site locally, clone cc-site next to this repo (`../cc-site`) and add the
 `web` profile; the page is then on http://localhost:4173:

@@ -102,3 +102,18 @@ def test_invite_links_are_rate_limited(client, monkeypatch):
     codes = [client.post(f"/crews/{crew['id']}/invites", headers=p["Ana"]).status_code for _ in range(3)]
     assert codes == [201, 201, 429]
     crews_router.invite_limiter.reset()
+
+
+def test_hand_over_respects_the_owned_crews_limit(client, monkeypatch):
+    """CC-202: a member who already leads the maximum can't be handed another crew."""
+    p = people(client)
+    monkeypatch.setattr(crews_router, "MAX_OWNED", 2)
+    crew = start(client, p["Ana"], "Ana's")
+    client.post("/crews/join", json={"token": invite(client, p["Ana"], crew["id"])["token"]}, headers=p["Ben"])
+    ben_id = next(m["user_id"] for m in client.get("/crews", headers=p["Ben"]).json()[0]["members"] if m["name"] == "Ben")
+    start(client, p["Ben"], "Ben one"); start(client, p["Ben"], "Ben two")  # Ben now leads 2 = the limit
+    r = client.post(f"/crews/{crew['id']}/owner", json={"user_id": ben_id}, headers=p["Ana"])
+    assert r.status_code == 409 and "Choose someone else" in r.json()["detail"]
+    assert next(c for c in client.get("/crews", headers=p["Ana"]).json() if c["id"] == crew["id"])["owner"] is True  # unchanged
+    monkeypatch.setattr(crews_router, "MAX_OWNED", 3)
+    assert client.post(f"/crews/{crew['id']}/owner", json={"user_id": ben_id}, headers=p["Ana"]).status_code == 200

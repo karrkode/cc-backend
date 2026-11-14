@@ -233,6 +233,10 @@ def hand_over(crew_id: int, body: OwnerIn, db: DB, user: CurrentUser):
     crew = _owned_crew(db, crew_id, user)
     if not any(m.user_id == body.user_id for m in crew.members) or body.user_id == user.id:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Choose another member of this crew")
+    # CC-202: the new owner is held to the same limit as someone starting a crew. No count or crew names in the message.
+    owned = db.scalar(select(func.count()).select_from(Crew).where(Crew.owner_id == body.user_id))
+    if owned >= MAX_OWNED:
+        raise HTTPException(status.HTTP_409_CONFLICT, "That member already leads as many crews as one person can. Choose someone else.")
     crew.owner_id = body.user_id
     db.commit()
     return _out(db, crew, user)
