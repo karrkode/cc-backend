@@ -1,5 +1,5 @@
 """CC-66: the owner's picks: plans by accounts with the dolphins setting, public on every event."""
-from datetime import date, timedelta
+from datetime import timedelta
 
 from sqlalchemy import select
 
@@ -8,7 +8,7 @@ from app.stats import today_in_chicago
 
 from .conftest import auth, register
 
-T = date.today()
+T = today_in_chicago()
 
 
 def owner(client, db, email="owner@example.com", name="Andrew"):

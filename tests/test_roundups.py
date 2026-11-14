@@ -63,13 +63,14 @@ def test_this_weekend_lists_what_is_on_each_day_once(client, make_event, db):
 
 
 def test_times_on_follows_show_days_and_closed_days(make_event, db):
-    ev = make_event(title="Show", begin=FRI, end=SUN)
+    # CC-273: a fixed Friday-to-Sunday weekend. weekend_of(today) starts on today itself from Saturday on, so using
+    # FRI here made the test depend on the weekday it ran.
+    fri = date(2026, 10, 30)
+    ev = make_event(title="Show", begin=fri, end=fri + timedelta(days=2))
     ev.weekly = {"sat": ["14:00", "19:30"]}
     db.commit()
-    sat = FRI + timedelta(days=(5 - FRI.weekday()) % 7)
-    assert times_on(ev, sat) == ["14:00", "19:30"]
-    if FRI.weekday() == 4:
-        assert times_on(ev, FRI) is None
+    assert times_on(ev, fri + timedelta(days=1)) == ["14:00", "19:30"]
+    assert times_on(ev, fri) is None
     museum = make_event(title="Museum", venue_name="Closed Mondays", begin=None, end=None)
     museum.venue.open_hours = {"mon": None, "tue": ["10:00", "17:00"]}
     db.commit()
