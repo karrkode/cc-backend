@@ -1,5 +1,5 @@
 """CC-54: your own plans for events: interested, or going on a date."""
-from datetime import date, timedelta
+from datetime import timedelta
 
 from sqlalchemy import func, select
 
@@ -9,7 +9,7 @@ from app.stats import today_in_chicago
 
 from .conftest import auth, register
 
-T = date.today()
+T = today_in_chicago()
 
 
 def put(client, token, event_id, **body):

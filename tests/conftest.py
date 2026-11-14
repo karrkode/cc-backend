@@ -11,7 +11,7 @@ os.environ.setdefault("ENV", "test")
 os.environ.setdefault("JWT_SECRET", "test-signing-key-at-least-32-bytes-long")
 os.environ.setdefault("EMAIL_BACKEND", "memory")  # emails land in app.mail.OUTBOX; nothing is sent
 
-from datetime import date, timedelta  # noqa: E402
+from datetime import timedelta  # noqa: E402
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -27,6 +27,7 @@ from app.fromlink import day_limiter, minute_limiter  # noqa: E402
 from app.ratelimit import auth_limiter, login_failures  # noqa: E402
 from app.traffic import ping_limits  # noqa: E402
 from app import health  # noqa: E402
+from app.stats import today_in_chicago  # noqa: E402
 
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "sqlite+pysqlite:///:memory:")
 IS_POSTGRES = TEST_DATABASE_URL.startswith("postgresql")
@@ -125,7 +126,7 @@ def make_event(db):
     def _make(title="Hamlet", status=EventStatus.approved, venue_name="Goodman Theatre",
               neighborhood="Loop", area=Area.city, category="Theater",
               begin=_DEFAULT, end=_DEFAULT, min_price=None, cost_text=""):
-        today = date.today()
+        today = today_in_chicago()  # CC-273: the app's day is Chicago's, not the server's UTC
         venue = db.scalar(select(Venue).where(Venue.name == venue_name, Venue.neighborhood == neighborhood))
         if venue is None:
             venue = Venue(name=venue_name, neighborhood=neighborhood, area=area)

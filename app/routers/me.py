@@ -11,6 +11,7 @@ from ..deps import DB, CurrentUser, require_verified_email
 from ..models import Attended, Event, Plan, PlanStatus, WentPhoto
 from ..crewplans import attach_crew_plans, my_crew_ids, share_been, share_plan, shared_with, unshare
 from ..picks import attach_picks
+from ..stats import today_in_chicago
 from ..schemas import AttendedOut, EventOut, JournalIn, JournalOut, PhotoOut, PlanCrewsIn, PlanIn, PlanOut, ShareIn, ShareOut
 from ..visibility import is_live, live_condition
 
@@ -165,7 +166,7 @@ def my_submissions(db: DB, user: CurrentUser):
 def _caller_today(today: date | None) -> date:
     """The caller's local date, if it's plausible (within a day of the server's), else the server's.
     A Chicago evening is already "tomorrow" in UTC, so the page sends its own date."""
-    server = date.today()
+    server = today_in_chicago()  # CC-273: the server's own clock is UTC, a day ahead of Chicago in the evening
     return today if today is not None and abs((today - server).days) <= 1 else server
 
 
