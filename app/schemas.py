@@ -1060,6 +1060,11 @@ class EventRef(BaseModel):
     title: str
 
 
+class DelayIn(BaseModel):
+    """CC-257: how long to delay a found event."""
+    span: Literal["1w", "1m", "2m"]
+
+
 class DiscoveredItemOut(ORM):
     """A found event for review (CC-71). venue_id: the venue it would be filed under (null: pick or
     add one); possible_duplicate: a catalog event at that venue with a similar title."""
@@ -1096,6 +1101,7 @@ class DiscoveredItemOut(ORM):
     event: EventRef | None = None  # the catalog event, once listed or approved
     possible_duplicate: EventRef | None = None
     batch_hold: str = ""  # CC-208: in a list, why a batch wouldn't approve this new event; "" when it would
+    back_on: date | None = None  # CC-257: the day a delayed (hidden) event returns to the queue, in Chicago
     first_seen_at: datetime
 
 
