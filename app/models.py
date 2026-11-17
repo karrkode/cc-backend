@@ -4,16 +4,15 @@ import re
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
-from zoneinfo import ZoneInfo
 
 from sqlalchemy import (JSON, Boolean, CheckConstraint, Date, DateTime, Enum, Float, ForeignKey, ForeignKeyConstraint, Index, Integer,
                         Numeric, String, Text, UniqueConstraint, Uuid, false, func, true as sa_true)
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
+from .clock import today_in_chicago
 from .db import Base
 
 
-_CHICAGO = ZoneInfo("America/Chicago")  # the site's day (app.stats has the same)
 
 class Role(str, enum.Enum):
     user = "user"
@@ -386,7 +385,7 @@ class Event(Base):
     def schedule(self) -> dict:
         """CC-79: what the planner needs to know when it's on: upcoming dates and times, the weekly pattern
         (the event's own, else its venue's show times), and the venue's opening hours."""
-        today = datetime.now(_CHICAGO).date().isoformat()
+        today = today_in_chicago().isoformat()
         given = [{"date": r.date.isoformat(), "time": r.time} for r in self.run_dates]  # CC-96: a fixed run's own dates come first
         dates = sorted((p for p in given or self.performances or [] if (p.get("date") or "") >= today),
                        key=lambda p: (p.get("date"), p.get("time") or ""))[:120]

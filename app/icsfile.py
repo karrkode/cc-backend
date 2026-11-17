@@ -3,14 +3,13 @@
 Plain iCalendar that iPhone, Google Calendar and Outlook all open: times are written in UTC (no VTIMEZONE block,
 which Outlook is picky about), text is escaped and lines are folded at 75 octets."""
 from datetime import UTC, date, datetime, time, timedelta
-from zoneinfo import ZoneInfo
 
+from .clock import CHICAGO, utcnow
 from .addresses import full_address
 from .config import get_settings
 from .models import Event
 from .seo import slug
 
-CHICAGO = ZoneInfo("America/Chicago")
 LENGTH = timedelta(hours=2)  # no event says how long it runs; two hours is a fair guess for a show
 
 
@@ -82,7 +81,7 @@ def build(event: Event, d: date, now: datetime | None = None, at: str | None = N
         "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Culture Crew//Add to calendar//EN", "CALSCALE:GREGORIAN",
         "METHOD:PUBLISH", "BEGIN:VEVENT",
         f"UID:cc-{event.id}-{d:%Y%m%d}@chiculturecrew.com",
-        f"DTSTAMP:{(now or datetime.now(UTC)).astimezone(UTC):%Y%m%dT%H%M%SZ}",
+        f"DTSTAMP:{(now or utcnow()).astimezone(UTC):%Y%m%dT%H%M%SZ}",
         f"DTSTART:{_utc(d, begins)}", f"DTEND:{_utc(end_day, ends)}",
         f"SUMMARY:{_text(event.title)}",
         f"LOCATION:{_text(where)}",

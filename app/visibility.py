@@ -3,19 +3,12 @@
 Scheduled publishing needs no background job: an approved event with a future
 publish_at is simply filtered out until then.
 """
-from datetime import UTC, datetime
+from datetime import datetime
 
 from sqlalchemy import and_, or_
 
+from .clock import utcnow, as_utc
 from .models import Event, EventStatus, Role
-
-
-def utcnow() -> datetime:
-    return datetime.now(UTC)
-
-
-def _utc(dt: datetime) -> datetime:
-    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)  # SQLite hands back naive datetimes
 
 
 def live_condition(now: datetime | None = None):
@@ -26,7 +19,7 @@ def live_condition(now: datetime | None = None):
 
 def is_live(event: Event, now: datetime | None = None) -> bool:
     now = now or utcnow()
-    return event.status == EventStatus.approved and (event.publish_at is None or _utc(event.publish_at) <= now)
+    return event.status == EventStatus.approved and (event.publish_at is None or as_utc(event.publish_at) <= now)
 
 
 def is_scheduled(event: Event, now: datetime | None = None) -> bool:

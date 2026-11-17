@@ -13,6 +13,7 @@ from sqlalchemy import func, select, update
 from starlette.concurrency import run_in_threadpool
 
 from .. import photos
+from ..clock import today_in_chicago
 from ..deps import DB, CurrentUser, require_verified_email
 from ..models import JournalCategory, OwnEvent
 from ..ratelimit import SlidingWindowLimiter
@@ -65,7 +66,7 @@ def list_own_events(db: DB, user: CurrentUser):
 
 
 def _apply(db, user, own: OwnEvent, body: OwnEventIn) -> None:
-    if body.date < EARLIEST or body.date > date.today() + timedelta(days=730):
+    if body.date < EARLIEST or body.date > today_in_chicago() + timedelta(days=730):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Choose a date between 1950 and two years from now")
     if body.category_id is not None:
         _own_category(db, user, body.category_id)

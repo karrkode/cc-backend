@@ -3,11 +3,12 @@ from datetime import date, timedelta
 
 from sqlalchemy import func, select
 
+from app.clock import today_in_chicago
 from app.models import Attended, Plan, Venue
 
 from .conftest import auth
 
-T = date.today()
+T = today_in_chicago()
 
 
 def test_the_edit_form_can_change_every_field(client, admin_token, make_event, db):

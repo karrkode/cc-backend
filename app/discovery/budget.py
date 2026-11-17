@@ -17,10 +17,11 @@ from datetime import UTC, datetime
 
 from sqlalchemy import func, select
 
+from ..clock import utcnow
 from ..config import get_settings
 from ..mail import Email, send
 from ..models import AppSetting, DiscoveredItem, DiscoveryCheck, Event, EventStatus
-from ..stats import CHICAGO
+from ..clock import CHICAGO
 from .readers import cost_usd
 
 KEY = "discovery_budget_usd"
@@ -54,7 +55,7 @@ def month_start(now: datetime) -> datetime:
 
 
 def spent_this_month(db, now: datetime | None = None) -> float:
-    since = month_start(now or datetime.now(UTC))
+    since = month_start(now or utcnow())
     tin, tout = db.execute(select(func.coalesce(func.sum(DiscoveryCheck.input_tokens), 0),
                                   func.coalesce(func.sum(DiscoveryCheck.output_tokens), 0))
                            .where(DiscoveryCheck.checked_at >= since)).one()
@@ -103,7 +104,7 @@ def alert_email(state: str, spent: float, budget: float) -> Email:
 def alert_if_short(db, now: datetime | None = None) -> bool:
     """CC-211: email admins the first time this month's spend reaches 80% (once a month, and once more if
     the budget is changed and then reached too). A failed send is tried again on the next run."""
-    now = now or datetime.now(UTC)
+    now = now or utcnow()
     state, spent, budget = budget_state(db, now)
     sent = {"month": f"{now.astimezone(CHICAGO):%Y-%m}", "usd": budget}
     row = db.get(AppSetting, ALERT_KEY)

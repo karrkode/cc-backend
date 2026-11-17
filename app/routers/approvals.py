@@ -8,12 +8,12 @@
 - A rejected photo is deleted from storage at once; its row stays so the member sees the reason.
 """
 import uuid
-from datetime import UTC, datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, or_, select
 
+from ..clock import utcnow
 from .. import photos
 from ..deps import DB, AdminUser, ApproverUser, CurrentUser
 from ..models import Event, Role, User, WentPhoto
@@ -68,7 +68,7 @@ def offer_approver(user_id: uuid.UUID, db: DB, _: AdminUser):
         raise HTTPException(status.HTTP_409_CONFLICT, "Admins can already approve photos")
     if user.approver:
         raise HTTPException(status.HTTP_409_CONFLICT, "They're already an approver")
-    user.approver_offered_at = datetime.now(UTC)
+    user.approver_offered_at = utcnow()
     db.commit()
     return _member_out(user)
 
@@ -129,7 +129,7 @@ def decide(photo_id: int, body: DecisionIn, db: DB, user: ApproverUser):
         raise HTTPException(status.HTTP_409_CONFLICT, "Someone has already decided on this photo")
     photo.status = "approved" if body.decision == "approve" else "rejected"
     photo.reason = body.reason.strip() if body.decision == "reject" else ""
-    photo.reviewed_by, photo.reviewed_at = user.id, datetime.now(UTC)
+    photo.reviewed_by, photo.reviewed_at = user.id, utcnow()
     db.commit()
     if photo.status == "rejected":  # CC-197: after the commit, so a failed decision never loses the file
         try:

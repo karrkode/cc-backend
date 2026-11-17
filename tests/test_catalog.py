@@ -2,11 +2,12 @@
 from datetime import date, timedelta
 from decimal import Decimal
 
+from app.clock import today_in_chicago
 from app.models import Area, Event, EventStatus
 
 from .conftest import auth
 
-T = date.today()
+T = today_in_chicago()
 
 
 def titles(client, **params):

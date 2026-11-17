@@ -3,11 +3,12 @@ from decimal import Decimal
 
 from sqlalchemy import select
 
+from app.clock import today_in_chicago
 from app.models import Area, Event, EventStatus, User, Venue
 
 from .conftest import auth
 
-TODAY = date.today()
+TODAY = today_in_chicago()
 
 
 def titles(resp):

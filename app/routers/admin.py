@@ -17,7 +17,7 @@ from ..photos import CHECK_USD, checks_this_month
 from ..stats import event_interest, today_in_chicago, weekly_stats
 from ..traffic import summary as traffic_summary
 from ..venuereview import accept_venue
-from ..visibility import utcnow
+from ..clock import utcnow
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -197,7 +197,7 @@ def set_roundup_intro(slug: str, body: RoundupIntroIn, db: DB, _: AdminUser):
 
 @router.get("/stats", response_model=StatsOut)
 def stats(db: DB, _: AdminUser, weeks: Annotated[int, Query(ge=1, le=52)] = 12,
-          today: Annotated[date | None, Query(description="The caller's local date")] = None):
+          today: Annotated[date | None, Query(description="The caller's local date (ignored since CC-276: the server's Chicago day is used)")] = None):
     """Sign-ups and member activity for the last N weeks (CC-67). Totals only, never who."""
     out = weekly_stats(db, _callers_day(today), weeks)
     checks = checks_this_month(db)  # CC-76: Amazon Rekognition's cost this month
@@ -205,8 +205,9 @@ def stats(db: DB, _: AdminUser, weeks: Annotated[int, Query(ge=1, le=52)] = 12,
 
 
 def _callers_day(today: date | None) -> date:
-    server = today_in_chicago()
-    return today if today is not None and abs((today - server).days) <= 1 else server
+    """CC-276: the day is Chicago's, from the server. `today` is still accepted (the site sends it) but ignored;
+    drop the parameter once the site stops sending it."""
+    return today_in_chicago()
 
 
 @router.get("/stats/events", response_model=list[EventInterestOut])
@@ -215,7 +216,7 @@ def stats_events(db: DB, _: AdminUser,
                  include_closed: bool = False,
                  category: Annotated[list[str] | None, Query(description="Only these event types")] = None,
                  limit: Annotated[int, Query(ge=1, le=50)] = 15,
-                 today: Annotated[date | None, Query(description="The caller's local date")] = None):
+                 today: Annotated[date | None, Query(description="The caller's local date (ignored since CC-276: the server's Chicago day is used)")] = None):
     """CC-69: the events drawing the most interest and commitments from members, with "I've been"
     counts. range: this week (from Monday), the last 30 days, or all time; category narrows it to event
     types. Totals only, never who."""
@@ -226,6 +227,6 @@ def stats_events(db: DB, _: AdminUser,
 
 @router.get("/stats/traffic", response_model=TrafficOut)
 def stats_traffic(db: DB, _: AdminUser, days: Annotated[int, Query(ge=1, le=366)] = 30,
-                  today: Annotated[date | None, Query(description="The caller's local date")] = None):
+                  today: Annotated[date | None, Query(description="The caller's local date (ignored since CC-276: the server's Chicago day is used)")] = None):
     """CC-68: views, unique and returning visitors, ticket clicks and outings planned, day by day. Counts only."""
     return traffic_summary(db, _callers_day(today), days)

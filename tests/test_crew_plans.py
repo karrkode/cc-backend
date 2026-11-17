@@ -5,7 +5,7 @@ from app.stats import today_in_chicago
 
 from .conftest import auth, register
 
-T = date.today()
+T = today_in_chicago()
 
 
 def setup(client, make_event):

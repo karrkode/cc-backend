@@ -1,5 +1,5 @@
 import logging
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response, status
@@ -13,6 +13,7 @@ from ..crewplans import attach_crew_plans, my_crew_ids, share_been, share_plan, 
 from ..picks import attach_picks
 from ..stats import today_in_chicago
 from ..schemas import AttendedOut, EventOut, JournalIn, JournalOut, PhotoOut, PlanCrewsIn, PlanIn, PlanOut, ShareIn, ShareOut
+from ..clock import utcnow
 from ..visibility import is_live, live_condition
 
 router = APIRouter(prefix="/me", tags=["me"])
@@ -139,7 +140,7 @@ def share_journal(event_id: int, body: ShareIn, db: DB, user: CurrentUser):
     if not body.shared:
         mark.shared_at = None
     elif mark.shared_at is None:
-        mark.shared_at = datetime.now(timezone.utc)
+        mark.shared_at = utcnow()
     mark.anonymous = body.anonymous
     db.commit()
     return mark

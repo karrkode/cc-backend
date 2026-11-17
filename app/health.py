@@ -14,11 +14,12 @@ import logging
 import threading
 import time
 from collections import deque
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 
 from sqlalchemy import delete, func, insert, select, text
 from sqlalchemy.orm import Session
 
+from .clock import utcnow, as_utc
 from .models import DbCheck, RequestMetric
 
 log = logging.getLogger(__name__)
@@ -31,18 +32,10 @@ NO_ROUTE = "(no route)"
 SKIP_METHODS = ("OPTIONS", "HEAD")  # CORS preflights and probes say nothing about the API's own health
 RECENT_S = 15 * 60  # a server error or failed database check this recent marks the API as having trouble
 
-STARTED_AT = datetime.now(UTC)
+STARTED_AT = utcnow()
 # Bounded, so a database that's down for hours can't fill the memory: the oldest notes go first.
 _requests: deque = deque(maxlen=50_000)
 _checks: deque = deque(maxlen=2_000)
-
-
-def utcnow() -> datetime:
-    return datetime.now(UTC)
-
-
-def _aware(d: datetime | None) -> datetime | None:
-    return d.replace(tzinfo=UTC) if d is not None and d.tzinfo is None else d  # SQLite gives times back without a zone
 
 
 # ---------- recording ----------
@@ -204,7 +197,7 @@ def summary(db: Session, hours: int, now: datetime | None = None) -> dict:
     db.execute(text("SELECT 1"))
     db_ok, db_ms = True, round((time.perf_counter() - start) * 1000, 1)
 
-    db_trouble = not db_ok or (last_failed is not None and _aware(last_failed) >= recent)
+    db_trouble = not db_ok or (last_failed is not None and as_utc(last_failed) >= recent)
     return {
         "hours": hours,
         "now": now,
@@ -214,7 +207,7 @@ def summary(db: Session, hours: int, now: datetime | None = None) -> dict:
             "requests": n,
             "server_errors": server_errors,
             "errors_last_15_min": errors_recent,
-            "recent_errors": [{"at": _aware(e.at), "method": e.method, "route": e.route, "status": e.status, "ms": _r(e.ms)} for e in errors],
+            "recent_errors": [{"at": as_utc(e.at), "method": e.method, "route": e.route, "status": e.status, "ms": _r(e.ms)} for e in errors],
         },
         "timing": {
             "avg_ms": _r(avg),
@@ -229,7 +222,7 @@ def summary(db: Session, hours: int, now: datetime | None = None) -> dict:
             "checks": c_n,
             "failed": c_failed,
             "avg_ms": _r(c_avg),
-            "last_failed_at": _aware(last_failed),
+            "last_failed_at": as_utc(last_failed),
         },
         "non_200": [{"status": s, "count": c} for s, c in non_200],
     }

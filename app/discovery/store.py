@@ -17,17 +17,18 @@
   to that event, for the planner. That's the one thing discovery changes on an event by itself: the
   dates aren't shown on cards, and admins don't edit them.
 """
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from types import SimpleNamespace
 from urllib.parse import urlsplit
 
 from sqlalchemy import func, select
 
+from ..clock import utcnow
 from ..addresses import found_address
 from ..areas import is_out_of_town
 from ..categories import BY_SOURCE_KIND, REMOVED
-from ..stats import CHICAGO
+from ..clock import CHICAGO
 from ..models import DiscoveredItem, DiscoverySource, Event, SkipRule, Venue, VenueAddressSuggestion
 from .jsonld import event_addresses
 from .readers import FoundEvent
@@ -316,7 +317,7 @@ def record(db, source: DiscoverySource, found: FoundEvent, skip: str) -> str:
 
 
 def _record(db, source: DiscoverySource, found: FoundEvent, skip: str) -> str:
-    now = datetime.now(UTC)
+    now = utcnow()
     f = fields_of(found)
     key = key_for(found)
     item = db.scalar(select(DiscoveredItem).where(DiscoveredItem.source_id == source.id, DiscoveredItem.key == key)) \

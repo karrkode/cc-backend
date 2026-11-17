@@ -1,9 +1,10 @@
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, BackgroundTasks, Cookie, Depends, HTTPException, Response, status
 from sqlalchemy import delete, or_, select
 from sqlalchemy.exc import IntegrityError
 
+from ..clock import utcnow, as_utc
 from .. import emailcaps, mail
 from ..config import get_settings
 from ..deps import DB, CurrentUser
@@ -21,10 +22,6 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 COOKIE = "cc_refresh"
 COOKIE_PATH = "/auth"  # the browser only sends it to the auth endpoints
 REUSE_GRACE_SECONDS = 30
-
-
-def _utc(dt: datetime) -> datetime:
-    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)  # SQLite hands back naive datetimes
 
 
 def _check_name_free(db: DB, name: str, user: User | None = None) -> None:
@@ -46,7 +43,7 @@ def _issue(db: DB, user: User, response: Response, signed_in_at: datetime | None
     signed_in_at is when this session began with a password: now for a sign-in, and the old token's
     for a refresh (CC-203). The refresh token never outlives max_session_days from then."""
     s = get_settings()
-    now = datetime.now(UTC)
+    now = utcnow()
     signed_in_at = signed_in_at or now
     expires_at = min(now + timedelta(days=s.refresh_token_days), signed_in_at + timedelta(days=s.max_session_days))
     raw = new_refresh_token()
@@ -87,7 +84,7 @@ def _welcome_once(user: User, tasks: BackgroundTasks):
     """CC-243: the welcome email, the first time this account's address is confirmed. The caller commits;
     background tasks run after the response, so the email only goes once the commit has."""
     if user.welcomed_at is None:
-        user.welcomed_at = datetime.now(UTC)
+        user.welcomed_at = utcnow()
         tasks.add_task(mail.send, mail.welcome(user))
 
 
@@ -151,13 +148,13 @@ def refresh(db: DB, response: Response, cc_refresh: str | None = Cookie(default=
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not signed in")
     token = db.scalar(select(RefreshToken).where(RefreshToken.token_hash == hash_refresh_token(cc_refresh))
                       .with_for_update())
-    now = datetime.now(UTC)
+    now = utcnow()
     max_age = timedelta(days=get_settings().max_session_days)
     # CC-203: a session lasts max_session_days from its sign-in, however often it refreshed
-    if token is None or _utc(token.expires_at) <= now or _utc(token.signed_in_at) + max_age <= now:
+    if token is None or as_utc(token.expires_at) <= now or as_utc(token.signed_in_at) + max_age <= now:
         _clear_cookie(response)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Session expired. Sign in again.")
-    if token.revoked_at is not None and (now - _utc(token.revoked_at)).total_seconds() > REUSE_GRACE_SECONDS:
+    if token.revoked_at is not None and (now - as_utc(token.revoked_at)).total_seconds() > REUSE_GRACE_SECONDS:
         _end_all_sessions(db, db.get(User, token.user_id))
         db.commit()
         _clear_cookie(response)
@@ -165,7 +162,7 @@ def refresh(db: DB, response: Response, cc_refresh: str | None = Cookie(default=
     if token.revoked_at is None:
         token.revoked_at = now
     user = db.get(User, token.user_id)
-    return _issue(db, user, response, signed_in_at=_utc(token.signed_in_at))
+    return _issue(db, user, response, signed_in_at=as_utc(token.signed_in_at))
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
@@ -289,7 +286,7 @@ def verify_email(body: TokenIn, db: DB, tasks: BackgroundTasks):
         if not mail.already_confirmed(db, body.token):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "This link has expired or was already used")
         return MessageOut(detail="This email address is already confirmed.")  # CC-204: nothing about the account
-    user.email_verified_at = datetime.now(UTC)
+    user.email_verified_at = utcnow()
     _welcome_once(user, tasks)
     db.commit()
     db.refresh(user)
@@ -324,7 +321,7 @@ def reset_password(body: ResetPasswordIn, db: DB, response: Response, tasks: Bac
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "This link has expired or was already used")
     user.password_hash = hash_password(body.new_password)
     if user.email_verified_at is None:
-        user.email_verified_at = datetime.now(UTC)
+        user.email_verified_at = utcnow()
         _welcome_once(user, tasks)
     login_failures.clear(user.email)  # CC-191: someone who can read the account's mail may sign in again
     _end_all_sessions(db, user)

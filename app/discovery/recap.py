@@ -14,15 +14,16 @@ is wrong. Links are named links to the site (Found events, Source grid), never w
 """
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime, timedelta
 from html import escape
 
 from sqlalchemy import func, select
 
+from ..clock import utcnow, as_utc
 from ..config import get_settings
 from ..mail import Email, plain_name
 from ..models import DiscoveredItem, DiscoveryCheck, DiscoverySource, IssueReport, WentPhoto
-from ..stats import CHICAGO
+from ..clock import CHICAGO
 from .budget import budget_state
 from .needs import needs
 from .readers import cost_usd
@@ -79,10 +80,6 @@ def show_days_text(weekly: dict, weeks: dict | None = None) -> str:
 
 def _n(n: int, word: str) -> str:
     return f"{n} {word}{'' if n == 1 else 's'}"
-
-
-def _aware(ts: datetime | None) -> datetime | None:
-    return ts and (ts if ts.tzinfo else ts.replace(tzinfo=UTC))  # SQLite hands back naive UTC
 
 
 @dataclass
@@ -172,7 +169,7 @@ def gather(db, now: datetime) -> Week:
         if src.manual:
             w.by_hand.append((src.name, page))
         elif src.last_status in ("blocked", "error"):
-            at = _aware(src.last_checked_at)
+            at = as_utc(src.last_checked_at)
             w.unreadable.append((src.id, src.name, page, src.last_error or src.last_status,
                                  f"{at.astimezone(CHICAGO):%a} {_md(at.astimezone(CHICAGO))}" if at else ""))
         how = EVERY.get(src.every_days, f"Every {src.every_days} days")
@@ -200,7 +197,7 @@ def found_by_week(db, now: datetime, weeks: int = GRAPH_WEEKS) -> list[tuple[dat
     """CC-207: (first day, last day, new events found) for the last weeks, oldest first. Weeks are the recap's: seven days
     back from now, so the latest is what the recap would say today. Weeks that ended before discovery began are left out."""
     week = timedelta(days=DAYS)
-    began = [_aware(t) for t in (db.scalar(select(func.min(DiscoveredItem.first_seen_at))),
+    began = [as_utc(t) for t in (db.scalar(select(func.min(DiscoveredItem.first_seen_at))),
                                  db.scalar(select(func.min(DiscoveryCheck.checked_at)))) if t]
     if not began:
         return []
@@ -208,7 +205,7 @@ def found_by_week(db, now: datetime, weeks: int = GRAPH_WEEKS) -> list[tuple[dat
     rows = db.execute(select(DiscoveredItem.first_seen_at, DiscoveredItem.status, DiscoveredItem.skip_reason)
                       .where(DiscoveredItem.first_seen_at >= now - weeks * week)).all()
     for seen, status, reason in rows:
-        ago = max(-(-(now - _aware(seen)) // week) - 1, 0)  # exactly seven days ago is still in the recap's week
+        ago = max(-(-(now - as_utc(seen)) // week) - 1, 0)  # exactly seven days ago is still in the recap's week
         if counts_as_found(status, reason) and ago < weeks:
             counts[ago] += 1
     return [((now - (ago + 1) * week).astimezone(CHICAGO).date(), (now - ago * week - timedelta(days=1)).astimezone(CHICAGO).date(), counts[ago])
@@ -427,5 +424,5 @@ def as_html(w: Week) -> str:
 
 
 def build_recap(db, now: datetime | None = None) -> Email:
-    w = gather(db, now or datetime.now(UTC))
+    w = gather(db, now or utcnow())
     return Email(to=get_settings().recap_to, subject=subject_of(w), text=as_text(w), html=as_html(w))
