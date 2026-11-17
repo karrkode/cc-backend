@@ -145,7 +145,8 @@ def make_event(db):
 @pytest.fixture
 def frozen_clock(monkeypatch):
     """CC-276: set the app's clock. `frozen_clock(datetime(2026, 7, 1, 2, 30, tzinfo=UTC))` makes it 9:30 pm on
-    June 30 in Chicago. It swaps `utcnow` in app.clock and in every module that imported it by name."""
+    June 30 in Chicago. It swaps `utcnow` in app.clock and in every module that imported it by name. Call it after the test has
+    made its sign-in tokens: a token minted at a frozen past instant would already be expired."""
     import sys
     from app import clock
     real = clock.utcnow
@@ -154,6 +155,6 @@ def frozen_clock(monkeypatch):
         def fake():
             return at
         for mod in list(sys.modules.values()):
-            if mod is not None and getattr(mod, "__name__", "").startswith("app") and getattr(mod, "utcnow", None) is real:
+            if getattr(mod, "__name__", "").startswith("app.") and getattr(mod, "utcnow", None) is real:
                 monkeypatch.setattr(mod, "utcnow", fake)
     return freeze

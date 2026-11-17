@@ -24,11 +24,10 @@ from urllib.parse import urlsplit
 
 from sqlalchemy import func, select
 
-from ..clock import utcnow
+from ..clock import CHICAGO, utcnow
 from ..addresses import found_address
 from ..areas import is_out_of_town
 from ..categories import BY_SOURCE_KIND, REMOVED
-from ..clock import CHICAGO
 from ..models import DiscoveredItem, DiscoverySource, Event, SkipRule, Venue, VenueAddressSuggestion
 from .jsonld import event_addresses
 from .readers import FoundEvent

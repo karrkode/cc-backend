@@ -14,7 +14,8 @@ from ..models import Attended, DiscoveredItem, DiscoverySource, Event, EventStat
 from ..schemas import (EventAdminOut, EventAdminPage, EventInterestOut, HealthOut, OutOfTownOut, RoundupIntroIn, RoundupOut, StatsOut, SubmissionRuleIn, SubmissionRuleOut,
                        TakeHideIn, TrafficOut)
 from ..photos import CHECK_USD, checks_this_month
-from ..stats import event_interest, today_in_chicago, weekly_stats
+from ..clock import today_in_chicago
+from ..stats import event_interest, weekly_stats
 from ..traffic import summary as traffic_summary
 from ..venuereview import accept_venue
 from ..clock import utcnow

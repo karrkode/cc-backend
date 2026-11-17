@@ -6,7 +6,7 @@ from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field, ValidationError
 
 from ..deps import DB
-from ..stats import today_in_chicago
+from ..clock import today_in_chicago
 from ..traffic import VIEWS, address_key, is_bot, ping_limits, record, source_of, visitor_key
 
 router = APIRouter(prefix="/traffic", tags=["traffic"])

@@ -15,7 +15,7 @@ from datetime import timedelta
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Response, status
 from sqlalchemy import delete, func, select, update
 
-from ..clock import utcnow, as_utc
+from ..clock import as_utc, today_in_chicago, utcnow
 from .. import emailcaps, mail
 from ..config import get_settings
 from ..crewplans import crew_board, unshare, unshare_been
@@ -25,7 +25,6 @@ from ..ratelimit import SlidingWindowLimiter
 from ..schemas import (CrewBoardItem, CrewEmailInviteOut, CrewIn, EmailInviteIn, PendingInviteOut, CrewInviteLink, CrewInviteOut, CrewInvitePreview, CrewMemberOut, CrewOut, CrewPatch,
                        JoinIn, OwnerIn)
 from ..security import hash_refresh_token as hash_token
-from ..stats import today_in_chicago
 from .approvals import short_name
 
 router = APIRouter(prefix="/crews", tags=["crews"])

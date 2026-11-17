@@ -9,7 +9,7 @@ from ..deps import DB
 from ..models import Event
 from .. import roundups
 from ..seo import id_from, path_for, render_event, render_missing, robots, sitemap
-from ..stats import today_in_chicago
+from ..clock import today_in_chicago
 from ..takes import takes_for
 from ..visibility import is_live, live_condition
 

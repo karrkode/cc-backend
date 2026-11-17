@@ -17,11 +17,10 @@ from datetime import UTC, datetime
 
 from sqlalchemy import func, select
 
-from ..clock import utcnow
+from ..clock import CHICAGO, utcnow
 from ..config import get_settings
 from ..mail import Email, send
 from ..models import AppSetting, DiscoveredItem, DiscoveryCheck, Event, EventStatus
-from ..clock import CHICAGO
 from .readers import cost_usd
 
 KEY = "discovery_budget_usd"

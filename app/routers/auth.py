@@ -4,7 +4,7 @@ from fastapi import APIRouter, BackgroundTasks, Cookie, Depends, HTTPException, 
 from sqlalchemy import delete, or_, select
 from sqlalchemy.exc import IntegrityError
 
-from ..clock import utcnow, as_utc
+from ..clock import as_utc, today_in_chicago, utcnow
 from .. import emailcaps, mail
 from ..config import get_settings
 from ..deps import DB, CurrentUser
@@ -14,7 +14,7 @@ from ..schemas import (ForgotPasswordIn, LoginIn, MessageOut, PasswordChangeIn, 
                        ResetPasswordIn, TokenIn, TokenOut, UserOut, RESERVED_NAMES, name_key)
 from ..security import (create_access_token, hash_password, hash_refresh_token, new_refresh_token,
                         verify_password)
-from ..stats import record_active, today_in_chicago
+from ..stats import record_active
 from ..traffic import record_join_signup, source_of
 
 router = APIRouter(prefix="/auth", tags=["auth"])

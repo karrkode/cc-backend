@@ -11,9 +11,8 @@ from ..deps import DB, CurrentUser, require_verified_email
 from ..models import Attended, Event, Plan, PlanStatus, WentPhoto
 from ..crewplans import attach_crew_plans, my_crew_ids, share_been, share_plan, shared_with, unshare
 from ..picks import attach_picks
-from ..stats import today_in_chicago
 from ..schemas import AttendedOut, EventOut, JournalIn, JournalOut, PhotoOut, PlanCrewsIn, PlanIn, PlanOut, ShareIn, ShareOut
-from ..clock import utcnow
+from ..clock import today_in_chicago, utcnow
 from ..visibility import is_live, live_condition
 
 router = APIRouter(prefix="/me", tags=["me"])

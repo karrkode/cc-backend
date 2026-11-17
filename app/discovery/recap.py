@@ -19,11 +19,10 @@ from html import escape
 
 from sqlalchemy import func, select
 
-from ..clock import utcnow, as_utc
+from ..clock import CHICAGO, as_utc, utcnow
 from ..config import get_settings
 from ..mail import Email, plain_name
 from ..models import DiscoveredItem, DiscoveryCheck, DiscoverySource, IssueReport, WentPhoto
-from ..clock import CHICAGO
 from .budget import budget_state
 from .needs import needs
 from .readers import cost_usd

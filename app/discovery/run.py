@@ -24,9 +24,8 @@ from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy import select
 
-from ..clock import utcnow
+from ..clock import chicago_day, utcnow
 from ..models import DiscoveredItem, DiscoveryCheck, DiscoverySource
-from ..stats import chicago_day
 from . import fetch as web
 from .budget import alert_if_short, best_first, budget_state
 from .hours import apply_open_hours, apply_show_times, link_venue

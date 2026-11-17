@@ -3,6 +3,7 @@ from datetime import date, timedelta
 
 from sqlalchemy import select
 
+from app.clock import today_in_chicago
 from app.discovery.readers import FoundEvent, Performance
 from app.discovery.store import record
 from app.models import DiscoveredItem, Event, Venue

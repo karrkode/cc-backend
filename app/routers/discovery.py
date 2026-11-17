@@ -201,7 +201,7 @@ def _item_out(db: DB, item: DiscoveredItem, dups: dict | None = None) -> Discove
     if venue is not None:  # CC-125: the approve form starts with the venue's default category
         out.venue_category, out.venue_opera = venue.category, venue.opera
     if item.status == "hidden" and item.delayed_until:  # CC-257
-        out.back_on = item.delayed_until.astimezone(CHICAGO).date()
+        out.back_on = chicago_day(item.delayed_until)
     out.needs = needs(item, venue) if item.status in ("new", "hidden") else ""
     out.proposed = [FoundChange(field=k, listed=v[0], found=v[1]) for k, v in (item.changes or {}).items()] \
         if item.status == "update" else []

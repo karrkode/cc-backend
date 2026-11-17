@@ -16,7 +16,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 
-from ..clock import utcnow, as_utc
+from ..clock import CHICAGO, as_utc, utcnow
 from .. import jira
 from ..config import get_settings
 from ..deps import DB, AdminUser, CurrentUser, require_verified_email
@@ -24,7 +24,6 @@ from ..models import IssueReport, User
 from ..ratelimit import SlidingWindowLimiter
 from ..schemas import (IssueAdminOut, IssueAge, IssueFixTime, IssueIn, IssueJiraStats, IssueKind, IssueOldest, IssueOut, IssuePage,
                        IssuePatch, IssueReporter, IssueStats, IssueStatus, IssueWeek, JiraCreate, JiraDraft, JiraTicketStatus)
-from ..clock import CHICAGO
 
 log = logging.getLogger("uvicorn.error")
 
