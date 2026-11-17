@@ -27,20 +27,24 @@ PAGE_CSP = "; ".join([
 
 HEADERS = ((b"content-security-policy", PAGE_CSP.encode()), (b"x-frame-options", b"DENY"))
 
-# Swagger and ReDoc (off in production, CC-202) load their scripts from a CDN, so this policy would blank them.
+# Swagger and ReDoc (off in production, CC-202) load their scripts from a CDN, so the full policy would blank them.
+# They still refuse framing.
 DOCS_PATHS = ("/docs", "/redoc")
+DOCS_HEADERS = ((b"content-security-policy", b"frame-ancestors 'none'"), (b"x-frame-options", b"DENY"))
 
 
 class PageHeaders:
-    """ASGI middleware: adds the headers to every text/html response, unless the route already set its own."""
+    """ASGI middleware: adds the headers to every text/html response, unless the route already set its own.
+    An HTML route must not set its own CSP: it would be kept even if weaker than PAGE_CSP."""
 
     def __init__(self, app):
         self.app = app
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] != "http" or scope["path"] in DOCS_PATHS:
+        if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
+        added = DOCS_HEADERS if scope["path"] in DOCS_PATHS else HEADERS
 
         async def with_headers(message):
             if message["type"] == "http.response.start":
@@ -48,7 +52,7 @@ class PageHeaders:
                 names = {k.lower() for k, _ in headers}
                 is_html = any(k.lower() == b"content-type" and v.lower().startswith(b"text/html") for k, v in headers)
                 if is_html:
-                    headers += [(k, v) for k, v in HEADERS if k not in names]
+                    headers += [(k, v) for k, v in added if k not in names]
                     message = {**message, "headers": headers}
             await send(message)
 

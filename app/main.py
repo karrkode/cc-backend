@@ -44,7 +44,7 @@ app = FastAPI(
 )
 
 app.add_middleware(PageHeaders)  # CC-287: the CSP and frame protection on every HTML page the API renders
-app.add_middleware(BodyLimit)  # CC-190: added first, so it runs inside CORS and the site can read its 413
+app.add_middleware(BodyLimit)  # CC-190: added just after PageHeaders, so it runs inside CORS and the site can read its 413
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,

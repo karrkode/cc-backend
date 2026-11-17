@@ -97,6 +97,9 @@ def test_hostile_values_show_as_text_only_on_event_and_roundup_pages(client, mak
     user.dolphins = True  # Yours truly: the one take the public page shows
     db.add(Attended(user_id=user.id, event_id=ev.id, words="W" + WORD + " x y", review="R" + HOSTILE, recommend=True,
                     shared_at=datetime.now(timezone.utc)))
+    free = make_event(title="Free one", venue_name="Cheap Seats", cost_text="", min_price=None,
+                      begin=today - timedelta(days=1), end=today + timedelta(days=2))
+    free.venue.standard_cost = "S" + HOSTILE  # shown on a roundup row when an event has no price of its own
     for r in ROUNDUPS:
         set_intro(db, r.slug, "I" + HOSTILE)
     db.commit()
@@ -111,7 +114,7 @@ def test_hostile_values_show_as_text_only_on_event_and_roundup_pages(client, mak
 
     ev_page = Parsed(pages["event"])
     text = "\n".join(ev_page.text)
-    for prefix in "TVNCAY":  # title, venue, neighborhood, price, street, city
+    for prefix in "TVNCAY":  # title, venue, neighborhood, price, street, city (the zip is checked in the JSON-LD below)
         assert prefix + HOSTILE in text, prefix
     assert "W" + WORD in text  # a take's words
     assert "R" + HOSTILE not in text and "R&quot;" not in pages["event"]  # a review is never shown
@@ -129,4 +132,19 @@ def test_hostile_values_show_as_text_only_on_event_and_roundup_pages(client, mak
         assert "I" + HOSTILE in text, r.slug
     some = next(Parsed(h) for n, h in pages.items() if n not in ("event", "index") and "T&quot;" in h)
     text = "\n".join(some.text)
-    assert all(x + HOSTILE in text for x in "TVNC")  # title, venue, neighborhood, price on a roundup row
+    assert all(x + HOSTILE in text for x in "TVNCS")  # title, venue, neighborhood, price, venue's usual price on a roundup row
+
+
+def test_the_docs_pages_still_refuse_framing():
+    import asyncio
+    sent = []
+
+    async def app(scope, receive, send):
+        await send({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"text/html; charset=utf-8")]})
+
+    async def send(m):
+        sent.append(m)
+
+    asyncio.run(pageheaders.PageHeaders(app)({"type": "http", "path": "/docs"}, None, send))
+    h = dict(sent[0]["headers"])
+    assert h[b"x-frame-options"] == b"DENY" and h[b"content-security-policy"] == b"frame-ancestors 'none'"
