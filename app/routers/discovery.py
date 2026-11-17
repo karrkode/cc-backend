@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Query, Response, status
 from pydantic import ValidationError
 from sqlalchemy import delete, func, select, update
 
+from ..clock import CHICAGO, chicago_day, today_in_chicago, utcnow
 from .. import csvsafe
 from ..deps import DB, AdminUser
 from ..discovery.budget import budget_state, set_monthly_budget
@@ -17,7 +18,6 @@ from ..discovery.rules import norm_title
 from ..discovery.store import matching_rule, possible_duplicates, release_delayed, rule_reason, sync_performances, venue_for
 from ..discovery.venuesources import covers, grid_numbers, state_of
 from ..models import DiscoveredItem, DiscoveryCheck, DiscoverySource, Event, SkipRule, Venue
-from ..stats import CHICAGO, today_in_chicago
 from ..schemas import (BatchHeld, BatchIn, BatchOut, BudgetIn, DelayIn, DiscoveredItemOut, DiscoveredPage, DiscoveryOverview, DiscoverySourceOut, DiscoverySourcePatch,
                        EventIn, EventRef, FoundChange, RUN_DATES_MAX, RejectIn, RejectOut, SkipRuleOut, SourcingCount, SourcingSummary,
                        SourcingUnreadable, SourcingWeek, UnreadableSource)
@@ -54,8 +54,8 @@ def _one(db: DB, source: DiscoverySource) -> DiscoverySourceOut:
 def sources(db: DB, _: AdminUser):
     """Every event source (CC-70): its pages, how often it's checked, what the last check found, how
     many found items are waiting for review, and the last 30 days' model use."""
-    release_delayed(db, datetime.now(UTC))  # CC-257
-    since = datetime.now(UTC) - timedelta(days=30)
+    release_delayed(db, utcnow())  # CC-257
+    since = utcnow() - timedelta(days=30)
     waiting = dict(db.execute(select(DiscoveredItem.source_id, func.count())
                               .where(DiscoveredItem.status.in_(["new", "update"])).group_by(DiscoveredItem.source_id)).all())
     rows = db.execute(select(DiscoveryCheck.source_id, func.count(), func.coalesce(func.sum(DiscoveryCheck.pages_read), 0))
@@ -74,7 +74,7 @@ def sources(db: DB, _: AdminUser):
 @router.get("/summary", response_model=SourcingSummary)
 def summary(db: DB, _: AdminUser):
     """What the Event Sourcing page shows (CC-206, CC-207): what needs the admin, the budget, the graph and the found events."""
-    now = datetime.now(UTC)
+    now = utcnow()
     w = gather(db, now)  # releases delayed events that are due (CC-257)
     hidden = db.scalar(select(func.count()).select_from(DiscoveredItem).where(DiscoveredItem.status == "hidden")) or 0
     return SourcingSummary(new_waiting=w.new_waiting, updates_waiting=w.updates_waiting, hidden=hidden,
@@ -102,7 +102,7 @@ def update_source(source_id: int, body: DiscoverySourcePatch, db: DB, _: AdminUs
     if "every_days" in changes and changes["every_days"] is not None:
         source.every_days = changes["every_days"]
         if source.last_checked_at:  # the new gap counts from the last check
-            source.next_check_on = source.last_checked_at.date() + timedelta(days=source.every_days)
+            source.next_check_on = chicago_day(source.last_checked_at) + timedelta(days=source.every_days)
     if changes.get("active") is not None:
         source.active = changes["active"]
     if changes.get("manual") is not None:  # back to automatic: checked at the next hourly run
@@ -201,7 +201,7 @@ def _item_out(db: DB, item: DiscoveredItem, dups: dict | None = None) -> Discove
     if venue is not None:  # CC-125: the approve form starts with the venue's default category
         out.venue_category, out.venue_opera = venue.category, venue.opera
     if item.status == "hidden" and item.delayed_until:  # CC-257
-        out.back_on = item.delayed_until.astimezone(CHICAGO).date()
+        out.back_on = chicago_day(item.delayed_until)
     out.needs = needs(item, venue) if item.status in ("new", "hidden") else ""
     out.proposed = [FoundChange(field=k, listed=v[0], found=v[1]) for k, v in (item.changes or {}).items()] \
         if item.status == "update" else []
@@ -220,7 +220,7 @@ def items(db: DB, _: AdminUser, show: Show = "waiting", source: int | None = Non
     """Found events for review, newest first: new events and proposed updates ("waiting"), or one
     status; optionally only those with (or without) a price, or dates. Also the count per status
     under the same filters, and the sources that couldn't be read, for a manual look."""
-    release_delayed(db, datetime.now(UTC))  # CC-257
+    release_delayed(db, utcnow())  # CC-257
     day = func.coalesce(DiscoveredItem.begin_date, DiscoveredItem.end_date)
     q = _filtered(show, source, price, dates).order_by(
         *((day.is_(None), day, DiscoveredItem.begin_date.is_(None), func.lower(DiscoveredItem.title), DiscoveredItem.id) if order == "day"
@@ -256,9 +256,9 @@ def items_csv(db: DB, _: AdminUser, show: Show = "waiting", source: int | None =
     body = csvsafe.to_csv(
         ["Title", "Venue", "Neighborhood", "Opens", "Closes", "Open run", "Price", "Link", "Source", "Found", "Status"],
         ([o.title, o.venue_name, o.neighborhood, o.begin_date or "", o.end_date or "", "yes" if o.open_run else "",
-          o.cost_text, o.url, o.source_name, o.first_seen_at.date().isoformat(), o.status]
+          o.cost_text, o.url, o.source_name, chicago_day(o.first_seen_at).isoformat(), o.status]
          for o in (_item_out(db, item) for item in rows)))
-    name = f"discovered-{show}-{date.today().isoformat()}.csv"
+    name = f"discovered-{show}-{today_in_chicago().isoformat()}.csv"
     return Response(body, media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})
 

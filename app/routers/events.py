@@ -16,10 +16,10 @@ from ..models import Area, Event, EventRunDate, EventStatus, Plan, PlanStatus, R
 from ..crewplans import attach_crew_plans, crew_plans_condition
 from ..picks import attach_picks, pick_condition
 from ..schemas import EventFacets, EventIn, EventOut, EventPage, EventPatch, LinkDraft, LinkIn, RunDate, VenueIn
-from ..stats import today_in_chicago
 from ..takes import attach_takes
 from ..venuereview import accept_venue, drop_if_unused
-from ..visibility import live_condition, utcnow, visible_to
+from ..visibility import live_condition, visible_to
+from ..clock import today_in_chicago, utcnow
 
 router = APIRouter(prefix="/events", tags=["events"])
 
@@ -135,7 +135,7 @@ def list_events(
     if ended_before:
         conds.append(Event.end_date < ended_before)
     elif not include_past:
-        conds.append(or_(Event.end_date.is_(None), Event.end_date >= date.today()))
+        conds.append(or_(Event.end_date.is_(None), Event.end_date >= today_in_chicago()))
     if date_from:  # still running on date_from
         conds.append(or_(Event.end_date.is_(None), Event.end_date >= date_from))
     if date_to:  # already started by date_to
@@ -147,7 +147,7 @@ def list_events(
 
     total = db.scalar(select(func.count(Event.id)).join(Venue).where(*conds))
     rows = db.scalars(select(Event).join(Venue).where(*conds)
-                      .order_by(*_order(sort, date_from or date.today()))
+                      .order_by(*_order(sort, date_from or today_in_chicago()))
                       .limit(limit).offset(offset)).all()
     return EventPage(items=attach_crew_plans(db, attach_picks(db, rows), user), total=total, limit=limit, offset=offset)
 
@@ -156,7 +156,7 @@ def list_events(
 def facets(db: DB, today: Annotated[date | None, Query(description="The caller's local date")] = None):
     """What the site needs to build its filters and headline counts, without loading every event:
     the categories (CC-125, CC-133: always the three) and neighborhoods in use, and how many events there are."""
-    today = today or date.today()
+    today = today or today_in_chicago()
     live = live_condition()
     hoods = db.execute(select(Venue.neighborhood, Venue.area, Venue.region).join(Event).where(live, Venue.neighborhood != "")
                        .group_by(Venue.neighborhood, Venue.area, Venue.region).order_by(Venue.neighborhood)).all()

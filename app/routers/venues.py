@@ -10,7 +10,7 @@ from ..deps import DB, AdminUser, OptionalUser
 from ..models import Event, Role, SubmissionRule, Venue, VenueAddressSuggestion, VenueWebsiteDismissal
 from ..schemas import (AddressChoice, AddressPick, AddressSuggestionOut, VenueAdd, VenueAdminOut, VenueIn, VenueMergeOut, VenueOut,
                        VenuePatch, VenueSiteDraft, WebsiteChoice, WebsiteSuggestionOut)
-from ..visibility import utcnow
+from ..clock import utcnow
 from ..websites import suggestions
 
 router = APIRouter(prefix="/venues", tags=["venues"])

@@ -3,7 +3,6 @@ clash leaves no file behind, and two decisions on one photo can't both win."""
 import io
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
 
 import pytest
 from PIL import Image
@@ -11,6 +10,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app import photos
+from app.clock import utcnow
 from app.models import Attended, OwnEvent, PhotoCheck, WentPhoto
 
 from .conftest import IS_POSTGRES, auth
@@ -208,12 +208,12 @@ def test_parallel_uploads_never_pass_the_daily_limit(client, user_token, make_ev
 def test_two_decisions_on_one_photo_never_both_win(client, user_token, admin_token, make_event, db, engine, stored, monkeypatch):
     root, _ = stored
 
-    class SlowClock(datetime):  # a wide gap between reading the photo and committing, so a missing lock shows
-        @classmethod
-        def now(cls, tz=None):
-            time.sleep(0.2)
-            return super().now(tz)
-    monkeypatch.setattr("app.routers.approvals.datetime", SlowClock)
+    real_now = utcnow
+
+    def slow_now():  # a wide gap between reading the photo and committing, so a missing lock shows
+        time.sleep(0.2)
+        return real_now()
+    monkeypatch.setattr("app.routers.approvals.utcnow", slow_now)
     ev = make_event("Hamlet")
     been(client, user_token, ev.id)
     try:

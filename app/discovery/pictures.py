@@ -17,12 +17,13 @@
 """
 import io
 import re
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from html import unescape
 from urllib.parse import urljoin, urlsplit
 
 from sqlalchemy import or_, select
 
+from ..clock import utcnow
 from .. import event_images
 from ..models import DiscoverySource, Event, EventStatus
 from . import fetch as web
@@ -170,7 +171,7 @@ def due(db, now: datetime, limit: int = PER_RUN) -> list[Event]:
 def add_pictures(db, now: datetime | None = None, limit: int = PER_RUN, to=None) -> list[tuple[str, str, str]]:
     """Look for the pictures that are due, committing after each. Returns (source's name, status, note) for each:
     status is ok (stored), none (no usable picture, not tried again) or error (tried again tomorrow)."""
-    now = now or datetime.now(UTC)
+    now = now or utcnow()
     done = []
     for event in due(db, now, limit):
         event.picture_tries += 1

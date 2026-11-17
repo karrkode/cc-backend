@@ -21,11 +21,12 @@ import re
 import secrets
 from dataclasses import dataclass
 from html import escape
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from .clock import utcnow, as_utc
 from .config import get_settings
 from .models import EmailToken, EmailTokenPurpose, User
 from .security import hash_refresh_token as hash_token  # the same SHA-256 hex digest
@@ -79,17 +80,13 @@ def send(email: Email, strict: bool = False) -> None:
 
 # ---- single-use links ------------------------------------------------------------
 
-def _utc(dt: datetime) -> datetime:
-    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)  # SQLite hands back naive datetimes
-
-
 def issue_token(db: Session, user: User, purpose: EmailTokenPurpose, lifetime: timedelta) -> str:
     """A new link for this user and purpose. Earlier unused ones stop working. Doesn't commit."""
     db.execute(delete(EmailToken).where(EmailToken.user_id == user.id, EmailToken.purpose == purpose,
                                         EmailToken.used_at.is_(None)))
     raw = secrets.token_urlsafe(32)
     db.add(EmailToken(user_id=user.id, purpose=purpose, token_hash=hash_token(raw), email=user.email,
-                      expires_at=datetime.now(UTC) + lifetime))
+                      expires_at=utcnow() + lifetime))
     return raw
 
 
@@ -98,12 +95,12 @@ def redeem_token(db: Session, raw: str, purpose: EmailTokenPurpose) -> User | No
     something else, or was sent to an address the account no longer has. Doesn't commit."""
     token = db.scalar(select(EmailToken).where(EmailToken.token_hash == hash_token(raw),
                                                EmailToken.purpose == purpose).with_for_update())
-    if token is None or token.used_at is not None or _utc(token.expires_at) <= datetime.now(UTC):
+    if token is None or token.used_at is not None or as_utc(token.expires_at) <= utcnow():
         return None
     user = db.get(User, token.user_id)
     if user is None or user.email != token.email:
         return None
-    token.used_at = datetime.now(UTC)
+    token.used_at = utcnow()
     return user
 
 
@@ -113,7 +110,7 @@ def already_confirmed(db: Session, raw: str) -> bool:
     "already confirmed" instead of an error. CC-204: a yes/no only, so a link never hands back account details."""
     token = db.scalar(select(EmailToken).where(EmailToken.token_hash == hash_token(raw),
                                                EmailToken.purpose == EmailTokenPurpose.verify_email))
-    if token is None or token.used_at is None or _utc(token.expires_at) <= datetime.now(UTC):
+    if token is None or token.used_at is None or as_utc(token.expires_at) <= utcnow():
         return False
     user = db.get(User, token.user_id)
     return user is not None and user.email == token.email and bool(user.email_verified)

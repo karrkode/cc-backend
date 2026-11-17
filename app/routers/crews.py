@@ -10,11 +10,12 @@ invites they sent stop working when they go, and the same goes for someone who l
 """
 import secrets
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Response, status
 from sqlalchemy import delete, func, select, update
 
+from ..clock import as_utc, today_in_chicago, utcnow
 from .. import emailcaps, mail
 from ..config import get_settings
 from ..crewplans import crew_board, unshare, unshare_been
@@ -24,7 +25,6 @@ from ..ratelimit import SlidingWindowLimiter
 from ..schemas import (CrewBoardItem, CrewEmailInviteOut, CrewIn, EmailInviteIn, PendingInviteOut, CrewInviteLink, CrewInviteOut, CrewInvitePreview, CrewMemberOut, CrewOut, CrewPatch,
                        JoinIn, OwnerIn)
 from ..security import hash_refresh_token as hash_token
-from ..stats import today_in_chicago
 from .approvals import short_name
 
 router = APIRouter(prefix="/crews", tags=["crews"])
@@ -42,18 +42,14 @@ def name_of(user: User | None) -> str:
     return (user.display_name.strip() if user else "") or "A member without a name"
 
 
-def _aware(ts: datetime) -> datetime:
-    return ts if ts.tzinfo else ts.replace(tzinfo=UTC)  # SQLite hands back naive UTC
-
-
 def _live(invite: CrewInvite) -> bool:
-    return invite.revoked_at is None and _aware(invite.expires_at) > datetime.now(UTC)
+    return invite.revoked_at is None and as_utc(invite.expires_at) > utcnow()
 
 
 def _end_invites_from(db: DB, crew: Crew, user_id: uuid.UUID) -> None:
     """CC-187: someone no longer in the crew can't keep bringing people in, or come back on a link of their own."""
     db.execute(update(CrewInvite).where(CrewInvite.crew_id == crew.id, CrewInvite.created_by == user_id, CrewInvite.revoked_at.is_(None))
-               .values(revoked_at=datetime.now(UTC)))
+               .values(revoked_at=utcnow()))
     db.execute(delete(CrewEmailInvite).where(CrewEmailInvite.crew_id == crew.id, CrewEmailInvite.invited_by == user_id))
 
 
@@ -80,14 +76,14 @@ def _out(db: DB, crew: Crew, user: User, board: dict | None = None) -> CrewOut:
         id=crew.id, name=crew.name, description=crew.description, owner=crew.owner_id == user.id, max_members=MAX_MEMBERS,
         members=[CrewMemberOut(user_id=m.user_id, name=name_of(m.user), owner=m.user_id == crew.owner_id, you=m.user_id == user.id,
                                joined_at=m.joined_at)
-                 for m in sorted(crew.members, key=lambda m: (m.user_id != crew.owner_id, _aware(m.joined_at), name_of(m.user)))],
+                 for m in sorted(crew.members, key=lambda m: (m.user_id != crew.owner_id, as_utc(m.joined_at), name_of(m.user)))],
         invites=[CrewInviteOut(id=i.id, made_by=name_of(i.creator), yours=i.created_by == user.id, created_at=i.created_at,
                                expires_at=i.expires_at, uses=i.uses) for i in invites if _live(i)],
         plans=[CrewBoardItem(event=row["event"], people=row["people"], been=row["been"]) for row in board.get(crew.id, [])],
         email_invites=[CrewEmailInviteOut(id=i.id, made_by=name_of(i.inviter), yours=i.invited_by == user.id,
                                           email=i.email if i.invited_by == user.id else None, expires_at=i.expires_at)
                        for i in db.scalars(select(CrewEmailInvite).where(CrewEmailInvite.crew_id == crew.id)
-                                           .order_by(CrewEmailInvite.created_at)) if _aware(i.expires_at) > datetime.now(UTC)])
+                                           .order_by(CrewEmailInvite.created_at)) if as_utc(i.expires_at) > utcnow()])
 
 
 @router.get("", response_model=list[CrewOut])
@@ -140,7 +136,7 @@ def make_invite(crew_id: int, db: DB, user: CurrentUser):
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "That's a lot of invite links. Try again in an hour.")
     raw = secrets.token_urlsafe(24)
     invite = CrewInvite(crew_id=crew.id, token_hash=hash_token(raw), created_by=user.id,
-                        expires_at=datetime.now(UTC) + timedelta(days=INVITE_DAYS))
+                        expires_at=utcnow() + timedelta(days=INVITE_DAYS))
     db.add(invite)
     db.commit()
     return CrewInviteLink(id=invite.id, token=raw, url=f"{get_settings().site_url.rstrip('/')}/#join={raw}",
@@ -156,7 +152,7 @@ def revoke_invite(crew_id: int, invite_id: int, db: DB, user: CurrentUser):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Invite not found")
     if invite.created_by != user.id and crew.owner_id != user.id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Only whoever made this link, or the crew leader, can revoke it")
-    invite.revoked_at = invite.revoked_at or datetime.now(UTC)
+    invite.revoked_at = invite.revoked_at or utcnow()
     db.commit()
 
 
@@ -270,7 +266,7 @@ def invite_by_email(crew_id: int, body: EmailInviteIn, db: DB, user: CurrentUser
                         .where(CrewRemoval.crew_id == crew.id, User.email == email)) is not None
     by_leader = user.id == crew.owner_id
     waiting = db.scalar(select(CrewEmailInvite).where(CrewEmailInvite.crew_id == crew.id, CrewEmailInvite.email == email))
-    if waiting is not None and (_aware(waiting.expires_at) <= datetime.now(UTC) or (removed and by_leader and waiting.invited_by != user.id)):
+    if waiting is not None and (as_utc(waiting.expires_at) <= utcnow() or (removed and by_leader and waiting.invited_by != user.id)):
         db.delete(waiting)  # an old one that ran out, or a member's the leader is replacing: start again
         db.flush()
         waiting = None
@@ -278,7 +274,7 @@ def invite_by_email(crew_id: int, body: EmailInviteIn, db: DB, user: CurrentUser
         # CC-184: an address already in the crew gets a waiting invite too, so the inviter's list looks the same either
         # way. It's never emailed, and its owner doesn't see it (_pending skips crews they're in).
         db.add(CrewEmailInvite(crew_id=crew.id, email=email, invited_by=user.id,
-                               expires_at=datetime.now(UTC) + timedelta(days=EMAIL_INVITE_DAYS)))
+                               expires_at=utcnow() + timedelta(days=EMAIL_INVITE_DAYS)))
         confirmed = user.email_verified or not get_settings().require_verified_email  # unconfirmed inviters email nobody
         if email not in member_emails and (by_leader or not removed) and confirmed and emailcaps.may_send(db, email, emailcaps.INVITE, user.id):
             tasks.add_task(mail.send, mail.crew_invite(email, short_name(user.display_name), crew.name, EMAIL_INVITE_DAYS))
@@ -303,9 +299,9 @@ def _pending(db: DB, user: User) -> list[CrewEmailInvite]:
     if not _sees_invites(user):
         return []
     rows = db.scalars(select(CrewEmailInvite).where(CrewEmailInvite.email == user.email).order_by(CrewEmailInvite.created_at)).all()
-    now = datetime.now(UTC)
+    now = utcnow()
     removed_from = set(db.scalars(select(CrewRemoval.crew_id).where(CrewRemoval.user_id == user.id)))  # CC-187
-    return [i for i in rows if _aware(i.expires_at) > now and not any(m.user_id == user.id for m in i.crew.members)
+    return [i for i in rows if as_utc(i.expires_at) > now and not any(m.user_id == user.id for m in i.crew.members)
             and (i.crew_id not in removed_from or i.invited_by == i.crew.owner_id)]
 
 

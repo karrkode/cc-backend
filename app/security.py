@@ -9,11 +9,12 @@ ends every access token at once.
 import hashlib
 import secrets
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 
 import bcrypt
 import jwt
 
+from .clock import utcnow
 from .config import get_settings
 
 ALGORITHM = "HS256"
@@ -42,7 +43,7 @@ def verify_password(password: str, password_hash: str | None) -> bool:
 
 def create_access_token(user_id: uuid.UUID, role: str, session_version: int = 0) -> tuple[str, int]:
     s = get_settings()
-    now = datetime.now(UTC)
+    now = utcnow()
     expires_in = s.access_token_minutes * 60
     claims = {"sub": str(user_id), "role": role, "sv": session_version, "iss": s.jwt_issuer,
               "iat": now, "exp": now + timedelta(seconds=expires_in)}

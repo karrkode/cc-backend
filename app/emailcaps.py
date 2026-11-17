@@ -5,11 +5,12 @@ queued. Cancelling, declining or expiring an invite doesn't touch that record, s
 Over a cap the route answers exactly as usual and sends nothing, so the answer says nothing about the address.
 The weekly recap goes to our own inbox from a scheduled job and isn't counted.
 """
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
+from .clock import utcnow
 from .models import SentEmail
 
 # kinds of email
@@ -40,7 +41,7 @@ def _lock(db: Session, space: int, key: str) -> None:
 def may_send(db: Session, to: str, kind: str, account_id=None, resend: bool = False) -> bool:
     """True, and the email recorded, if it's within every cap; False means don't send it. Doesn't commit."""
     to = to.strip().lower()
-    now = datetime.now(UTC)
+    now = utcnow()
 
     def sent(within: timedelta, *where) -> int:
         return db.scalar(select(func.count()).select_from(SentEmail).where(SentEmail.sent_at > now - within, *where)) or 0

@@ -27,6 +27,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import ObjectDeletedError, StaleDataError
 
+from .clock import utcnow
 from . import keys
 from .config import get_settings
 from .models import OwnEvent, PhotoCheck, WentPhoto
@@ -226,7 +227,7 @@ def own_link_ok(own_id: int, exp: int, sig: str) -> bool:
 # ---- saving and removing --------------------------------------------------------------------
 
 def uploads_today(db, user_id) -> int:
-    since = datetime.now(UTC) - timedelta(days=1)
+    since = utcnow() - timedelta(days=1)
     return db.scalar(select(func.count()).select_from(PhotoCheck).where(PhotoCheck.user_id == user_id,
                                                                        PhotoCheck.checked_at >= since)) or 0
 
@@ -348,7 +349,7 @@ def save_own(db, own: OwnEvent, check_id: int, data: bytes, content_type: str) -
         _user_lock(db, user_id)
         db.refresh(own, with_for_update={"of": OwnEvent})  # a second upload may have replaced the photo while this one was checked
         old_key = own.photo_key
-        own.photo_key, own.photo_type, own.photo_at = key, content_type, datetime.now(UTC)
+        own.photo_key, own.photo_type, own.photo_at = key, content_type, utcnow()
         check = db.get(PhotoCheck, check_id)
         if check is not None:
             check.outcome = "stored"
@@ -381,7 +382,7 @@ def remove(db, photos) -> None:
 def sweep(db, older_than_minutes: int = 60) -> int:
     """Remove stored photos the database doesn't know (their mark, event or account is gone). Returns how many."""
     known = set(db.scalars(select(WentPhoto.key))) | set(db.scalars(select(OwnEvent.photo_key)))  # CC-248
-    cutoff = datetime.now(UTC) - timedelta(minutes=older_than_minutes)  # not one being saved right now
+    cutoff = utcnow() - timedelta(minutes=older_than_minutes)  # not one being saved right now
     gone = [key for key, at in store().keys() if key not in known and at < cutoff]
     for key in gone:
         store().delete(key)
@@ -389,6 +390,6 @@ def sweep(db, older_than_minutes: int = 60) -> int:
 
 
 def checks_this_month(db, now: datetime | None = None) -> int:
-    now = now or datetime.now(UTC)
+    now = now or utcnow()
     start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     return db.scalar(select(func.count()).select_from(PhotoCheck).where(PhotoCheck.checked_at >= start)) or 0

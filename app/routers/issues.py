@@ -8,7 +8,7 @@ CC-245: a dashboard for admins on the Issues page: open reports by status and ag
 and where the open ones stand in Jira."""
 import logging
 import re
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from time import monotonic
 from typing import Annotated
 
@@ -16,6 +16,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 
+from ..clock import CHICAGO, as_utc, utcnow
 from .. import jira
 from ..config import get_settings
 from ..deps import DB, AdminUser, CurrentUser, require_verified_email
@@ -23,7 +24,6 @@ from ..models import IssueReport, User
 from ..ratelimit import SlidingWindowLimiter
 from ..schemas import (IssueAdminOut, IssueAge, IssueFixTime, IssueIn, IssueJiraStats, IssueKind, IssueOldest, IssueOut, IssuePage,
                        IssuePatch, IssueReporter, IssueStats, IssueStatus, IssueWeek, JiraCreate, JiraDraft, JiraTicketStatus)
-from ..stats import CHICAGO
 
 log = logging.getLogger("uvicorn.error")
 
@@ -109,10 +109,6 @@ WEEKS = 8
 DAY = 86400
 
 
-def _utc(d: datetime) -> datetime:
-    return d.replace(tzinfo=UTC) if d.tzinfo is None else d  # SQLite gives times back without a zone
-
-
 def _median(xs: list[float]) -> float | None:
     if not xs:
         return None
@@ -158,7 +154,7 @@ def report_stats(db: DB, _: AdminUser, kind: Annotated[IssueKind | None, Query(d
     if kind:
         stmt = stmt.where(IssueReport.kind == kind)
     reports = db.scalars(stmt).unique().all()
-    now = datetime.now(UTC)
+    now = utcnow()
     counts: dict[str, int] = {}
     for i in reports:
         counts[i.status] = counts.get(i.status, 0) + 1
@@ -167,7 +163,7 @@ def report_stats(db: DB, _: AdminUser, kind: Annotated[IssueKind | None, Query(d
     for i in open_reports:
         by_kind[i.kind] = by_kind.get(i.kind, 0) + 1
 
-    ages = [((now - _utc(i.created_at)).total_seconds() / DAY, i) for i in open_reports]
+    ages = [((now - as_utc(i.created_at)).total_seconds() / DAY, i) for i in open_reports]
     oldest = max(ages, key=lambda a: (a[0], -a[1].id), default=None)
     age = IssueAge(median_days=_median([a for a, _ in ages]),
                    oldest=IssueOldest(key=oldest[1].key, days=oldest[0]) if oldest else None,
@@ -179,14 +175,14 @@ def report_stats(db: DB, _: AdminUser, kind: Annotated[IssueKind | None, Query(d
     mondays = [this_monday - timedelta(weeks=n) for n in range(WEEKS - 1, -1, -1)]
     per_week = dict.fromkeys(mondays, 0)
     for i in reports:
-        d = _utc(i.created_at).astimezone(CHICAGO).date()
+        d = as_utc(i.created_at).astimezone(CHICAGO).date()
         monday = d - timedelta(days=d.weekday())
         if monday in per_week:
             per_week[monday] += 1
 
     fixed = [i for i in reports if i.status == "fixed" and i.closed_at]
-    fix_time = IssueFixTime(median_days=_median([max(0.0, (_utc(i.closed_at) - _utc(i.created_at)).total_seconds() / DAY) for i in fixed]),
-                            fixed=len(fixed), last_30_days=sum(now - _utc(i.closed_at) <= timedelta(days=30) for i in fixed))
+    fix_time = IssueFixTime(median_days=_median([max(0.0, (as_utc(i.closed_at) - as_utc(i.created_at)).total_seconds() / DAY) for i in fixed]),
+                            fixed=len(fixed), last_30_days=sum(now - as_utc(i.closed_at) <= timedelta(days=30) for i in fixed))
 
     return IssueStats(counts=counts, open=len(open_reports), open_by_kind=by_kind, age=age,
                       weeks=[IssueWeek(week=m, count=per_week[m]) for m in mondays], fix_time=fix_time,
@@ -201,7 +197,7 @@ def update_report(issue_id: int, body: IssuePatch, db: DB, _: AdminUser):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Report not found")
     if body.status is not None:
         if body.status in CLOSED and issue.status not in CLOSED:
-            issue.closed_at = datetime.now(UTC)  # CC-245
+            issue.closed_at = utcnow()  # CC-245
         elif body.status not in CLOSED:
             issue.closed_at = None
         issue.status = body.status
@@ -269,7 +265,7 @@ def make_ticket(issue_id: int, body: JiraCreate, db: DB, _: AdminUser):
     issue = _report(db, issue_id)
     if issue.jira_key:
         return _admin_out(issue)
-    now = datetime.now(UTC)
+    now = utcnow()
     if not _set(db, issue_id, IssueReport.jira_key.is_(None),
                 or_(IssueReport.jira_pending_at.is_(None), IssueReport.jira_pending_at < now - CLAIM), jira_pending_at=now):
         db.refresh(issue)
@@ -296,7 +292,7 @@ def make_ticket(issue_id: int, body: JiraCreate, db: DB, _: AdminUser):
         _set(db, issue_id, jira_pending_at=None)
         log.exception("jira: ticket for %s failed", issue.key)
         raise
-    _set(db, issue_id, jira_key=key, jira_created_at=datetime.now(UTC), jira_pending_at=None)
+    _set(db, issue_id, jira_key=key, jira_created_at=utcnow(), jira_pending_at=None)
     log.info("jira: %s %s %s in %.1fs", issue.key, "linked to existing" if found else "made", key, monotonic() - started)
     db.refresh(issue)
     return _admin_out(issue)

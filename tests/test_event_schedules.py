@@ -3,6 +3,7 @@ from datetime import date, timedelta
 
 from sqlalchemy import select
 
+from app.clock import today_in_chicago
 from app.discovery.readers import FoundEvent, Performance
 from app.discovery.store import record
 from app.models import DiscoveredItem, Event, Venue
@@ -19,7 +20,7 @@ def test_the_schedule_comes_from_the_event_then_its_venue(client, admin_token, d
     ev = make_event("Hamlet")
     venue = db.get(Venue, ev.venue_id)
     venue.show_times, venue.open_hours = {"thu": ["19:30"]}, {"mon": None}
-    soon, past = (date.today() + timedelta(days=3)).isoformat(), (date.today() - timedelta(days=3)).isoformat()
+    soon, past = (today_in_chicago() + timedelta(days=3)).isoformat(), (today_in_chicago() - timedelta(days=3)).isoformat()
     ev.performances = [{"date": past, "time": "19:30"}, {"date": soon, "time": "14:00"}]
     db.commit()
     s = schedule_of(client, ev.id)
@@ -40,7 +41,7 @@ def test_discovery_passes_dates_on_to_listed_and_approved_events(client, admin_t
     s = make_source(db)
     listed = make_event("Hamlet", venue_name="Goodman Theatre", neighborhood="Loop")
     db.commit()
-    later = (date.today() + timedelta(days=20)).isoformat()
+    later = (today_in_chicago() + timedelta(days=20)).isoformat()
     shows = [Performance(date=later, time="19:30"), Performance(date=later, time="14:00"), Performance(date=later, time="19:30")]
     record(db, s, FoundEvent(title="Hamlet", kind="production", category="Theater", performances=shows), "")
     db.commit(); db.refresh(listed)

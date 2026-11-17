@@ -17,6 +17,7 @@ from xml.sax.saxutils import escape as xml_escape
 
 from .addresses import full_address, locality, map_url
 from .categories import label
+from .clock import chicago_day
 from .config import get_settings
 from .models import Area, Event
 
@@ -340,7 +341,7 @@ def sitemap(events: list[Event], today: date, pages: list[str] = ()) -> str:
     """pages: other paths to list, such as the roundups (CC-109)."""
     site = get_settings().site_url
     urls = [(site + "/", None)] + [(site + p, None) for p in pages] + [
-        (site + path_for(ev), ev.updated_at.date() if ev.updated_at else None) for ev in events if not is_closed(ev, today)]
+        (site + path_for(ev), chicago_day(ev.updated_at) if ev.updated_at else None) for ev in events if not is_closed(ev, today)]
     lines = ['<?xml version="1.0" encoding="UTF-8"?>', '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
     for loc, mod in urls:
         lines.append(f"  <url><loc>{xml_escape(loc)}</loc>" + (f"<lastmod>{mod.isoformat()}</lastmod>" if mod else "") + "</url>")

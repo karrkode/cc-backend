@@ -3,27 +3,16 @@
 Weeks run Monday to Sunday in Chicago time. Admin accounts are left out: these numbers are about
 members. Only totals leave this module; never who.
 """
-from datetime import UTC, date, datetime, timedelta
-from zoneinfo import ZoneInfo
+from datetime import date, timedelta
 
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 
+from .clock import CHICAGO, chicago_day, today_in_chicago  # noqa: F401  (CC-276: they live in clock.py)
 from .models import ActiveDay, Attended, Event, Plan, PlanStatus, Role, User
 from .visibility import live_condition
 
-CHICAGO = ZoneInfo("America/Chicago")
 RETURN_AFTER = timedelta(days=28)  # "still active 4 weeks after joining"
-
-
-def chicago_day(ts: datetime) -> date:
-    if ts.tzinfo is None:  # SQLite hands back naive UTC
-        ts = ts.replace(tzinfo=UTC)
-    return ts.astimezone(CHICAGO).date()
-
-
-def today_in_chicago() -> date:
-    return datetime.now(CHICAGO).date()
 
 
 def record_active(db, user) -> None:

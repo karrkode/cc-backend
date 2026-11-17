@@ -69,12 +69,12 @@ def test_manual_removal_is_not_reversed_by_sourcing(client, admin_token, make_ev
     ev = make_event("Hamlet")
     ev.found_by_id = source.id
     db.commit()
-    assert pictures.due(db, pictures.datetime.now(pictures.UTC)) == [ev]
+    assert pictures.due(db, pictures.utcnow()) == [ev]
     response = client.delete(f"/events/{ev.id}/image", headers=auth(admin_token))
     assert response.status_code == 200
     db.refresh(ev)
     assert ev.picture_tries == 0  # a separate flag, not a pretend exhausted retry count
-    assert pictures.due(db, pictures.datetime.now(pictures.UTC)) == []
+    assert pictures.due(db, pictures.utcnow()) == []
     with pytest.raises(pictures.NoPicture, match="admin"):
         pictures.add_picture(db, ev)
 

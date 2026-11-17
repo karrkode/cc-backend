@@ -24,8 +24,8 @@ from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy import select
 
+from ..clock import chicago_day, utcnow
 from ..models import DiscoveredItem, DiscoveryCheck, DiscoverySource
-from ..stats import chicago_day
 from . import fetch as web
 from .budget import alert_if_short, best_first, budget_state
 from .hours import apply_open_hours, apply_show_times, link_venue
@@ -144,7 +144,7 @@ def check_source(db, source: DiscoverySource, client, today: date) -> Outcome:
         out.status, out.notes = "error", [f"{e} (failed reads in a row: {source.failed_reads}; next try in {wait} days)"]
     except Exception as e:  # a reader failing on one source must not stop the others
         out.status, out.notes = "error", [f"{type(e).__name__}: {e}"[:500]]
-    now = datetime.now(UTC)
+    now = utcnow()
     source.last_checked_at, source.last_status = now, out.status
     source.last_error = "; ".join(out.notes) if out.status in ("blocked", "error") else ""
     if out.status == "error":
@@ -260,7 +260,7 @@ def run(db, client, today: date, only: int | None = None, force: bool = False) -
     """Check what's due, within the monthly budget (CC-80). force (the command line's --now) and
     Check now (source.check_requested) still run when the budget is used up."""
     results = []
-    release_delayed(db, datetime.now(UTC))  # CC-257
+    release_delayed(db, utcnow())  # CC-257
     drop_passed_hidden(db, today)  # CC-207: costs nothing, so it runs whatever the budget says
     if only is None and add_missing(db, today):  # CC-221: adding one costs nothing either: only its reads do
         db.commit()
