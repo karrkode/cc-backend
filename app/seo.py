@@ -6,7 +6,7 @@ robots.txt. CloudFront sends those paths on chiculturecrew.com here and caches t
 minutes (infra/aws/frontend.tf), so a change shows up without a rebuild.
 
 Only what the catalog already shows publicly goes on a page: never plans, crews, names or journals, except the
-journal entries members chose to share there (public takes, CC-112, from app.takes).
+journal entries members chose to share there (Yours truly's takes only, CC-112 and CC-172, from app.takes).
 """
 import json
 import re
@@ -275,7 +275,7 @@ def _page(title: str, desc: str, canonical: str | None, body: str, extra_head: s
 
 
 def _takes_html(takes: list[dict]) -> str:
-    """CC-112: members' shared journal entries: the three words, the review, the name and whether they'd recommend it."""
+    """CC-112, CC-172: Yours truly's shared journal entries: the three words, the name and whether they'd recommend it."""
     if not takes:
         return ""
     e = lambda s: escape(s, quote=True)  # noqa: E731
@@ -285,7 +285,7 @@ def _takes_html(takes: list[dict]) -> str:
         review = f'<p class="take-review">{e(t["review"])}</p>' if t["review"] else ""
         by = f"<b>{e(t['name'])}</b>" + (" · Would recommend" if t["recommend"] else "")
         items.append(f'<li class="take"><p class="take-words">{words}</p>{review}<p class="take-by">{by}</p></li>')
-    return ('<section class="takes" aria-labelledby="takes-h"><h2 id="takes-h">From people who went</h2>'
+    return ('<section class="takes" aria-labelledby="takes-h"><h2 id="takes-h">Yours truly went</h2>'
             f'<ol>{"".join(items)}</ol></section>')
 
 

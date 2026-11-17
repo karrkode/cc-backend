@@ -39,7 +39,7 @@ def test_sharing_a_take(client, admin_token, unconfirmed, make_event):  # admin 
     assert client.put(f"/me/attended/{ev.id}/share", json={"shared": False}, headers=h).status_code == 200  # stopping is fine
     confirm(client)
     assert share(client, h, ev).status_code == 200
-    assert [t["review"] for t in seen()] == ["Loved it."]
+    assert [t["words"] for t in seen()] == ["moody dark grand"]
 
 
 def test_sending_a_photo(client, unconfirmed, make_event, stored):  # noqa: F811

@@ -37,6 +37,7 @@ def test_private_unless_shared(client, make_event):
     row = client.get("/me/attended", headers=h).json()[0]
     assert (row["shared"], row["anonymous"]) == (False, False)  # off by default
     assert takes(client, hamlet) == [] and takes(client, hamlet, h) == []
+    assert takes(client, hamlet, crewmate(client, h)) == []  # not even a crew-mate, until it's shared
     assert "Secretword" not in page(client, hamlet) and "Privatereview" not in page(client, hamlet)
 
 
@@ -62,17 +63,53 @@ def test_share_shows_to_crewmates_only(client, make_event):
     assert client.get("/me/attended", headers=h).json()[0]["shared"] is True
 
 
-def test_the_admins_take_shows_to_everyone(client, make_event, admin_token):
+def yours_truly(db, email="admin@example.com"):
+    """The dolphins account: the one that signs as Yours truly."""
+    from sqlalchemy import select
+
+    from app.models import User
+    db.scalar(select(User).where(User.email == email)).dolphins = True
+    db.commit()
+
+
+def test_the_admins_take_shows_to_everyone(client, make_event, admin_token, db):
+    yours_truly(db)
     admin, h, hamlet = auth(admin_token), member(client), make_event("Hamlet")
     been(client, admin, hamlet)
     journal(client, admin, hamlet, words="grand dark moody", review="Adminreview", recommend=True)
-    share(client, admin, hamlet)
+    share(client, admin, hamlet, anonymous=True)  # the choice doesn't apply: Yours truly always signs so
     for viewer in (None, h):  # signed out, and in no crew with the admin
         [t] = takes(client, hamlet, viewer)
-        assert (t["words"], t["recommend"], t["by_admin"], t["review"]) == ("grand dark moody", True, True, "")
+        assert (t["words"], t["name"], t["recommend"], t["by_admin"], t["review"]) == ("grand dark moody", "Yours truly", True, True, "")
+        assert t["user_id"] is None and t["hidden"] is False
     html = page(client, hamlet)
-    assert "<span>grand</span>" in html and "Would recommend" in html and "Adminreview" not in html
-    assert takes(client, hamlet, admin)[0]["review"] == "Adminreview"  # admins see reviews, to moderate
+    assert "Yours truly went" in html and "<span>grand</span>" in html and "Would recommend" in html and "Adminreview" not in html
+    assert takes(client, hamlet, admin)[0]["review"] == ""  # nobody gets a review
+    url = f"/admin/takes/{hamlet.id}/{takes(client, hamlet, admin)[0]['user_id']}"
+    assert client.put(url, json={"hidden": True}, headers=admin).status_code == 204
+    assert takes(client, hamlet) == [] and takes(client, hamlet, h) == [] and "grand" not in page(client, hamlet)  # hidden stays hidden
+
+
+def test_an_admin_who_isnt_yours_truly_is_a_member(client, make_event, admin_token):
+    admin, h, hamlet = auth(admin_token), member(client), make_event("Hamlet")
+    been(client, admin, hamlet)
+    journal(client, admin, hamlet, words="plain dull take")
+    share(client, admin, hamlet)
+    assert takes(client, hamlet) == [] and takes(client, hamlet, h) == [] and "plain" not in page(client, hamlet)  # no dolphins: not public
+
+
+def test_leaving_the_crew_or_another_crew_sees_nothing(client, make_event):
+    h, hamlet = member(client), make_event("Hamlet")
+    mate = crewmate(client, h)
+    far = member(client, "Cy Q", "cy@example.com")
+    client.post("/crews", json={"name": "Elsewhere"}, headers=far)  # a crew of their own, not the author's
+    been(client, h, hamlet)
+    journal(client, h, hamlet, words="moody dark grand")
+    share(client, h, hamlet)
+    assert len(takes(client, hamlet, mate)) == 1 and takes(client, hamlet, far) == []
+    crew_id = client.get("/crews", headers=mate).json()[0]["id"]
+    assert client.post(f"/crews/{crew_id}/leave", headers=mate).status_code == 204
+    assert takes(client, hamlet, mate) == []  # no longer in a crew with them
 
 
 def test_anonymous_and_names(client, make_event, admin_token):

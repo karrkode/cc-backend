@@ -385,8 +385,8 @@ class CrewPlansOut(BaseModel):
 
 class TakeOut(BaseModel):
     """CC-112: a member's shared journal entry, as this viewer sees it on the event. name: "Maya C." or
-    "A Culture Crew member". CC-172: by_admin: it's the admin's ("Yours truly"), shown to everyone; the rest only to
-    the author's crew-mates. review: admins only (else ""). user_id and hidden: admins only (to hide or unhide it)."""
+    "A Culture Crew member". CC-172: by_admin: it's Yours truly's (the dolphins account), shown to everyone; the rest only to
+    the author's crew-mates. review: always "" (kept for the live site). user_id and hidden: admins only."""
     words: str
     review: str
     by_admin: bool = False
