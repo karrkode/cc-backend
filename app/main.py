@@ -11,6 +11,7 @@ from .db import SessionLocal, engine
 from . import keys
 from .fromlink import warm_reader
 from .health import Recorder, RequestRecorder
+from .pageheaders import PageHeaders
 from .routers import admin, approvals, auth, crews, discovery, events, issues, journal, me, photos, seo, traffic, venues
 
 settings = get_settings()
@@ -42,6 +43,7 @@ app = FastAPI(
     description="Chicago arts events, accounts, and event submissions for chiculturecrew.com.",
 )
 
+app.add_middleware(PageHeaders)  # CC-287: the CSP and frame protection on every HTML page the API renders
 app.add_middleware(BodyLimit)  # CC-190: added first, so it runs inside CORS and the site can read its 413
 app.add_middleware(
     CORSMiddleware,
