@@ -29,16 +29,17 @@ def refused(r):
     return r.status_code == 403 and r.json()["detail"].startswith("Confirm your email address before")
 
 
-def test_sharing_a_take(client, unconfirmed, make_event):
+def test_sharing_a_take(client, admin_token, unconfirmed, make_event):  # admin first: confirm() reads the latest email
     h, ev = auth(unconfirmed), make_event()
+    seen = lambda: client.get(f"/events/{ev.id}", headers=auth(admin_token)).json()["takes"]  # noqa: E731  CC-172: admins see all
     been(client, h, ev)
     journal(client, h, ev, words="moody dark grand", review="Loved it.", recommend=True)
     assert refused(share(client, h, ev))
-    assert client.get(f"/e/{ev.id}").text.count("Loved it.") == 0
+    assert seen() == []
     assert client.put(f"/me/attended/{ev.id}/share", json={"shared": False}, headers=h).status_code == 200  # stopping is fine
     confirm(client)
     assert share(client, h, ev).status_code == 200
-    assert "Loved it." in client.get(f"/e/{ev.id}").text
+    assert [t["words"] for t in seen()] == ["moody dark grand"]
 
 
 def test_sending_a_photo(client, unconfirmed, make_event, stored):  # noqa: F811
