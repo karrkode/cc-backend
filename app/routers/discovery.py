@@ -14,11 +14,11 @@ from ..discovery.needs import needs
 from ..discovery.readers import cost_usd
 from ..discovery.recap import budget_note, found_by_week, gather, next_send
 from ..discovery.rules import norm_title
-from ..discovery.store import matching_rule, possible_duplicates, rule_reason, sync_performances, venue_for
+from ..discovery.store import matching_rule, possible_duplicates, release_delayed, rule_reason, sync_performances, venue_for
 from ..discovery.venuesources import covers, grid_numbers, state_of
 from ..models import DiscoveredItem, DiscoveryCheck, DiscoverySource, Event, SkipRule, Venue
-from ..stats import today_in_chicago
-from ..schemas import (BatchHeld, BatchIn, BatchOut, BudgetIn, DiscoveredItemOut, DiscoveredPage, DiscoveryOverview, DiscoverySourceOut, DiscoverySourcePatch,
+from ..stats import CHICAGO, today_in_chicago
+from ..schemas import (BatchHeld, BatchIn, BatchOut, BudgetIn, DelayIn, DiscoveredItemOut, DiscoveredPage, DiscoveryOverview, DiscoverySourceOut, DiscoverySourcePatch,
                        EventIn, EventRef, FoundChange, RUN_DATES_MAX, RejectIn, RejectOut, SkipRuleOut, SourcingCount, SourcingSummary,
                        SourcingUnreadable, SourcingWeek, UnreadableSource)
 from .events import new_event
@@ -54,6 +54,7 @@ def _one(db: DB, source: DiscoverySource) -> DiscoverySourceOut:
 def sources(db: DB, _: AdminUser):
     """Every event source (CC-70): its pages, how often it's checked, what the last check found, how
     many found items are waiting for review, and the last 30 days' model use."""
+    release_delayed(db, datetime.now(UTC))  # CC-257
     since = datetime.now(UTC) - timedelta(days=30)
     waiting = dict(db.execute(select(DiscoveredItem.source_id, func.count())
                               .where(DiscoveredItem.status.in_(["new", "update"])).group_by(DiscoveredItem.source_id)).all())
@@ -74,7 +75,7 @@ def sources(db: DB, _: AdminUser):
 def summary(db: DB, _: AdminUser):
     """What the Event Sourcing page shows (CC-206, CC-207): what needs the admin, the budget, the graph and the found events."""
     now = datetime.now(UTC)
-    w = gather(db, now)
+    w = gather(db, now)  # releases delayed events that are due (CC-257)
     hidden = db.scalar(select(func.count()).select_from(DiscoveredItem).where(DiscoveredItem.status == "hidden")) or 0
     return SourcingSummary(new_waiting=w.new_waiting, updates_waiting=w.updates_waiting, hidden=hidden,
                            waiting_by_source=[SourcingCount(id=sid, name=name, n=n) for sid, name, n in w.waiting_by_source],
@@ -199,6 +200,8 @@ def _item_out(db: DB, item: DiscoveredItem, dups: dict | None = None) -> Discove
     out.venue_show_times = venue.show_times if venue is not None else {}
     if venue is not None:  # CC-125: the approve form starts with the venue's default category
         out.venue_category, out.venue_opera = venue.category, venue.opera
+    if item.status == "hidden" and item.delayed_until:  # CC-257
+        out.back_on = item.delayed_until.astimezone(CHICAGO).date()
     out.needs = needs(item, venue) if item.status in ("new", "hidden") else ""
     out.proposed = [FoundChange(field=k, listed=v[0], found=v[1]) for k, v in (item.changes or {}).items()] \
         if item.status == "update" else []
@@ -217,6 +220,7 @@ def items(db: DB, _: AdminUser, show: Show = "waiting", source: int | None = Non
     """Found events for review, newest first: new events and proposed updates ("waiting"), or one
     status; optionally only those with (or without) a price, or dates. Also the count per status
     under the same filters, and the sources that couldn't be read, for a manual look."""
+    release_delayed(db, datetime.now(UTC))  # CC-257
     day = func.coalesce(DiscoveredItem.begin_date, DiscoveredItem.end_date)
     q = _filtered(show, source, price, dates).order_by(
         *((day.is_(None), day, DiscoveredItem.begin_date.is_(None), func.lower(DiscoveredItem.title), DiscoveredItem.id) if order == "day"
@@ -408,7 +412,32 @@ def unhide(item_id: int, db: DB, _: AdminUser):
     item = _item(db, item_id)
     if item.status != "hidden":
         raise HTTPException(status.HTTP_409_CONFLICT, "This one isn't hidden")
-    item.status = "new"
+    item.status, item.delayed_until = "new", None  # CC-257: a delay ends with it
+    db.commit()
+    return _item_out(db, item)
+
+
+def _back_on(today: date, span: str) -> date:
+    """CC-257: 1 week is 7 days; a month is the same day next month (the last day of a shorter one)."""
+    if span == "1w":
+        return today + timedelta(days=7)
+    months = 1 if span == "1m" else 2
+    y, m = divmod(today.year * 12 + today.month - 1 + months, 12)
+    m += 1
+    last = (date(y + (m == 12), m % 12 + 1, 1) - timedelta(days=1)).day
+    return date(y, m, min(today.day, last))
+
+
+@router.post("/items/{item_id}/delay", response_model=DiscoveredItemOut)
+def delay(item_id: int, body: DelayIn, db: DB, _: AdminUser):
+    """CC-257: not now. It's hidden and returns to the queue as new on that day (from midnight, Chicago time). The
+    event's details are untouched and it isn't published. A hidden one can be delayed again."""
+    item = _item(db, item_id)
+    if item.status not in ("new", "hidden"):
+        raise HTTPException(status.HTTP_409_CONFLICT, "Only new or hidden events can be delayed")
+    day = _back_on(today_in_chicago(), body.span)
+    item.status = "hidden"
+    item.delayed_until = datetime(day.year, day.month, day.day, tzinfo=CHICAGO).astimezone(UTC)
     db.commit()
     return _item_out(db, item)
 

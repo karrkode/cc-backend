@@ -35,7 +35,7 @@ from .pictures import add_pictures
 from .pagetext import page_text, text_hash
 from .readers import ReadFailed, read_aic, read_page
 from .rules import apply_rules, norm_title
-from .store import drop_passed_hidden, note_addresses, on_source_site, record, venue_for
+from .store import drop_passed_hidden, release_delayed, note_addresses, on_source_site, record, venue_for
 from .venuesources import add_missing, use_calendar_link
 
 STRETCH_AFTER = 3
@@ -260,6 +260,7 @@ def run(db, client, today: date, only: int | None = None, force: bool = False) -
     """Check what's due, within the monthly budget (CC-80). force (the command line's --now) and
     Check now (source.check_requested) still run when the budget is used up."""
     results = []
+    release_delayed(db, datetime.now(UTC))  # CC-257
     drop_passed_hidden(db, today)  # CC-207: costs nothing, so it runs whatever the budget says
     if only is None and add_missing(db, today):  # CC-221: adding one costs nothing either: only its reads do
         db.commit()

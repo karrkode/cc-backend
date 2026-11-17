@@ -26,7 +26,7 @@ from ..stats import CHICAGO
 from .budget import budget_state
 from .needs import needs
 from .readers import cost_usd
-from .store import venue_for
+from .store import release_delayed, venue_for
 
 DAYS = 7
 GRAPH_WEEKS = 12  # CC-207: the Event Sourcing page's graph of new events found
@@ -133,6 +133,7 @@ def counts_as_found(status: str, skip_reason: str) -> bool:
 
 
 def gather(db, now: datetime) -> Week:
+    release_delayed(db, now)  # CC-257
     s = get_settings()
     since = now - timedelta(days=DAYS)
     w = Week(first=since.astimezone(CHICAGO).date(), last=(now.astimezone(CHICAGO) - timedelta(days=1)).date(),

@@ -27,6 +27,7 @@ from sqlalchemy import func, select
 from ..addresses import found_address
 from ..areas import is_out_of_town
 from ..categories import BY_SOURCE_KIND, REMOVED
+from ..stats import CHICAGO
 from ..models import DiscoveredItem, DiscoverySource, Event, SkipRule, Venue, VenueAddressSuggestion
 from .jsonld import event_addresses
 from .readers import FoundEvent
@@ -272,6 +273,24 @@ def last_date(item: DiscoveredItem) -> date | None:
     if item.end_date:
         return max([item.end_date, *days])
     return None if item.open_run or not days else max(days)
+
+
+def release_delayed(db, now: datetime) -> int:
+    """CC-257: delayed events whose time has come go back to new, so no job is needed: the queue, the counts and the
+    recap call this first. Returns how many."""
+    due = db.scalars(select(DiscoveredItem).where(DiscoveredItem.status == "hidden", DiscoveredItem.delayed_until.is_not(None),
+                                                  DiscoveredItem.delayed_until <= now)).all()
+    today = now.astimezone(CHICAGO).date()
+    for item in due:
+        last = last_date(item)
+        if last is not None and last < today:  # it ran out while delayed: same as a hidden one that passed (CC-207)
+            item.status, item.skip_reason = "rejected", PASSED_REASON
+        else:
+            item.status = "new"
+        item.delayed_until = None
+    if due:
+        db.commit()
+    return len(due)
 
 
 def drop_passed_hidden(db, today: date) -> int:

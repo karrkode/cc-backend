@@ -775,6 +775,8 @@ class DiscoveredItem(Base):
     weekly: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
     looked_on: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
     weeks: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")  # some weeks of the month only, as on events
+    # CC-257: a hidden item an admin delayed; it goes back to "new" once this moment has passed (store.release_delayed)
+    delayed_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
