@@ -1,5 +1,6 @@
 """CC-287: every HTML page the API renders carries the page CSP and refuses framing, and nothing the pages show can
 turn into markup."""
+import json
 from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 
@@ -89,7 +90,7 @@ def test_hostile_values_show_as_text_only_on_event_and_roundup_pages(client, mak
     today = today_in_chicago()
     ev = make_event(title="T" + HOSTILE, venue_name="V" + HOSTILE, neighborhood="N" + HOSTILE,
                     begin=today - timedelta(days=1), end=today + timedelta(days=2), cost_text="C" + HOSTILE)
-    ev.venue.address, ev.venue.city, ev.venue.zip_code = "A" + HOSTILE, "Y" + HOSTILE, "Z" + HOSTILE
+    ev.venue.address, ev.venue.city, ev.venue.zip_code = "A" + HOSTILE, "Y" + HOSTILE, "<\"&'>"  # zip: 10 characters at most, and only in the JSON-LD
     ev.url = "https://example.org/" + HOSTILE
     register(client, "dolphin@example.com", name="D" + HOSTILE)
     user = db.scalar(select(User).where(User.email == "dolphin@example.com"))
@@ -116,6 +117,12 @@ def test_hostile_values_show_as_text_only_on_event_and_roundup_pages(client, mak
     assert "R" + HOSTILE not in text and "R&quot;" not in pages["event"]  # a review is never shown
     assert any(v == "https://example.org/" + HOSTILE for v in ev_page.attr_values)  # the ticket link, inside its attribute
     assert any(v.startswith("Theater at V" + HOSTILE) for v in ev_page.attr_values)  # the description meta
+
+    block = ev_page.scripts[1]  # the JSON-LD: no < > & can close it, and the values read back as they were
+    assert not any(c in block for c in "<>&")
+    ld = json.loads(block)
+    assert ld["name"] == "T" + HOSTILE and ld["location"]["name"] == "V" + HOSTILE
+    assert ld["location"]["address"]["streetAddress"] == "A" + HOSTILE and ld["location"]["address"]["postalCode"] == "<\"&'>"
 
     for r in ROUNDUPS:
         text = "\n".join(Parsed(pages[r.slug]).text)
