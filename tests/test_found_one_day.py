@@ -1,5 +1,5 @@
 """CC-212: approving a found one-day event with a start time, whatever its category. The site sends the time as a
-one-date run (CC-96's run_dates), so the event page and the planner show it the way they show performance times."""
+one-date run (CC-96's run_dates), so the event page and Find an outing show it the way they show performance times."""
 from datetime import timedelta
 
 from app.discovery.readers import Performance

@@ -56,7 +56,7 @@ def test_draft_suggests_type_and_leaves_out_who_sent_it(client, admin_token, use
     whole = json.dumps(d)
     for private in ("ana.b@example.com", "ana@example.com", "312-555-0199", "#invite", "abcDEF123?x=1"):
         assert private not in whole
-    assert "/#issues/ISS-0001" in d["reference"] and "From Culture Crew report ISS-0001" in d["reference"]
+    assert "/#issues/ISS-0001" in d["reference"] and "From Chi Culture Crew report ISS-0001" in d["reference"]
     issues_router.report_limiter.reset()
     fr = client.post("/issues", json={"kind": "feature", "what_happened": "A map view", "expected": "To find shows nearby"},
                      headers=auth(user_token)).json()

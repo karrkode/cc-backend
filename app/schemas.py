@@ -385,7 +385,7 @@ class CrewPlansOut(BaseModel):
 
 class TakeOut(BaseModel):
     """CC-112: a member's shared journal entry, as this viewer sees it on the event. name: "Maya C." or
-    "A Culture Crew member". CC-172: by_admin: it's Yours truly's (the dolphins account), shown to everyone; the rest only to
+    "A Chi Culture Crew member". CC-172: by_admin: it's Yours truly's (the dolphins account), shown to everyone; the rest only to
     the author's crew-mates. review: always "" (kept for the live site). user_id and hidden: admins only."""
     words: str
     review: str
@@ -418,7 +418,7 @@ class EventOut(ORM):
     # Never the email or id; those are only in EventAdminOut.
     submitted_by_name: str | None
     pick: PickOut | None = None  # CC-66: the owner's public pick (null when there isn't one)
-    schedule: ScheduleOut = ScheduleOut()  # CC-79: for the planner; not shown on cards
+    schedule: ScheduleOut = ScheduleOut()  # CC-79: for Find an outing; not shown on cards
     run_dates: list[RunDate] = []  # CC-96: a fixed run's dates, every one (the site shows the upcoming ones)
     crew_plans: list[CrewPlansOut] = []  # CC-75: signed in only: your crew-mates' shared plans
     takes: list[TakeOut] = []  # CC-112: members' shared journal entries (GET /events/<id> only)
@@ -1015,12 +1015,12 @@ class AttendedOut(ORM):
     review: str = ""
     recommend: bool = False
     shared: bool = False  # CC-112: shared publicly on the event's page
-    anonymous: bool = False  # CC-112: shown as "A Culture Crew member" rather than your name
+    anonymous: bool = False  # CC-112: shown as "A Chi Culture Crew member" rather than your name
 
 
 class ShareIn(BaseModel):
     """CC-112: share your journal entry for an event on its public page (or stop sharing it).
-    anonymous: show it as "A Culture Crew member" instead of your first name and initial."""
+    anonymous: show it as "A Chi Culture Crew member" instead of your first name and initial."""
     shared: bool
     anonymous: bool = False
 

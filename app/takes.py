@@ -6,9 +6,10 @@ without touching the entry. The member isn't told, and it stays hidden until an 
 """
 from sqlalchemy import or_, select
 
+from .config import SITE_NAME
 from .models import Attended, CrewMember, Event, Role, User
 
-ANONYMOUS = "A Culture Crew member"
+ANONYMOUS = f"A {SITE_NAME} member"
 YOURS_TRULY = "Yours truly"  # CC-172: the admin signs as this on the site, whatever the account is called
 
 

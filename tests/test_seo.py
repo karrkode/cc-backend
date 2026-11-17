@@ -23,7 +23,7 @@ def test_event_page_is_readable_without_javascript(client, make_event):
     r = client.get(f"/e/{ev.id}-4000-miles")
     assert r.status_code == 200 and r.headers["cache-control"] == "public, max-age=600"
     page = r.text
-    assert "<title>4000 Miles · The Den Theatre · Culture Crew</title>" in page
+    assert "<title>4000 Miles · The Den Theatre · Chi Culture Crew</title>" in page
     assert "<h1>4000 Miles</h1>" in page and "The Den Theatre · Wicker Park, Chicago" in page and "$20–$30" in page
     assert f"{TODAY.year}" in page and 'rel="canonical"' in page and 'property="og:image"' in page
     assert f'href="https://example.org/4000 miles"' in page  # the event's own page, for tickets
@@ -115,10 +115,10 @@ def test_event_page_is_a_small_lakefront_poster(client, make_event, db):
     assert '<div class="poster cat-music"><div class="poster-in"><p class="poster-k">Opera</p><h1>Tosca</h1>' in page
     assert '<dl class="facts"><dt>When</dt>' in page
     actions = page.split('<div class="actions">')[1]
-    assert actions.startswith(f'<a class="btn primary" href="http://localhost:4173/#e/{ev.id}">Open in Culture Crew</a>')
+    assert actions.startswith(f'<a class="btn primary" href="http://localhost:4173/#e/{ev.id}">Open in Chi Culture Crew</a>')
     assert '<a class="btn secondary" href="https://example.org/tosca"' in actions
     assert "min-height: 48px" in page and ":focus-visible { outline: 3px solid var(--focus)" in page
-    for tag in ('property="og:title" content="Tosca · Lyric Opera · Culture Crew"', 'property="og:image"',
+    for tag in ('property="og:title" content="Tosca · Lyric Opera · Chi Culture Crew"', 'property="og:image"',
                 'name="twitter:card" content="summary_large_image"', 'rel="canonical"'):
         assert tag in page
     assert ld_of(page)["name"] == "Tosca"

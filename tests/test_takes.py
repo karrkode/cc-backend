@@ -114,13 +114,13 @@ def test_leaving_the_crew_or_another_crew_sees_nothing(client, make_event):
 
 def test_anonymous_and_names(client, make_event, admin_token):
     hamlet = make_event("Hamlet")
-    for name, email, shown in (("Maya Chen", "maya@example.com", "A Culture Crew member"), ("Cher", "cher@example.com", "Cher"),
+    for name, email, shown in (("Maya Chen", "maya@example.com", "A Chi Culture Crew member"), ("Cher", "cher@example.com", "Cher"),
                                ("Jo van der berg", "jo@example.com", "Jo B.")):
         h = member(client, name, email)
         been(client, h, hamlet)
         journal(client, h, hamlet, words="one two three")
         share(client, h, hamlet, anonymous=name == "Maya Chen")
-    assert [t["name"] for t in takes(client, hamlet, auth(admin_token))] == ["Jo B.", "Cher", "A Culture Crew member"]  # newest first
+    assert [t["name"] for t in takes(client, hamlet, auth(admin_token))] == ["Jo B.", "Cher", "A Chi Culture Crew member"]  # newest first
     assert "Maya" not in page(client, hamlet)
 
 

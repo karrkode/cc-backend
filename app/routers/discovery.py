@@ -324,7 +324,7 @@ def _add_to_catalog(db: DB, item: DiscoveredItem, body: EventIn, user) -> None:
     db.add(event)
     db.flush()
     item.status, item.event_id, item.skip_reason = "approved", event.id, ""
-    sync_performances(db, item)  # CC-79: its dates and times, for the planner
+    sync_performances(db, item)  # CC-79: its dates and times, for Find an outing
 
 
 @router.post("/items/batch", response_model=BatchOut)

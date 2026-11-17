@@ -226,7 +226,7 @@ WELCOME_BODY = [
     "performers and non-enterprise talent (sadly T*ylor Swift will not make an appearance on this site). Mark what "
     "catches your eye with the Interested button on any event.\n"
     "- Commit: Commitment is key! Upgrade that 'Interested' to 'Going'! When you do, you can add the date you'll be "
-    "seeing it, and it will show up in your Cultural Planner feature.\n"
+    "seeing it, and it will show up in My week.\n"
     "- Communicate: _Anything worth seeing is worth seeing with someone you care about._ This is where the crew comes "
     "in. Like seeing theater on Thursdays (I do!), create your own Thursday Theater crew. Together you can share what "
     "looks good to you and quickly reach consensus!",

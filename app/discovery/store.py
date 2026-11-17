@@ -14,7 +14,7 @@
 - CC-198: a performance is kept only with a real date, and a time that can't be read is dropped: pages and readings
   can say anything, and public pages show these.
 - CC-79: an item that is a catalog event (listed or approved) passes its performance dates and times on
-  to that event, for the planner. That's the one thing discovery changes on an event by itself: the
+  to that event, for Find an outing. That's the one thing discovery changes on an event by itself: the
   dates aren't shown on cards, and admins don't edit them.
 """
 from datetime import date, datetime

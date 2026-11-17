@@ -18,7 +18,7 @@ from xml.sax.saxutils import escape as xml_escape
 from .addresses import full_address, locality, map_url
 from .categories import label
 from .clock import chicago_day
-from .config import get_settings
+from .config import SITE_NAME, get_settings
 from .models import Area, Event
 
 PREVIEW_IMAGE = "/img/preview.png"  # 1200x630, in the site repo
@@ -87,9 +87,9 @@ def place_text(event: Event) -> str:
 def description(event: Event, today: date) -> str:
     lead = f"{label(event.category, event.opera)} at {place_text(event).replace(' · ', ' in ')}."
     if is_closed(event, today):
-        text = f"{lead} This run has closed. See what else is on in Chicago on Culture Crew."
+        text = f"{lead} This run has closed. See what else is on in Chicago on {SITE_NAME}."
     else:
-        text = f"{lead} {dates_text(event)}. {price_text(event)}. Plan it with your crew on Culture Crew."
+        text = f"{lead} {dates_text(event)}. {price_text(event)}. Plan it with your crew on {SITE_NAME}."
     return text if len(text) <= DESCRIPTION_MAX else text[:DESCRIPTION_MAX - 1].rsplit(" ", 1)[0] + "…"
 
 
@@ -254,7 +254,7 @@ def _page(title: str, desc: str, canonical: str | None, body: str, extra_head: s
         head += [
             f'<link rel="canonical" href="{e(canonical)}">',
             '<meta property="og:type" content="website">',
-            '<meta property="og:site_name" content="Culture Crew">',
+            f'<meta property="og:site_name" content="{SITE_NAME}">',
             f'<meta property="og:title" content="{e(title)}">',
             f'<meta property="og:description" content="{e(desc)}">',
             f'<meta property="og:url" content="{e(canonical)}">',
@@ -299,7 +299,7 @@ def render_event(event: Event, today: date, takes: list[dict] = ()) -> str:
     site = get_settings().site_url
     e = lambda s: escape(s, quote=True)  # noqa: E731
     closed = is_closed(event, today)
-    title = f"{event.title} · {event.venue.name} · Culture Crew"
+    title = f"{event.title} · {event.venue.name} · {SITE_NAME}"
     desc = description(event, today)
     rows = [("When", dates_text(event)), ("Price", price_text(event))]  # where is on the poster, under the title
     # CC-151: a small version of the site's event poster (CC-142): the category field with the kicker, title and venue
@@ -315,7 +315,7 @@ def render_event(event: Event, today: date, takes: list[dict] = ()) -> str:
     if closed:
         body.append('<p class="closed">This run has closed</p>')
     # CC-151: the main button opens the event in the site; its tickets page comes second
-    actions = [f'<a class="btn primary" href="{e(_view_link(event))}">Open in Culture Crew</a>']
+    actions = [f'<a class="btn primary" href="{e(_view_link(event))}">Open in {SITE_NAME}</a>']
     if event.url and not closed:
         actions.append(f'<a class="btn secondary" href="{e(event.url)}" rel="noopener">Tickets and showtimes ↗</a>')
     body.append(f'<div class="actions">{"".join(actions)}</div>')
@@ -334,7 +334,7 @@ def render_missing() -> str:
     site = escape(get_settings().site_url, quote=True)
     body = ('<div class="lost"><h1>That event isn’t on the list</h1>\n<p class="deck">It may have been taken down, or the link is wrong.</p>\n'
             f'<div class="actions"><a class="btn primary" href="{site}/#catalog">Browse the catalog</a></div></div>')
-    return _page("Event not found · Culture Crew", "That event isn't on Culture Crew's list.", None, body, noindex=True)
+    return _page(f"Event not found · {SITE_NAME}", f"That event isn't on {SITE_NAME}'s list.", None, body, noindex=True)
 
 
 def sitemap(events: list[Event], today: date, pages: list[str] = ()) -> str:

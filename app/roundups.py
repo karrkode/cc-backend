@@ -15,7 +15,7 @@ from typing import Callable
 from sqlalchemy import or_, select
 
 from .categories import category_condition, label
-from .config import get_settings
+from .config import SITE_NAME, get_settings
 from .discovery.store import _hhmm
 from .models import AppSetting, Event, Region, Venue
 from .routers.events import _on_between, price_or_usual
@@ -37,7 +37,7 @@ class Roundup:
     group: str  # the heading it's listed under in "More roundups"
     name: str  # its link text
     h1: str
-    title: str  # <title>, without " · Culture Crew"
+    title: str  # <title>, without the " · Chi Culture Crew" suffix
     description: str
     intro: str  # the default intro
     empty: str  # the heading when nothing matches
@@ -456,7 +456,7 @@ def render_roundup(db, r: Roundup, today: date) -> str:
         body.append(_catalog_panel("Want more? The catalog has every event, with filters for price, day and side of town."))
     body.append('<p class="note">Dates and prices change, so check the event’s own page before you go.</p>')
     body.append(_more_html(r.slug))
-    return _page(f"{r.title} · Culture Crew", r.description, f"{site}/chicago/{r.slug}",
+    return _page(f"{r.title} · {SITE_NAME}", r.description, f"{site}/chicago/{r.slug}",
                  "\n".join(head) + "</div>\n" + "\n".join(body), f"<style>{ROUNDUP_STYLE}</style>", nav=_nav())
 
 
@@ -471,7 +471,7 @@ def render_index(db, today: date) -> str:
                         for r in ROUNDUPS if r.group == group)
         body.append(f'<section class="group"><h2>{_e(group)}</h2><ul>{links}</ul></section>')
     body.append(_catalog_panel("The catalog has every event, with filters for price, day and side of town."))
-    return _page("What’s on in Chicago: roundups · Culture Crew",
+    return _page(f"What’s on in Chicago: roundups · {SITE_NAME}",
                  "Chicago theater, music and art by when, price, kind and side of town: this weekend, free and cheap, "
                  "closing soon and more.", f"{site}/chicago/", "\n".join(body), f"<style>{ROUNDUP_STYLE}</style>",
                  nav=_nav())
@@ -481,7 +481,7 @@ def render_unknown() -> str:
     site = _e(get_settings().site_url)
     body = ('<div class="lost"><h1>That roundup isn’t here</h1>\n<p class="deck">The link may be wrong, or the page has moved.</p>\n'
             f'<div class="actions"><a class="btn primary" href="{site}/chicago/">See all roundups</a></div></div>')
-    return _page("Roundup not found · Culture Crew", "That roundup isn't on Culture Crew.", None, body,
+    return _page(f"Roundup not found · {SITE_NAME}", f"That roundup isn't on {SITE_NAME}.", None, body,
                  f"<style>{ROUNDUP_STYLE}</style>", noindex=True, nav=_nav())
 
 

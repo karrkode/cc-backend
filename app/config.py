@@ -9,6 +9,10 @@ from typing import Annotated, Literal
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
+# CC-277: the one brand name, for every page, title and message the API writes. (icsfile.py's PRODID is an identifier, not
+# visitor text, so it keeps "Culture Crew".)
+SITE_NAME = "Chi Culture Crew"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")

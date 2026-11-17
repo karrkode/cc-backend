@@ -39,7 +39,7 @@ def test_confirming_sends_the_welcome_once(client):
     assert email.to == "ana@example.com"
     assert email.text.startswith("Ana!\n\nExcellent--you've confirmed your email! Chi Culture Crew is a place to find")
     for words in ("Choose, Commit, Communicate", "Interested button", "Upgrade that 'Interested' to 'Going'!",
-                  "it will show up in your Cultural Planner feature.", "continually evolving with new features",
+                  "it will show up in My week.", "continually evolving with new features",
                   "- Communicate: _Anything worth seeing is worth seeing with someone you care about._ This",
                   "Report an issue or request a feature",
                   "Your cultural collaborator,\nAndrew Carr\nhttp://localhost:4173\n"):
