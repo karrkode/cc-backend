@@ -125,7 +125,7 @@ def already_confirmed(db: Session, raw: str) -> bool:
 def verify_email(user: User, raw: str) -> Email:
     """CC-243: the product owner's own wording, approved on the story. No member text in it."""
     s = get_settings()
-    return Email(user.email, "ChiCultureCrew needs you to validate your email!", f"""Hello hello and welcome to Chi Culture Crew! First step, please confirm your email address by opening this link:
+    return Email(user.email, "Chi Culture Crew needs you to validate your email!", f"""Hello hello and welcome to Chi Culture Crew! First step, please confirm your email address by opening this link:
 
 {s.site_url}/#verify={raw}
 
@@ -257,7 +257,7 @@ def welcome(user: User) -> Email:
     html = ('<!doctype html><html lang="en"><head><meta charset="utf-8"></head><body>'
             + para(hello) + "".join(map(para, WELCOME_BODY))
             + f"<p>{escape(sign[0])}<br>{escape(sign[1])}<br>{link}</p></body></html>")
-    return Email(user.email, "So what is ChiCultureCrew... (an explainer)", text, html)
+    return Email(user.email, "So what is Chi Culture Crew... (an explainer)", text, html)
 
 
 def crew_invite(to: str, inviter: str, crew: str, days: int) -> Email:

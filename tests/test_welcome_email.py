@@ -9,7 +9,7 @@ from app.models import User
 
 from .conftest import auth, register
 
-SUBJECT = "So what is ChiCultureCrew... (an explainer)"
+SUBJECT = "So what is Chi Culture Crew... (an explainer)"
 
 
 def welcomes():
@@ -24,7 +24,7 @@ def confirm(client, to="ana@example.com"):
 
 def test_confirm_email_wording():
     email = mail.verify_email(User(email="ana@example.com", password_hash="x", display_name="Ana"), "tok")
-    assert email.subject == "ChiCultureCrew needs you to validate your email!"
+    assert email.subject == "Chi Culture Crew needs you to validate your email!"
     assert "\n\nhttp://localhost:4173/#verify=tok\n\n" in email.text  # on its own line, so no punctuation joins the link
     assert "expires in 24 hours" in email.text and "you'll get a walk-through of the site" in email.text
     assert email.text.endswith("Your cultural collaborator,\nAndrew Carr\nhttp://localhost:4173\n")
