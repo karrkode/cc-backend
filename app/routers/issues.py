@@ -226,17 +226,10 @@ def _reference(issue: IssueReport) -> str:
             f"Admins can open it at {get_settings().site_url.rstrip('/')}/#issues/{issue.key}")
 
 
-@router.get("/admin/issues/{issue_id}/jira", response_model=JiraDraft)
-def ticket_draft(issue_id: int, db: DB, _: AdminUser):
-    """The ticket the server suggests for this report: a Bug for an issue, a Story for a feature request, Medium
-    priority, with emails, phone numbers, tokens, URL query strings and the reporter's name taken out."""
-    issue = _report(db, issue_id)
-    name = issue.reporter.display_name if issue.reporter else ""
+def _member_text(issue: IssueReport, name: str) -> str:
+    """CC-288: everything the member wrote (and what their browser reported), redacted, as plain text. The admin
+    reads and can trim it before it goes to Jira."""
     feature = issue.kind == "feature"
-    first = jira.redact(issue.what_happened, name).strip().split("\n")[0].strip()
-    summary = f"{issue.key}: {first}"
-    if len(summary) > 120:
-        summary = summary[:119].rstrip() + "…"
     parts = [("The idea" if feature else "What happened", issue.what_happened),
              ("Why it would help" if feature else "What they expected", issue.expected)]
     text = [f"{head}\n{jira.redact(body, name).strip()}" for head, body in parts if body.strip()]
@@ -244,8 +237,30 @@ def ticket_draft(issue_id: int, db: DB, _: AdminUser):
                (("Page", issue.page), ("Browser", issue.browser), ("Screen", issue.screen), ("Site version", issue.site_version)) if value]
     if details:
         text.append("\n".join(details))
-    return JiraDraft(issue_type="Story" if feature else "Bug", priority="Medium", summary=summary, description="\n\n".join(text),
-                     reference=_reference(issue), connected=get_settings().jira_mode != "none")
+    return "\n\n".join(text)
+
+
+def _quoted(member_text: str, name: str) -> str:
+    """The marked quote block that goes in the ticket. Whatever text comes in (the server's own, or the admin's
+    trimmed copy), it is redacted again and every line is quoted, so it can't lead anywhere else in the ticket."""
+    return f"## {jira.QUOTE_HEADING}\n" + jira.quote_block(jira.redact(member_text, name))
+
+
+@router.get("/admin/issues/{issue_id}/jira", response_model=JiraDraft)
+def ticket_draft(issue_id: int, db: DB, _: AdminUser):
+    """The ticket the server suggests for this report: a Bug for an issue, a Story for a feature request, Medium
+    priority. CC-288: the summary and description are in our own words, for the admin to edit. What the member wrote
+    (with emails, phone numbers, tokens, URL query strings and their name taken out) is member_words, which the
+    server puts in the ticket, quoted, when it's made. The admin may send a trimmed copy back."""
+    issue = _report(db, issue_id)
+    name = issue.reporter.display_name if issue.reporter else ""
+    feature = issue.kind == "feature"
+    what = "a feature idea" if feature else "a bug report"
+    return JiraDraft(issue_type="Story" if feature else "Bug", priority="Medium",
+                     summary=f"{issue.key}: Member {'feature idea' if feature else 'bug report'}",
+                     description=f"A member sent {what} ({issue.key}). Their own words are quoted below.",
+                     member_words=_member_text(issue, name), reference=_reference(issue),
+                     connected=get_settings().jira_mode != "none")
 
 
 def _set(db, issue_id: int, *where, **values) -> int:
@@ -279,7 +294,9 @@ def make_ticket(issue_id: int, body: JiraCreate, db: DB, _: AdminUser):
         found = j.find([label])
         key = found[0].key if found else j.create(
             body.issue_type, body.priority, jira.redact(body.summary, name),
-            jira.redact(body.description, name) + "\n\n" + _reference(issue), [jira.FEEDBACK_LABEL, label])
+            jira.redact(body.description, name) + "\n\n"
+            + _quoted(_member_text(issue, name) if body.member_words is None else body.member_words, name)
+            + "\n\n" + _reference(issue), [jira.FEEDBACK_LABEL, label])
     except jira.JiraError as e:
         log.warning("jira: ticket for %s failed: %s %s after %.1fs", issue.key, e.status, type(e.__cause__).__name__ if e.__cause__ else "",
                     monotonic() - started)
