@@ -1557,9 +1557,9 @@ class VenueSuggestionIn(BaseModel):
 
     @field_validator("url", "venue_name", "note")
     @classmethod
-    def _trim(cls, v: str) -> str:
+    def _trim(cls, v: str, info) -> str:
         v = v.strip()
-        if any(ord(c) < 32 for c in v if c not in "\n"):  # no control characters in what an admin reads
+        if any(ord(c) < 32 for c in v if not (c == "\n" and info.field_name == "note")):  # no control characters in what an admin reads
             raise ValueError("Remove the special characters")
         return v
 

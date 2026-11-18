@@ -51,7 +51,8 @@ def test_private_and_odd_links_are_refused(client, user_token, monkeypatch, url,
     assert r.status_code == 422 and r.json()["detail"].startswith("We can't use that link")
 
 
-def test_five_a_day(client, user_token, db):
+def test_five_a_day(client, user_token, db, monkeypatch):
+    monkeypatch.setattr(vs, "PER_MINUTE", 50)
     codes = [suggest(client, user_token, f"https://v{i}.example/cal").status_code for i in range(vs.PER_DAY + 1)]
     assert codes == [201] * vs.PER_DAY + [429]
     other = register(client, email="bo@example.com", name="Bo")
@@ -120,3 +121,33 @@ def test_deleting_the_member_keeps_the_suggestion(client, user_token, admin_toke
     db.delete(db.scalar(select(User).where(User.email == "ana@example.com")))
     db.commit()
     assert client.get("/admin/venue-suggestions", headers=auth(admin_token)).json()[0]["suggested_by"] == ""
+
+
+def test_a_host_that_does_not_exist_is_a_422_not_a_500(client, user_token, admin_token, monkeypatch):
+    def none(host, port):
+        raise web.FetchError("no such host")
+    sid = suggest(client, user_token).json()["id"]
+    monkeypatch.setattr(web, "_addresses", none)
+    r = suggest(client, user_token, "https://gone.example/cal")
+    assert r.status_code == 422 and r.json()["detail"].startswith("We can't use that link")
+    assert client.post(f"/admin/venue-suggestions/{sid}/accept", json={}, headers=auth(admin_token)).status_code == 422
+
+
+def test_every_attempt_counts_toward_a_minute_limit(client, user_token, monkeypatch):
+    monkeypatch.setattr(web, "_addresses", lambda host, port: ["10.0.0.5"])
+    codes = [suggest(client, user_token, "http://10.0.0.5/x").status_code for _ in range(vs.PER_MINUTE + 1)]
+    assert codes[-1] == 429 and set(codes[:-1]) == {422}
+
+
+def test_the_admins_name_becomes_the_sources_venue_name(client, user_token, admin_token, db):
+    sid = suggest(client, user_token, venue_name="Joes bar lol").json()["id"]
+    client.post(f"/admin/venue-suggestions/{sid}/accept", json={"name": "  Joe's Bar "}, headers=auth(admin_token))
+    src = db.scalar(select(DiscoverySource))
+    assert (src.name, src.venue_name) == ("Joe's Bar", "Joe's Bar")
+
+
+def test_accept_refuses_a_page_a_source_now_reads(client, user_token, admin_token, db):
+    sid = suggest(client, user_token).json()["id"]
+    db.add(DiscoverySource(name="Added since", kind=SourceKind.theater, pages=[URL]))
+    db.commit()
+    assert client.post(f"/admin/venue-suggestions/{sid}/accept", json={}, headers=auth(admin_token)).status_code == 409

@@ -24,6 +24,7 @@ from app.mail import OUTBOX  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import Area, Event, EventStatus, Role, User, Venue  # noqa: E402
 from app.fromlink import day_limiter, minute_limiter  # noqa: E402
+from app import venuesuggestions  # noqa: E402
 from app.ratelimit import auth_limiter, login_failures  # noqa: E402
 from app.traffic import ping_limits  # noqa: E402
 from app import health  # noqa: E402
@@ -68,7 +69,7 @@ def client(Session):
             yield s
 
     app.dependency_overrides[get_db] = _get_db
-    auth_limiter.reset(); login_failures.reset(); minute_limiter.reset(); day_limiter.reset(); ping_limits.reset(); health.reset()  # CC-244: notes from another test don't count here
+    auth_limiter.reset(); login_failures.reset(); minute_limiter.reset(); day_limiter.reset(); venuesuggestions.minute_limiter.reset(); venuesuggestions.day_limiter.reset(); ping_limits.reset(); health.reset()  # CC-244: notes from another test don't count here
     OUTBOX.clear()
     with TestClient(app) as c:
         yield c

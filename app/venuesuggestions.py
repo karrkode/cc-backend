@@ -16,11 +16,14 @@ from fastapi import HTTPException, status
 from sqlalchemy import func, select
 
 from .clock import utcnow
-from .discovery.fetch import PrivateAddress, check_public
+from .discovery.fetch import FetchError, PrivateAddress, check_public
 from .discovery.venuesources import _parts
 from .models import DiscoverySource, VenueSuggestion
+from .ratelimit import SlidingWindowLimiter
 
 PER_DAY = 5
+PER_MINUTE = 5  # attempts, saved or not: each one looks up a host the member chose
+minute_limiter, day_limiter = SlidingWindowLimiter(60), SlidingWindowLimiter(24 * 3600)
 ALREADY = "We already have that one, or it's waiting for review. Thank you!"
 
 
@@ -30,7 +33,7 @@ def clean_url(url: str) -> str:
     try:
         check_public(url)
         parts = urlsplit(url)
-    except (PrivateAddress, ValueError) as e:
+    except (PrivateAddress, FetchError, ValueError) as e:  # FetchError: the host doesn't exist (a 500 otherwise)
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"We can't use that link: {e}.") from e
     if parts.username or parts.password:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "We can't use that link: it has a sign-in in it.")
