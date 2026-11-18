@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
 from .bodylimit import BodyLimit
-from .config import get_settings
+from .config import SITE_NAME, get_settings
 from .deps import DB
 from .db import SessionLocal, engine
 from . import keys
@@ -38,7 +38,7 @@ def docs_urls(env: str) -> dict:
 app = FastAPI(
     **docs_urls(settings.env),
     lifespan=lifespan,
-    title="Culture Crew API",
+    title=f"{SITE_NAME} API",
     version="0.1.0",
     description="Chicago arts events, accounts, and event submissions for chiculturecrew.com.",
 )

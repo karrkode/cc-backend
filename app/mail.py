@@ -125,7 +125,7 @@ def already_confirmed(db: Session, raw: str) -> bool:
 def verify_email(user: User, raw: str) -> Email:
     """CC-243: the product owner's own wording, approved on the story. No member text in it."""
     s = get_settings()
-    return Email(user.email, "ChiCultureCrew needs you to validate your email!", f"""Hello hello and welcome to Chi Culture Crew! First step, please confirm your email address by opening this link:
+    return Email(user.email, "Chi Culture Crew needs you to validate your email!", f"""Hello hello and welcome to Chi Culture Crew! First step, please confirm your email address by opening this link:
 
 {s.site_url}/#verify={raw}
 
@@ -226,7 +226,7 @@ WELCOME_BODY = [
     "performers and non-enterprise talent (sadly T*ylor Swift will not make an appearance on this site). Mark what "
     "catches your eye with the Interested button on any event.\n"
     "- Commit: Commitment is key! Upgrade that 'Interested' to 'Going'! When you do, you can add the date you'll be "
-    "seeing it, and it will show up in your Cultural Planner feature.\n"
+    "seeing it, and it will show up in My week.\n"
     "- Communicate: _Anything worth seeing is worth seeing with someone you care about._ This is where the crew comes "
     "in. Like seeing theater on Thursdays (I do!), create your own Thursday Theater crew. Together you can share what "
     "looks good to you and quickly reach consensus!",
@@ -257,7 +257,7 @@ def welcome(user: User) -> Email:
     html = ('<!doctype html><html lang="en"><head><meta charset="utf-8"></head><body>'
             + para(hello) + "".join(map(para, WELCOME_BODY))
             + f"<p>{escape(sign[0])}<br>{escape(sign[1])}<br>{link}</p></body></html>")
-    return Email(user.email, "So what is ChiCultureCrew... (an explainer)", text, html)
+    return Email(user.email, "So what is Chi Culture Crew... (an explainer)", text, html)
 
 
 def crew_invite(to: str, inviter: str, crew: str, days: int) -> Email:

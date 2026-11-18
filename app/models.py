@@ -229,7 +229,7 @@ class Venue(Base):
     # CC-73: worked out from the neighborhood (app/areas.py region_of); admins can change it. Null when
     # a city neighborhood isn't in the list yet: the Venues page lists those to fix.
     region: Mapped[Region | None] = mapped_column(_enum(Region, "venue_region"), nullable=True)
-    # CC-78: stored for the planner (CC-79), not shown on cards. Weekdays are mon..sun, times HH:MM (24-hour).
+    # CC-78: stored for Find an outing (CC-79), not shown on cards. Weekdays are mon..sun, times HH:MM (24-hour).
     # open_hours: {"tue": ["10:00", "17:00"], "wed": null (closed)}; a day left out isn't known.
     # show_times: usual performance start times, {"wed": ["19:30"], "sun": ["14:00", "19:30"]}; no key = no shows.
     # *_by: who filled it in: "" (nobody), "discovery" (the venue's own site), or "admin". Discovery
@@ -315,7 +315,7 @@ class Event(Base):
     submitted_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     # The submitter ticked "credit me" for this event; without it their name is never shown publicly.
     credit_me: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
-    # CC-79: when it's on, for the planner. performances: specific dates and times from event discovery,
+    # CC-79: when it's on, for Find an outing. performances: specific dates and times from event discovery,
     # [{"date": "2026-11-05", "time": "19:30"}], kept current by discovery. weekly: a usual pattern an admin
     # sets, {"thu": ["19:30"]}, which overrides the venue's show times. Neither is shown on cards.
     performances: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
@@ -383,7 +383,7 @@ class Event(Base):
 
     @property
     def schedule(self) -> dict:
-        """CC-79: what the planner needs to know when it's on: upcoming dates and times, the weekly pattern
+        """CC-79: what Find an outing needs to know when it's on: upcoming dates and times, the weekly pattern
         (the event's own, else its venue's show times), and the venue's opening hours."""
         today = today_in_chicago().isoformat()
         given = [{"date": r.date.isoformat(), "time": r.time} for r in self.run_dates]  # CC-96: a fixed run's own dates come first
@@ -420,7 +420,7 @@ class Attended(Base):
     review: Mapped[str] = mapped_column(String(1000), default="", server_default="")
     recommend: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     # CC-112: a public take. shared_at: when the member shared the entry on the event's page (null: private);
-    # anonymous: shown as "A Culture Crew member"; hidden: an admin took it down (the member isn't told).
+    # anonymous: shown as "A Chi Culture Crew member"; hidden: an admin took it down (the member isn't told).
     shared_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     anonymous: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     hidden: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())

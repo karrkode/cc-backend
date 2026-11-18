@@ -18,7 +18,7 @@ from sqlalchemy.exc import IntegrityError
 
 from ..clock import CHICAGO, as_utc, utcnow
 from .. import jira
-from ..config import get_settings
+from ..config import SITE_NAME, get_settings
 from ..deps import DB, AdminUser, CurrentUser, require_verified_email
 from ..models import IssueReport, User
 from ..ratelimit import SlidingWindowLimiter
@@ -222,7 +222,7 @@ def _report(db, issue_id: int) -> IssueReport:
 
 
 def _reference(issue: IssueReport) -> str:
-    return (f"From Culture Crew report {issue.key}, sent {issue.created_at:%Y-%m-%d}. "
+    return (f"From {SITE_NAME} report {issue.key}, sent {issue.created_at:%Y-%m-%d}. "
             f"Admins can open it at {get_settings().site_url.rstrip('/')}/#issues/{issue.key}")
 
 

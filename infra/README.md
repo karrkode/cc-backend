@@ -1,4 +1,4 @@
-# Culture Crew on AWS
+# Chi Culture Crew on AWS
 
 Terraform for the whole stack, in **us-east-2 (Ohio)**, serving
 **https://chiculturecrew.com** (www. redirects there) and **https://api.chiculturecrew.com**.

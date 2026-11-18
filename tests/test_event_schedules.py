@@ -1,4 +1,4 @@
-"""CC-79: events' schedules for the planner: found dates and times, a weekly pattern, the venue's hours."""
+"""CC-79: events' schedules for Find an outing: found dates and times, a weekly pattern, the venue's hours."""
 from datetime import date, timedelta
 
 from sqlalchemy import select

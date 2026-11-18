@@ -59,7 +59,7 @@ def test_this_weekend_lists_what_is_on_each_day_once(client, make_event, db):
     assert "<h1>This weekend in Chicago</h1>" in html and "2 events" in html
     sunday = html.split(f'id="h-{SUN.isoformat()}"')[1]
     assert "Sunday Matinee" in sunday and "2 pm" in sunday
-    assert "<title>This weekend in Chicago: shows, concerts and exhibitions · Culture Crew</title>" in html
+    assert "<title>This weekend in Chicago: shows, concerts and exhibitions · Chi Culture Crew</title>" in html
 
 
 def test_times_on_follows_show_days_and_closed_days(make_event, db):

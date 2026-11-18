@@ -1,4 +1,4 @@
-# Culture Crew API
+# Chi Culture Crew API
 
 FastAPI + PostgreSQL backend for chiculturecrew.com: events, venues, accounts, event
 submissions with admin review, event discovery, culture crews, each user's plans and "I've been"
