@@ -56,3 +56,10 @@ def test_every_rendered_page_has_only_the_hashed_inline_script(client, make_even
         assert _executable_inline_scripts(html) == [seo.THEME_SCRIPT], path
         assert not re.search(r"\son\w+=", html) and "<script src" not in html, path
         assert "<img" not in html.replace('<img src="data:', ""), path  # img-src allows 'self' and data: only
+
+
+def test_the_api_sends_the_same_page_policy_as_cloudfront():
+    """CC-287: app/pageheaders.py is the API's copy of csp_api_pages, for the pages it serves directly."""
+    from app import pageheaders
+    assert pageheaders.PAGE_CSP == _tf_policy("csp_api_pages")
+    assert pageheaders.THEME_HASH == _hash()
