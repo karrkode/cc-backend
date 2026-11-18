@@ -1577,6 +1577,7 @@ class VenueSuggestionOut(ORM):
 
 class VenueSuggestionAdminOut(VenueSuggestionOut):
     suggested_by: str = ""  # the member's display name, for admins only
+    same_site: int = 1  # CC-210: pending suggestions on this link's site, by distinct members; only the list works it out
     source_id: int | None = None
     decided_at: datetime | None = None
 

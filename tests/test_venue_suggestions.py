@@ -151,3 +151,21 @@ def test_accept_refuses_a_page_a_source_now_reads(client, user_token, admin_toke
     db.add(DiscoverySource(name="Added since", kind=SourceKind.theater, pages=[URL]))
     db.commit()
     assert client.post(f"/admin/venue-suggestions/{sid}/accept", json={}, headers=auth(admin_token)).status_code == 409
+
+
+def test_the_list_puts_the_most_suggested_site_first(client, user_token, admin_token, db):
+    # CC-210: two members on one site outrank one member on another, though the other came first
+    other = register(client, email="bo@example.com", name="Bo")
+    a = suggest(client, user_token, "https://solo.example/events").json()["id"]
+    b = suggest(client, user_token, "https://pair.example/calendar").json()["id"]
+    c = suggest(client, other, "https://www.pair.example/shows").json()["id"]
+    rows = client.get("/admin/venue-suggestions", headers=auth(admin_token)).json()
+    assert [r["id"] for r in rows] == [b, c, a]
+    assert [r["same_site"] for r in rows] == [2, 2, 1]
+    # the same member twice on one site still counts once, and decided ones leave the count
+    d = suggest(client, user_token, "https://solo.example/other").json()["id"]
+    assert {r["id"]: r["same_site"] for r in client.get("/admin/venue-suggestions", headers=auth(admin_token)).json()}[a] == 1
+    client.post(f"/admin/venue-suggestions/{b}/decline", json={}, headers=auth(admin_token))
+    rows = client.get("/admin/venue-suggestions", headers=auth(admin_token)).json()
+    assert {r["id"]: r["same_site"] for r in rows}[c] == 1
+    assert d in [r["id"] for r in rows]
