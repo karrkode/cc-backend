@@ -49,6 +49,12 @@ resource "aws_sesv2_configuration_set" "default" {
   sending_options {
     sending_enabled = true
   }
+
+  # AWS reports max_delivery_seconds = 0 when it is unset, and provider 6.73 reads that back as a change on
+  # every plan (CC-240). We never set delivery options, so ignore them.
+  lifecycle {
+    ignore_changes = [delivery_options]
+  }
 }
 
 # Sending identity for anything @<domain>, e.g. no-reply@. Easy DKIM, 2048-bit keys.
