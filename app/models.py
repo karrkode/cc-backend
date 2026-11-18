@@ -782,6 +782,25 @@ class DiscoveredItem(Base):
     source: Mapped[DiscoverySource | None] = relationship(lazy="joined")
 
 
+class VenueSuggestion(Base):
+    """CC-209: a member's suggestion of a venue's calendar link. An admin accepts it (which adds a discovery source) or
+    declines it. The member's id is kept for the admin and the member's own list, never shown publicly."""
+    __tablename__ = "venue_suggestions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    url: Mapped[str] = mapped_column(String(500))
+    venue_name: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    note: Mapped[str] = mapped_column(String(500), default="", server_default="")
+    status: Mapped[str] = mapped_column(String(10), default="pending", server_default="pending", index=True)  # pending | accepted | declined
+    decline_reason: Mapped[str] = mapped_column(String(200), default="", server_default="")  # the admin's, shown to the member
+    source_id: Mapped[int | None] = mapped_column(ForeignKey("discovery_sources.id", ondelete="SET NULL"))  # what accepting added
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    user: Mapped["User | None"] = relationship(lazy="joined")
+
+
 class AppSetting(Base):
     """A site-wide setting an admin can change, by key (CC-80: discovery_budget_usd)."""
     __tablename__ = "app_settings"
