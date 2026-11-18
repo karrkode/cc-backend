@@ -47,9 +47,25 @@ def _admin_out(row: VenueSuggestion) -> VenueSuggestionAdminOut:
 @router.get("/admin/venue-suggestions", response_model=list[VenueSuggestionAdminOut])
 def list_suggestions(db: DB, _: AdminUser, status_: str = "pending"):
     q = select(VenueSuggestion).order_by(VenueSuggestion.created_at.desc(), VenueSuggestion.id.desc()).limit(200)
+    pending = status_ not in ("all", "accepted", "declined")
     if status_ != "all":
-        q = q.where(VenueSuggestion.status == ("pending" if status_ not in ("accepted", "declined") else status_))
-    return [_admin_out(r) for r in db.scalars(q)]
+        q = q.where(VenueSuggestion.status == ("pending" if pending else status_))
+    rows = list(db.scalars(q))
+    out = [_admin_out(r) for r in rows]
+    if pending:
+        # CC-210: the sites more members have suggested come first (ties: oldest first). A page can only be suggested
+        # once (CC-209), so "the same venue" means the same site; the admin sees the count and can add the best page.
+        who: dict[str, set] = {}
+        for r in rows:
+            who.setdefault(_site(r.url), set()).add(r.user_id if r.user_id is not None else f"gone-{r.id}")
+        for o in out:
+            o.same_site = len(who[_site(o.url)])
+        out.sort(key=lambda o: (-o.same_site, o.created_at, o.id))
+    return out
+
+
+def _site(url: str) -> str:
+    return vs._parts(url)[0]
 
 
 def _pending(db: DB, suggestion_id: int) -> VenueSuggestion:
