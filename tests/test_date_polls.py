@@ -192,6 +192,36 @@ def test_ended_when_last_option_has_passed(client, make_event, db):
     assert client.get("/crews/polls?waiting=true", headers=p["Ben"]).json() == []
     assert answer(client, p["Ben"], crew, poll, []).status_code == 409
     assert client.post(f"/crews/{crew['id']}/polls", json=body(ev), headers=p["Ben"]).status_code == 201  # one out of dates doesn't block a new one
+    db.expire_all()
+    assert db.get(DatePoll, poll["id"]).status == "ended"  # kept as ended, not turned into "cancelled"
+
+
+def test_past_option_is_never_best_or_locked(client, make_event, db):
+    from app.models import DatePollOption
+    p, crew, ev = setup(client, make_event)
+    poll = start(client, p["Ana"], crew, ev, options=[(1, "19:30"), (3, "19:30")])
+    answer(client, p["Ben"], crew, poll, [(1, "19:30"), (3, "19:30")])
+    first = db.scalar(select(DatePollOption).where(DatePollOption.poll_id == poll["id"]).order_by(DatePollOption.date))
+    first.date = T - timedelta(days=1)
+    db.commit()
+    r = client.get(f"/crews/{crew['id']}/polls", headers=p["Ana"]).json()[0]
+    assert [b["date"] for b in r["best"]] == [d(3)]
+    assert client.post(f"/crews/{crew['id']}/polls/{poll['id']}/lock", json={"option_id": first.id}, headers=p["Ana"]).status_code == 422
+
+
+def test_deleting_an_account_deletes_its_polls_and_answers(client, make_event, db):
+    from app.models import User
+    p, crew, ev = setup(client, make_event)
+    poll = start(client, p["Ana"], crew, ev)
+    answer(client, p["Ben"], crew, poll, [(2, "19:30")])
+    ben = db.scalar(select(User).where(User.email == "ben@example.com"))
+    db.delete(ben)
+    db.commit()
+    assert db.scalars(select(DatePollPick)).all() == [] and db.scalars(select(DatePollAnswer)).all() == []
+    ana = db.scalar(select(User).where(User.email == "ana@example.com"))
+    db.delete(ana)  # the starter, and the crew's owner: the crew and its poll go too
+    db.commit()
+    assert db.scalars(select(DatePoll)).all() == []
 
 
 def test_cascades(client, make_event, db):

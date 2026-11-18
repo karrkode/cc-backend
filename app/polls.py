@@ -6,7 +6,6 @@ only first names (never emails).
 - ended: an open poll whose last option's day has passed reads as ended. Worked out on read, no job.
 - poll_out: the response for one viewer
 """
-import re
 from datetime import date, timedelta
 
 from sqlalchemy import delete, select
@@ -14,8 +13,6 @@ from sqlalchemy import delete, select
 from .clock import today_in_chicago
 from .models import Crew, DatePoll, DatePollAnswer, DatePollOption, DatePollPick, User
 
-TIME_RE = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
-MAX_OPTIONS = 40
 MAX_WINDOW_DAYS = 60
 RECENT_DAYS = 14  # how long a closed poll stays listed
 
@@ -42,9 +39,10 @@ def can_manage(poll: DatePoll, crew: Crew, user: User) -> bool:
     return not starter_in and crew.owner_id == user.id
 
 
-def best_options(options: list[DatePollOption], picks: dict[int, list[str]], members_total: int, limit: int = 3) -> list[dict]:
-    """picks: {option id: first names of current members who ticked it}. Options nobody ticked aren't "best"."""
-    ranked = sorted((o for o in options if picks.get(o.id)), key=lambda o: (-len(picks[o.id]), o.date, o.time))
+def best_options(options: list[DatePollOption], picks: dict[int, list[str]], members_total: int, limit: int = 3, today: date | None = None) -> list[dict]:
+    """picks: {option id: first names of current members who ticked it}. Options nobody ticked, or that have passed, aren't "best"."""
+    today = today or today_in_chicago()
+    ranked = sorted((o for o in options if picks.get(o.id) and o.date >= today), key=lambda o: (-len(picks[o.id]), o.date, o.time))
     return [{"option_id": o.id, "date": o.date, "time": o.time, "count": len(picks[o.id]), "names": sorted(picks[o.id]),
              "everyone": len(picks[o.id]) == members_total} for o in ranked[:limit]]
 

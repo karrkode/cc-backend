@@ -1,14 +1,16 @@
 """CC-297: crew date polls. Every route is for the crew's members only; to anyone else a crew or poll doesn't exist.
 The browser works out the options from the event's schedule (as "Commit to" does). The server checks that they are
 possible (inside the window and the event's dates, today or later, a valid time), not that each is a real showtime."""
+from datetime import UTC, datetime, time
+
 from fastapi import APIRouter, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 
 from ..clock import today_in_chicago, utcnow
 from ..deps import DB, CurrentUser
 from ..models import Crew, CrewMember, DatePoll, DatePollAnswer, DatePollOption, DatePollPick, Event
-from ..polls import MAX_WINDOW_DAYS, can_manage, drop_member_answers, ended, poll_out, recent_since  # noqa: F401
+from ..polls import MAX_WINDOW_DAYS, can_manage, ended, poll_out, recent_since
 from ..ratelimit import SlidingWindowLimiter
 from ..schemas import PollAnswerIn, PollIn, PollLockIn, PollOut
 from ..visibility import is_live
@@ -21,7 +23,10 @@ poll_limiter = SlidingWindowLimiter(window_seconds=86400)
 NOT_FOUND = "Poll not found"
 
 
-def _poll(db: DB, crew: Crew, poll_id: int) -> DatePoll:
+def _poll(db: DB, crew: Crew, poll_id: int, write: bool = False) -> DatePoll:
+    # write: the row is locked until the commit, so an answer, a lock and a cancel can't slip past each other (no-op on SQLite)
+    if write and db.scalar(select(DatePoll.id).where(DatePoll.id == poll_id).with_for_update()) is None:  # Postgres can't lock the joined event row
+        raise HTTPException(status.HTTP_404_NOT_FOUND, NOT_FOUND)
     poll = db.get(DatePoll, poll_id)
     if poll is None or poll.crew_id != crew.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, NOT_FOUND)
@@ -42,7 +47,8 @@ def my_polls(db: DB, user: CurrentUser, event_id: int | None = None, waiting: bo
     if not crews:
         return []
     today = today_in_chicago()
-    q = select(DatePoll).where(DatePoll.crew_id.in_(crews)).order_by(DatePoll.created_at.desc(), DatePoll.id.desc())
+    since_at = datetime.combine(recent_since(today), time.min, tzinfo=UTC)
+    q = select(DatePoll).where(DatePoll.crew_id.in_(crews), or_(DatePoll.status == "open", DatePoll.closed_at >= since_at)).order_by(DatePoll.created_at.desc(), DatePoll.id.desc())
     if event_id is not None:
         q = q.where(DatePoll.event_id == event_id)
     out = []
@@ -62,7 +68,8 @@ def my_polls(db: DB, user: CurrentUser, event_id: int | None = None, waiting: bo
 def crew_polls(crew_id: int, db: DB, user: CurrentUser):
     crew = _member_crew(db, crew_id, user)
     since = recent_since(today_in_chicago())
-    rows = [poll_out(db, p, crew, user) for p in db.scalars(select(DatePoll).where(DatePoll.crew_id == crew.id)
+    at = datetime.combine(since, time.min, tzinfo=UTC)
+    rows = [poll_out(db, p, crew, user) for p in db.scalars(select(DatePoll).where(DatePoll.crew_id == crew.id, or_(DatePoll.status == "open", DatePoll.closed_at >= at))
                                                            .order_by(DatePoll.created_at.desc(), DatePoll.id.desc()))
             if (max(o.date for o in p.options) >= since if p.status == "open" else p.closed_at is not None and p.closed_at.date() >= since)]
     return rows
@@ -78,7 +85,7 @@ def start_poll(crew_id: int, body: PollIn, db: DB, user: CurrentUser):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Date polls are for performances, not exhibitions.")
     today = today_in_chicago()
     lo, hi = body.window_from, body.window_to
-    if hi < lo or (hi - lo).days > MAX_WINDOW_DAYS or hi < today:
+    if hi < lo or (hi - lo).days >= MAX_WINDOW_DAYS or hi < today:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"Choose a window of at most {MAX_WINDOW_DAYS} days that hasn't passed.")
     seen = set()
     for o in body.options:
@@ -90,7 +97,8 @@ def start_poll(crew_id: int, body: PollIn, db: DB, user: CurrentUser):
     for old in db.scalars(select(DatePoll).where(DatePoll.crew_id == crew.id, DatePoll.event_id == event.id, DatePoll.status == "open")):
         if not ended(old, today):
             raise HTTPException(status.HTTP_409_CONFLICT, "This crew already has an open poll for this event.")
-        old.status, old.closed_at = "cancelled", utcnow()  # one that's run out of dates mustn't block the next
+        old.status = "ended"  # one that's run out of dates mustn't block the next; it stays "ended", not "cancelled"
+        old.closed_at = datetime.combine(max(o.date for o in old.options), time.min, tzinfo=UTC)
     if not poll_limiter.hit(str(user.id), POLLS_PER_DAY):
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "That's a lot of polls for one day. Try again tomorrow.")
     poll = DatePoll(crew_id=crew.id, event_id=event.id, started_by=user.id, window_from=lo, window_to=hi,
@@ -109,7 +117,7 @@ def start_poll(crew_id: int, body: PollIn, db: DB, user: CurrentUser):
 def answer(crew_id: int, poll_id: int, body: PollAnswerIn, db: DB, user: CurrentUser):
     """Replace your ticks. An empty list is an answer too: none of these work."""
     crew = _member_crew(db, crew_id, user)
-    poll = _poll(db, crew, poll_id)
+    poll = _poll(db, crew, poll_id, write=True)
     _open(poll)
     mine = {o.id for o in poll.options}
     ids = set(body.option_ids)
@@ -125,14 +133,18 @@ def answer(crew_id: int, poll_id: int, body: PollAnswerIn, db: DB, user: Current
         db.add(DatePollAnswer(poll_id=poll.id, user_id=user.id))
     else:
         existing.answered_at = utcnow()
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:  # two answers from you at once: the later one is asked to retry
+        db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, "Your answer was saving already. Try again.")
     db.refresh(poll)
     return poll_out(db, poll, crew, user)
 
 
 def _manage(db: DB, crew_id: int, poll_id: int, user) -> tuple[Crew, DatePoll]:
     crew = _member_crew(db, crew_id, user)
-    poll = _poll(db, crew, poll_id)
+    poll = _poll(db, crew, poll_id, write=True)
     if not can_manage(poll, crew, user):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Only whoever started the poll can do that")
     _open(poll)
@@ -142,8 +154,9 @@ def _manage(db: DB, crew_id: int, poll_id: int, user) -> tuple[Crew, DatePoll]:
 @router.post("/{crew_id}/polls/{poll_id}/lock", response_model=PollOut)
 def lock(crew_id: int, poll_id: int, body: PollLockIn, db: DB, user: CurrentUser):
     crew, poll = _manage(db, crew_id, poll_id, user)
-    if body.option_id not in {o.id for o in poll.options}:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Choose from this poll's options.")
+    chosen = next((o for o in poll.options if o.id == body.option_id), None)
+    if chosen is None or chosen.date < today_in_chicago():
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Choose one of this poll's upcoming times.")
     poll.status, poll.locked_option_id, poll.closed_at = "locked", body.option_id, utcnow()
     db.commit()
     db.refresh(poll)
