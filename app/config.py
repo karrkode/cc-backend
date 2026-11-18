@@ -78,6 +78,9 @@ class Settings(BaseSettings):
     visitor_hash_secret: str = ""
     photo_link_secret_param: str = "/culture-crew/photo-link-key"
     visitor_hash_secret_param: str = "/culture-crew/visitor-hash-key"
+    # CC-240: the growth console's key for GET /console/weekly. No fallback: unset means the endpoint refuses everyone.
+    console_key: str = ""
+    console_key_param: str = "/culture-crew/console-key"
 
     # CC-241: admins turn a member's report into a Jira ticket. jira_backend: api (Jira Cloud), fake (an in-memory
     # Jira, for trying it locally), none (off). Unset: api in production, none elsewhere. In production the account
@@ -111,7 +114,7 @@ class Settings(BaseSettings):
             raise ValueError("JWT_SECRET must be set to a random value of 32+ characters in prod")
         return v
 
-    @field_validator("photo_link_secret", "visitor_hash_secret")
+    @field_validator("photo_link_secret", "visitor_hash_secret", "console_key")
     @classmethod
     def _purpose_key_long_enough(cls, v, info):  # CC-204
         if info.data.get("env") == "prod" and v and len(v) < 32:

@@ -621,6 +621,8 @@ class PlanShare(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
     event_id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     crew_id: Mapped[int] = mapped_column(ForeignKey("crews.id", ondelete="CASCADE"), primary_key=True, index=True)
+    # CC-240: when it was shared, for the console's weekly count. Null on shares made before this column existed.
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class AttendedShare(Base):

@@ -74,7 +74,7 @@ def warm() -> None:
     """Read both parameters once at startup (prod only), so the first requests already have their keys."""
     s = get_settings()
     if s.env == "prod":
-        for name in (s.photo_link_secret_param, s.visitor_hash_secret_param):
+        for name in (s.photo_link_secret_param, s.visitor_hash_secret_param, s.console_key_param):
             _refresh(name)
 
 
@@ -99,8 +99,18 @@ def visitor_hash_secret() -> str:
     return _resolve(s.visitor_hash_secret, s.visitor_hash_secret_param)[0]
 
 
+def console_key() -> str | None:
+    """CC-240: the console's key, or None while none is set. Unlike the keys above it never falls back to jwt_secret:
+    with no key the endpoint it guards refuses everyone."""
+    s = get_settings()
+    if s.console_key:
+        return s.console_key
+    return _from_ssm(s.console_key_param) if s.env == "prod" else None
+
+
 def describe() -> dict[str, str]:
     """Where each key comes from (env, ssm or jwt), never the keys themselves. For checking production."""
     s = get_settings()
     return {"photo_link": _resolve(s.photo_link_secret, s.photo_link_secret_param)[1],
-            "visitor_hash": _resolve(s.visitor_hash_secret, s.visitor_hash_secret_param)[1]}
+            "visitor_hash": _resolve(s.visitor_hash_secret, s.visitor_hash_secret_param)[1],
+            "console": "env" if s.console_key else ("ssm" if console_key() else "unset")}
