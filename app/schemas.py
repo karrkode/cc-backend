@@ -1423,7 +1423,8 @@ class JiraDraft(BaseModel):
     issue_type: JiraIssueType
     priority: JiraPriority
     summary: str
-    description: str
+    description: str  # CC-288: our own words only; the member's words are member_words
+    member_words: str = ""  # CC-288: what the member wrote (redacted); the server quotes it in the ticket
     reference: str
     connected: bool  # False: Jira isn't set up on this server, so sending will fail
 
@@ -1433,11 +1434,12 @@ class JiraCreate(BaseModel):
     priority: JiraPriority = "Medium"
     summary: str = Field(min_length=3, max_length=200)
     description: str = Field(default="", max_length=20000)
+    member_words: str | None = Field(default=None, max_length=20000)  # CC-288: the draft's member_words, trimmed; None: the server's own copy
 
-    @field_validator("summary", "description")
+    @field_validator("summary", "description", "member_words")
     @classmethod
-    def _trim(cls, v: str) -> str:
-        return v.strip()
+    def _trim(cls, v: str | None) -> str | None:
+        return v.strip() if v is not None else None
 
 
 class JiraTicketStatus(BaseModel):

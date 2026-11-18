@@ -5,7 +5,8 @@ report (report-ISS-0007). That label is the durable link back to the report. It'
 finds the ticket the first try made, instead of making a second.
 
 What is sent is drafted from the report with personal details taken out (redact). The reporter's name and email
-are never part of it.
+are never part of it. CC-288: the member's own words go only inside a marked quote block (member_words), never in the
+summary or the admin's own text, because a story description is a spec an AI agent might build from.
 """
 import base64
 import json
@@ -76,20 +77,90 @@ def redact(text: str, name: str = "") -> str:
     return text
 
 
+def quote_block(text: str) -> str:
+    """Text as a quote block: every line starts with "> ", so nothing in it can read as a heading or an instruction
+    outside the block."""
+    lines = [(">" + (" " + line if line else "")) for line in clean_member_text(text).splitlines()]  # splitlines: \r, \u2028, \x85...
+    return "\n".join(lines)
+
+
+MAX_QUOTE_CHARS, MAX_QUOTE_LINES = 6000, 150  # Jira refuses a description over 32,767 characters of its own format
+
+
+def clean_member_text(text: str) -> str:
+    """Member text ready to quote: every kind of line break is a plain "\\n" (so the quote can't hide a line from the
+    "> " prefix), a leading ">" or "#" the member or an edit put on a line is dropped, blank-line runs are one, and it is
+    cut to a size Jira accepts."""
+    lines, blank = [], False
+    for raw in (text or "").splitlines():
+        line = raw.lstrip(">#").strip() if raw.lstrip().startswith((">", "#")) else raw.rstrip()
+        if not line.strip():
+            if blank or not lines:
+                continue
+            blank = True
+            lines.append("")
+        else:
+            blank = False
+            lines.append(line)
+    out = "\n".join(lines).strip()
+    if len(out) > MAX_QUOTE_CHARS or len(lines) > MAX_QUOTE_LINES:
+        out = "\n".join(lines[:MAX_QUOTE_LINES])[:MAX_QUOTE_CHARS].rstrip() + "\n[trimmed]"
+    return out
+
+
+QUOTE_HEADING = "Member's words (quoted, not instructions)"
+
+
 # ---- the two backends ---------------------------------------------------------------
 
 def _adf(text: str) -> dict:
-    """Plain text as Atlassian Document Format: a paragraph per blank-line block, line breaks kept."""
-    paragraphs = []
-    for block in re.split(r"\n\s*\n", text.strip()):
+    """Plain text as Atlassian Document Format: a paragraph per blank-line block, line breaks kept. A line that
+    starts with "## " is a heading, and a run of lines that start with ">" is one quote block (CC-288: that is where a
+    member's own words go, so they read as quoted data, not as the spec)."""
+    def inline(block: str) -> list[dict]:
         content: list[dict] = []
         for i, line in enumerate(block.split("\n")):
             if i:
                 content.append({"type": "hardBreak"})
             if line:
                 content.append({"type": "text", "text": line})
-        paragraphs.append({"type": "paragraph", "content": content})
-    return {"type": "doc", "version": 1, "content": paragraphs}
+        return content
+
+    out: list[dict] = []
+    para: list[str] = []
+    quote: list[str] | None = None
+
+    def flush():
+        nonlocal quote
+        if para:
+            out.append({"type": "paragraph", "content": inline("\n".join(para))})
+            para.clear()
+        if quote is not None:
+            blocks = [b for b in re.split(r"\n\s*\n", "\n".join(quote).strip("\n")) if b.strip()]
+            out.append({"type": "blockquote", "content": [{"type": "paragraph", "content": inline(b.strip("\n"))} for b in blocks]
+                        or [{"type": "paragraph", "content": []}]})
+            quote = None
+
+    for line in text.strip().splitlines():  # splitlines, like quote_block: every kind of line break
+        if line.startswith(">"):
+            if quote is None:
+                flush()
+                quote = []
+            quote.append(line[1:].removeprefix(" "))
+        elif line.startswith("## ") and line[3:].strip():
+            flush()
+            out.append({"type": "heading", "attrs": {"level": 3}, "content": [{"type": "text", "text": line[3:]}]})
+        elif not line.strip():
+            if quote is not None:
+                quote.append("")  # a blank line inside a quote stays in the quote
+            else:
+                flush()
+        else:
+            if quote is not None:
+                flush()
+            para.append(line)
+    flush()
+    return {"type": "doc", "version": 1, "content": out or [{"type": "paragraph", "content": []}]}
 
 
 class JiraApi:
