@@ -32,6 +32,19 @@ resource "aws_ssm_parameter" "visitor_hash_key" {
   }
 }
 
+# CC-240: the Growth Console's key for GET /console/weekly. Set by hand (infra/README.md); Terraform never changes it.
+# While it holds "unset" the endpoint refuses everyone. The API reads it while it runs, like the keys above.
+resource "aws_ssm_parameter" "console_key" {
+  name        = "/${var.name}/console-key"
+  description = "The Growth Console's key for the weekly numbers. Set by hand; Terraform never changes it."
+  type        = "SecureString"
+  value       = "unset"
+
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
+
 resource "aws_iam_role_policy" "container_token_keys" {
   name = "read-purpose-keys"
   role = aws_iam_role.email_sender.id
@@ -39,7 +52,7 @@ resource "aws_iam_role_policy" "container_token_keys" {
     Version = "2012-10-17"
     Statement = [{
       Sid      = "ReadPurposeKeys", Effect = "Allow", Action = "ssm:GetParameter"
-      Resource = [aws_ssm_parameter.photo_link_key.arn, aws_ssm_parameter.visitor_hash_key.arn]
+      Resource = [aws_ssm_parameter.photo_link_key.arn, aws_ssm_parameter.visitor_hash_key.arn, aws_ssm_parameter.console_key.arn]
     }]
   })
 }

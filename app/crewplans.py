@@ -38,9 +38,13 @@ def shared_with(db, user: User, event_ids: set[int]) -> dict[int, list[int]]:
 
 def share_plan(db, user: User, event_id: int, crew_ids: list[int]) -> None:
     """Share your plan for this event with exactly these crews (all of them yours). Doesn't commit."""
+    # CC-240: a crew you already shared with keeps its date, so editing a plan doesn't count as a new share
+    before = dict(db.execute(select(PlanShare.crew_id, PlanShare.created_at)
+                             .where(PlanShare.user_id == user.id, PlanShare.event_id == event_id)).all())
     db.execute(delete(PlanShare).where(PlanShare.user_id == user.id, PlanShare.event_id == event_id))
     for crew_id in sorted(set(crew_ids)):
-        db.add(PlanShare(user_id=user.id, event_id=event_id, crew_id=crew_id))
+        extra = {"created_at": before[crew_id]} if crew_id in before else {}
+        db.add(PlanShare(user_id=user.id, event_id=event_id, crew_id=crew_id, **extra))
 
 
 def unshare(db, user_id, event_id: int | None = None, crew_id: int | None = None) -> None:

@@ -29,7 +29,7 @@ def test_with_no_keys_set_nothing_changes(monkeypatch):
     assert traffic.visitor_key("abc", date(2026, 1, 1), "1.2.3.4", "ua") == (old, True)
     assert traffic.address_key(date(2026, 1, 1), "1.2.3.4") == hashlib.sha256(
         f"{s.jwt_secret}|address|2026-01-01|1.2.3.4".encode()).hexdigest()[:40]
-    assert keys.describe() == {"photo_link": "jwt", "visitor_hash": "jwt"}
+    assert keys.describe() == {"photo_link": "jwt", "visitor_hash": "jwt", "console": "unset"}
 
 
 def test_own_keys_are_independent_of_the_sign_in_key(monkeypatch):
@@ -40,7 +40,7 @@ def test_own_keys_are_independent_of_the_sign_in_key(monkeypatch):
     assert sig != old_sig(7, 123)
     monkeypatch.setattr(s, "jwt_secret", "a-different-sign-in-key-of-32-chars!!")  # rotating it
     assert photos._sig(7, 123) == sig and traffic.visitor_key("abc", date(2026, 1, 1), "a", "ua") == visitor
-    assert keys.describe() == {"photo_link": "env", "visitor_hash": "env"}
+    assert keys.describe() == {"photo_link": "env", "visitor_hash": "env", "console": "unset"}
 
 
 def test_photo_links_work_with_the_new_key_and_old_links_do_not(client, monkeypatch):
