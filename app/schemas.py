@@ -1591,3 +1591,72 @@ class VenueSuggestionAccept(BaseModel):
 
 class VenueSuggestionDecline(BaseModel):
     reason: str = Field(default="", max_length=200)
+
+
+# ---- CC-297: crew date polls ---------------------------------------------------------
+class PollOptionIn(BaseModel):
+    date: date_
+    time: str = Field(default="", pattern=r"^(?:(?:[01]\d|2[0-3]):[0-5]\d)?$")  # HH:MM, or "" for a day with no time
+
+
+class PollIn(BaseModel):
+    event_id: int
+    window_from: date_
+    window_to: date_
+    options: list[PollOptionIn] = Field(min_length=1, max_length=40)
+
+
+class PollAnswerIn(BaseModel):
+    option_ids: list[int] = Field(max_length=40)  # [] = "none of these work"
+
+
+class PollLockIn(BaseModel):
+    option_id: int
+
+
+class PollOptionOut(BaseModel):
+    id: int
+    date: date_
+    time: str
+    count: int
+    names: list[str]
+    yours: bool
+
+
+class PollBestOut(BaseModel):
+    option_id: int
+    date: date_
+    time: str
+    count: int
+    names: list[str]
+    everyone: bool
+
+
+class PollLockedOut(BaseModel):
+    id: int
+    date: date_
+    time: str
+    count: int
+    names: list[str]
+    yours: bool
+
+
+class PollOut(BaseModel):
+    id: int
+    crew_id: int
+    crew_name: str
+    event_id: int
+    event_title: str
+    status: Literal["open", "locked", "cancelled", "ended"]
+    window_from: date_
+    window_to: date_
+    started_by: str
+    can_manage: bool
+    members_total: int
+    answered_count: int
+    you_answered: bool
+    options: list[PollOptionOut]
+    best: list[PollBestOut]
+    locked: PollLockedOut | None
+    created_at: datetime
+    closed_at: datetime | None

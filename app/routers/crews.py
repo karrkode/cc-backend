@@ -19,6 +19,7 @@ from ..clock import as_utc, today_in_chicago, utcnow
 from .. import emailcaps, mail
 from ..config import get_settings
 from ..crewplans import crew_board, unshare, unshare_been
+from ..polls import drop_member_answers
 from ..deps import DB, CurrentUser, OptionalUser
 from ..models import Crew, CrewEmailInvite, CrewInvite, CrewMember, CrewRemoval, User
 from ..ratelimit import SlidingWindowLimiter
@@ -201,6 +202,7 @@ def leave(crew_id: int, db: DB, user: CurrentUser):
     crew.members = [m for m in crew.members if m.user_id != user.id]
     unshare(db, user.id, crew_id=crew.id)  # CC-75: your plans leave with you
     unshare_been(db, user.id, crew_id=crew.id)  # CC-93: and your "I've been" marks
+    drop_member_answers(db, user.id, crew.id)  # CC-297: and your answers in its date polls
     _end_invites_from(db, crew, user.id)  # CC-187: or leaving would dodge a removal, with a link to come back on
     db.commit()
 
@@ -217,6 +219,7 @@ def remove_member(crew_id: int, user_id: uuid.UUID, db: DB, user: CurrentUser):
     crew.members = [m for m in crew.members if m.user_id != user_id]
     unshare(db, user_id, crew_id=crew.id)
     unshare_been(db, user_id, crew_id=crew.id)
+    drop_member_answers(db, user_id, crew.id)  # CC-297
     _end_invites_from(db, crew, user_id)
     db.execute(delete(CrewEmailInvite).where(CrewEmailInvite.crew_id == crew.id, CrewEmailInvite.email == email))  # CC-187
     db.merge(CrewRemoval(crew_id=crew.id, user_id=user_id, removed_by=user.id))
