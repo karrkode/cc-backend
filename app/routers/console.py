@@ -1,7 +1,7 @@
 import hmac
 from datetime import date
 
-from fastapi import APIRouter, Header, HTTPException, Request, status
+from fastapi import APIRouter, Header, HTTPException, Request, Response, status
 
 from .. import keys
 from ..consolestats import check_week, last_finished_monday, week_numbers
@@ -19,7 +19,7 @@ def _refuse(code: int) -> HTTPException:
 
 
 @router.get("/weekly")
-def weekly(request: Request, db: DB, week: str | None = None, x_console_key: str | None = Header(default=None)):
+def weekly(request: Request, response: Response, db: DB, week: str | None = None, x_console_key: str | None = Header(default=None)):
     """CC-240: one finished Monday-Sunday week's numbers for the Growth Console (counts only). It takes only the
     console's own key in the X-Console-Key header, not a sign-in, and that key opens nothing else."""
     address = (request.headers.get("x-forwarded-for", "").split(",")[0].strip()  # set by Caddy, the only way in
@@ -39,4 +39,5 @@ def weekly(request: Request, db: DB, week: str | None = None, x_console_key: str
     problem = check_week(monday, today)
     if problem:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, problem)
+    response.headers["Cache-Control"] = "no-store"
     return week_numbers(db, monday)

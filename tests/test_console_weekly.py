@@ -4,6 +4,7 @@ from datetime import UTC, date, datetime, timedelta
 import pytest
 
 from app import consolestats, keys
+from app.clock import as_utc
 from app.config import get_settings
 from app.models import (AppSetting, Crew, CrewInvite, CrewMember, Plan, PlanShare, PlanStatus, SentEmail,
                         TrafficCount, TrafficVisitorDay, User)
@@ -70,6 +71,7 @@ def test_unfinished_or_odd_weeks_are_refused(client):
     assert get(client, week="2026-11-10").status_code == 400   # a Tuesday
     assert get(client, week="2027-01-04").status_code == 400   # the future
     assert get(client, week="nope").status_code == 400
+    assert get(client, week="9999-12-27").status_code == 400  # not a 500
     assert get(client, week="2026-11-09").status_code == 200
 
 
@@ -175,4 +177,4 @@ def test_resharing_keeps_the_original_date(client, db, make_event):
     db.commit()
     db.expire_all()
     got = db.get(PlanShare, (owner.id, ev.id, crew.id)).created_at
-    assert got.replace(tzinfo=UTC) == old
+    assert as_utc(got) == old

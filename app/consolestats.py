@@ -22,6 +22,8 @@ def last_finished_monday(today: date) -> date:
 
 def check_week(week: date, today: date) -> str | None:
     """Why this week can't be asked for, or None."""
+    if not 2020 <= week.year <= 2100:  # also keeps the date arithmetic below away from year 9999
+        return "week is out of range"
     if week.weekday() != 0:
         return "week must be a Monday"
     if week + timedelta(days=7) > today:
