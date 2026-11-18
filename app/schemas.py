@@ -1545,3 +1545,48 @@ class HealthOut(BaseModel):
     timing: HealthTiming
     db: HealthDb
     non_200: list[HealthStatusCount]  # most first
+
+
+# ---- venue suggestions (CC-209) ----------------------------------------------
+
+class VenueSuggestionIn(BaseModel):
+    """A member's suggestion: a venue's calendar link, and optionally its name and a note for the admins."""
+    url: Annotated[str, Field(min_length=8, max_length=500)]
+    venue_name: str = Field(default="", max_length=200)
+    note: str = Field(default="", max_length=500)
+
+    @field_validator("url", "venue_name", "note")
+    @classmethod
+    def _trim(cls, v: str, info) -> str:
+        v = v.strip()
+        if any(ord(c) < 32 for c in v if not (c == "\n" and info.field_name == "note")):  # no control characters in what an admin reads
+            raise ValueError("Remove the special characters")
+        return v
+
+
+class VenueSuggestionOut(ORM):
+    """What the member sees of their own suggestion: its state, and the admin's reason when it was declined."""
+    id: int
+    url: str
+    venue_name: str
+    note: str
+    status: str
+    decline_reason: str
+    created_at: datetime
+
+
+class VenueSuggestionAdminOut(VenueSuggestionOut):
+    suggested_by: str = ""  # the member's display name, for admins only
+    source_id: int | None = None
+    decided_at: datetime | None = None
+
+
+class VenueSuggestionAccept(BaseModel):
+    """Accepting adds a discovery source. The admin can fix the name and the kind, and tie it to a venue we have."""
+    name: str = Field(default="", max_length=200)
+    kind: Literal["theater", "opera", "museum", "music", "comedy"] = "theater"
+    venue_id: int | None = None
+
+
+class VenueSuggestionDecline(BaseModel):
+    reason: str = Field(default="", max_length=200)
