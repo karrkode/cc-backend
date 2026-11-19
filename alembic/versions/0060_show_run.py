@@ -49,9 +49,19 @@ def _normalise(performances) -> tuple[list[tuple[date, str]], int]:
             bad += 1
             continue
         t = p.get('time')
-        seen.add((day, t if isinstance(t, str) and _TIME.match(t) else ''))
+        seen.add((day, _clock(t)))
     timed = {d for d, t in seen if t}
     return sorted((d, t) for d, t in seen if t or d not in timed), bad
+
+
+def _clock(t) -> str:
+    # CC-301: the same reading as discovery's _hhmm, so "7:30" and "19:30:00" (which the old site showed) stay timed
+    try:
+        h, m = (t or '').strip().split(':')[:2]
+        h, m = int(h), int(m)
+    except (ValueError, AttributeError):
+        return ''
+    return f'{h:02d}:{m:02d}' if 0 <= h < 24 and 0 <= m < 60 else ''
 
 
 def upgrade() -> None:

@@ -541,7 +541,8 @@ SHOW_RUN_MAX = 500  # CC-301: a safety cap on one event's shows (CC-96's 30 was 
 SHOWS_A_DAY_MAX = 6
 RUN_DATES_MAX = 30  # CC-96: still the limit for a link draft (fromlink) and a found event's short run
 ShowRun = Annotated[list[Show], Field(max_length=SHOW_RUN_MAX)]
-RunDates = Annotated[list[RunDate], Field(max_length=SHOW_RUN_MAX)]
+RunDates = Annotated[list[RunDate], Field(max_length=SHOW_RUN_MAX)]  # CC-301: legacy run_dates on a PATCH (an admin)
+SubmitRunDates = Annotated[list[RunDate], Field(max_length=RUN_DATES_MAX)]  # CC-301: a member's POST keeps CC-96's 30
 
 
 def _shows_ok(v):
@@ -619,7 +620,7 @@ class EventIn(_EventFields):
     weeks: Weeks = {}  # CC-88: of those days, any on some weeks of the month only
     # CC-96: a fixed run: on these dates only, a time each. Its opening and closing dates are then the first and last
     # of them (begin_date and end_date are set from them), and it has no weekly pattern.
-    run_dates: RunDates = []
+    run_dates: SubmitRunDates = []
 
     _run_dates_once = field_validator("run_dates")(_one_time_a_day)
 

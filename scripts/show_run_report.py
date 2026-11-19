@@ -17,7 +17,14 @@ from app.models import Event
 from app.visibility import live_condition
 
 _DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-_TIME = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+def _clock(t):
+    # CC-301: same reading as migration 0060 and discovery's _hhmm
+    try:
+        h, m = (t or "").strip().split(":")[:2]
+        h, m = int(h), int(m)
+    except (ValueError, AttributeError):
+        return ""
+    return f"{h:02d}:{m:02d}" if 0 <= h < 24 and 0 <= m < 60 else ""
 runs = table("event_run_dates", column("event_id", Integer), column("date", Date), column("time", String), column("origin", String))
 
 
@@ -36,7 +43,7 @@ def normalise(performances) -> tuple[list[tuple[date, str]], int]:
             bad += 1
             continue
         t = p.get("time")
-        seen.add((day, t if isinstance(t, str) and _TIME.match(t) else ""))
+        seen.add((day, _clock(t)))
     timed = {d for d, t in seen if t}
     return sorted((d, t) for d, t in seen if t or d not in timed), bad
 

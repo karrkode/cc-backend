@@ -37,7 +37,7 @@ def test_checks(client, user_token):
     assert submit(client, h, [{"date": day(1), "time": "8pm"}]).status_code == 422
     assert submit(client, h, [{"date": day(1), "time": "20:00"}, {"date": day(1), "time": "20:00"}]).status_code == 422  # twice
     assert submit(client, h, [{"date": day(1), "time": "14:00"}, {"date": day(1), "time": "20:00"}]).status_code == 201  # CC-301: a matinee and an evening
-    assert submit(client, h, [{"date": day(i), "time": "20:00"} for i in range(501)]).status_code == 422  # CC-301: 500 at most (was 30)
+    assert submit(client, h, [{"date": day(i), "time": "20:00"} for i in range(31)]).status_code == 422  # CC-301: a submission keeps the 30 cap (500 is for an admin's PATCH)
     assert submit(client, h, [{"date": day(i), "time": "20:00"} for i in range(30)]).status_code == 201
     assert submit(client, h, [{"date": day(0), "time": "20:00"}]).status_code == 201  # today is fine
 
