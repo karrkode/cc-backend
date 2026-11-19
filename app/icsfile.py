@@ -43,10 +43,9 @@ UNSURE = "We couldn't find a time for the event so please verify!"  # said on a 
 
 
 def _own_times(event: Event, d: date) -> list[str]:
-    """The times the event itself lists for day d: a fixed run's date, a found performance, or its own weekly pattern."""
+    """The times the event itself lists for day d: a show in its Show Run (CC-301: saved or found), or its own weekly pattern."""
     from .roundups import WEEKDAYS
-    times = [r.time for r in event.run_dates if r.date == d and r.time]
-    times += [p.get("time") or "" for p in event.performances or [] if p.get("date") == d.isoformat()]
+    times = [r.time for r in event.shows if r.date == d and r.time]
     return times or list((event.weekly or {}).get(WEEKDAYS[d.weekday()]) or [])
 
 

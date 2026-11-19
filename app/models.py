@@ -316,8 +316,10 @@ class Event(Base):
     # The submitter ticked "credit me" for this event; without it their name is never shown publicly.
     credit_me: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     # CC-79: when it's on, for Find an outing. performances: specific dates and times from event discovery,
-    # [{"date": "2026-11-05", "time": "19:30"}], kept current by discovery. weekly: a usual pattern an admin
-    # sets, {"thu": ["19:30"]}, which overrides the venue's show times. Neither is shown on cards.
+    # [{"date": "2026-11-05", "time": "19:30"}]. CC-301: FROZEN, nothing reads or writes it any more; its dates were
+    # copied into event_run_dates (migration 0060) and live there as `shows`. A later story drops the column.
+    # weekly: a usual pattern an admin sets, {"thu": ["19:30"]}, which overrides the venue's show times.
+    # Neither is shown on cards.
     performances: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
     weekly: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
     # CC-88: weekly days that are only on some weeks of the month, {"thu": [1, 3]} (1-4: first to fourth, 5: the last);
@@ -347,9 +349,25 @@ class Event(Base):
 
     venue: Mapped[Venue] = relationship(lazy="joined")
     submitter: Mapped[User | None] = relationship(lazy="selectin")  # one extra query per batch, not per event
-    # CC-96: a fixed run: on these dates only, each with its time; begin_date and end_date are the first and last
-    run_dates: Mapped[list["EventRunDate"]] = relationship(lazy="selectin", cascade="all, delete-orphan",
-                                                           order_by="EventRunDate.date")
+    # CC-301: the Show Run: every performance, one row each (a day can have several). Two kinds, told apart by
+    # EventRunDate.origin: an exact Show Run (any show a person saved: origin admin or member), on those dates only,
+    # with begin_date and end_date always its first and last show; or a found-only one (origin found, written by
+    # sourcing), which behaves as `performances` did: exact up to its last date, then the weekly pattern.
+    # One event never mixes the two: a form save replaces every row with admin rows, and sourcing writes only when
+    # there are no rows or every row is found. (CC-96's fixed run is an exact Show Run; same table.)
+    shows: Mapped[list["EventRunDate"]] = relationship(lazy="selectin", cascade="all, delete-orphan",
+                                                       order_by="EventRunDate.date, EventRunDate.time")
+
+    @property
+    def show_run_exact(self) -> bool:
+        """CC-301: the event is on its shows' dates only (a person saved them), not on top of a weekly pattern."""
+        return any(r.origin != FOUND for r in self.shows)
+
+    @property
+    def run_dates(self) -> list["EventRunDate"]:
+        """CC-96, LEGACY (CC-301): the shows of an exact Show Run that have a time. What the live site reads until the
+        new one ships; found shows and untimed ones are left out, so old pages see exactly what they used to."""
+        return [r for r in self.shows if r.origin != FOUND and r.time] if self.show_run_exact else []
 
     @validates("title")
     def _keep_sort_title(self, _key, value):
@@ -380,33 +398,44 @@ class Event(Base):
     crew_plans = ()
     # CC-112: set per request by app.takes.attach_takes (not stored); members' shared journal entries.
     takes = ()
+    # CC-301: set per request on single-event responses (not stored): every show, past ones too, as EventOut.show_run.
+    show_run = ()
 
     @property
     def schedule(self) -> dict:
         """CC-79: what Find an outing needs to know when it's on: upcoming dates and times, the weekly pattern
         (the event's own, else its venue's show times), and the venue's opening hours."""
         today = today_in_chicago().isoformat()
-        given = [{"date": r.date.isoformat(), "time": r.time} for r in self.run_dates]  # CC-96: a fixed run's own dates come first
-        dates = sorted((p for p in given or self.performances or [] if (p.get("date") or "") >= today),
-                       key=lambda p: (p.get("date"), p.get("time") or ""))[:120]
+        # CC-301: upcoming shows from the one store; time is null when it isn't posted
+        dates = [{"date": r.date.isoformat(), "time": r.time or None} for r in self.shows if r.date.isoformat() >= today]
+        dates = sorted(dates, key=lambda p: (p["date"], p["time"] or ""))[:SCHEDULE_DATES_MAX]
         own = bool(self.weekly)
         venue = self.venue
         return {"dates": dates, "weekly": self.weekly if own else (venue.show_times if venue else {}) or {},
                 "weeks": (self.weeks or {}) if own else {},
                 "weekly_from": "event" if own else ("venue" if venue and venue.show_times else ""),
+                # CC-301: where the dates came from: "event" (a person's exact Show Run), "found" (sourcing's), or ""
+                "dates_from": "event" if self.show_run_exact else ("found" if self.shows else ""),
                 "hours": (venue.open_hours if venue else {}) or {}}
 
 
 class EventRunDate(Base):
-    """CC-96: one date of a fixed run (an event on chosen dates only), with its start time and, if given, its end."""
+    """CC-301: one show of an event's Show Run (CC-96's fixed-run date, grown up): its day, start time and, if known,
+    end time. Several shows can share a day. time may be "" (not posted yet). origin: admin (saved in a form by an
+    admin), member (sent in by a member) or found (written by sourcing). The table keeps its CC-96 name."""
     __tablename__ = "event_run_dates"
-    __table_args__ = (UniqueConstraint("event_id", "date", name="uq_event_run_dates_day"),)
+    __table_args__ = (UniqueConstraint("event_id", "date", "time", name="uq_event_run_dates_show"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     event_id: Mapped[int] = mapped_column(ForeignKey("events.id", ondelete="CASCADE"), index=True)
     date: Mapped[date] = mapped_column(Date, index=True)
-    time: Mapped[str] = mapped_column(String(5))  # 24-hour HH:MM
+    time: Mapped[str] = mapped_column(String(5), default="")  # 24-hour HH:MM, or "" when not posted
     end_time: Mapped[str] = mapped_column(String(5), default="", server_default="")
+    origin: Mapped[str] = mapped_column(String(6), default="admin", server_default="admin")  # admin | member | found
+
+
+FOUND = "found"  # CC-301: EventRunDate.origin of the dates sourcing wrote
+SCHEDULE_DATES_MAX = 500  # CC-301: upcoming shows in Event.schedule (the Show Run itself is capped at the same number)
 
 
 class Attended(Base):

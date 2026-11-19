@@ -2,7 +2,7 @@
 from datetime import UTC, date, datetime, timedelta
 
 from app.icsfile import _fold, build
-from app.models import EventStatus
+from app.models import EventRunDate, EventStatus
 from app.stats import today_in_chicago
 
 T = today_in_chicago()
@@ -59,7 +59,7 @@ def test_a_gallery_show_starts_at_1pm_unless_it_lists_its_own_time(db, make_even
     f = unfold(build(ev, friday))
     assert (f["DTSTART"], f["DTEND"]) == ("20260710T180000Z", "20260710T200000Z")  # 1-3pm CDT
     assert "couldn't find a time" not in f["DESCRIPTION"]  # 1 pm is a gallery's own default, not a guess
-    ev.performances = [{"date": "2026-07-10", "time": "18:00"}]  # an opening night it lists itself
+    ev.shows = [EventRunDate(date=friday, time="18:00", origin="found")]  # an opening night it lists itself (CC-301)
     db.commit()
     assert unfold(build(ev, friday))["DTSTART"] == "20260710T230000Z"
 

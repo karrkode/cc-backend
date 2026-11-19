@@ -97,7 +97,8 @@ def test_a_short_run_goes_in_with_its_listed_times_or_waits_for_the_form(client,
     db.expire_all()
     event = db.get(Event, talk.event_id)
     assert [(d.date.isoformat(), d.time) for d in event.run_dates] == [("2027-03-04", "18:00"), ("2027-03-05", "12:30")]
-    assert len(event.performances) == 3  # every listed time still reaches Find an outing
+    # CC-301: the short run is an exact Show Run (admin's), so sourcing's found shows are not added on top of it
+    assert {d.origin for d in event.shows} == {"admin"} and len(event.shows) == 2
 
 
 def test_an_opera_source_and_the_venues_default_type_start_as_in_the_form(client, db, admin_token):

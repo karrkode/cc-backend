@@ -15,7 +15,7 @@ from ..discovery.needs import needs
 from ..discovery.readers import cost_usd
 from ..discovery.recap import budget_note, found_by_week, gather, next_send
 from ..discovery.rules import norm_title
-from ..discovery.store import matching_rule, possible_duplicates, release_delayed, rule_reason, sync_performances, venue_for
+from ..discovery.store import matching_rule, possible_duplicates, release_delayed, rule_reason, sync_found_shows, venue_for
 from ..discovery.venuesources import covers, grid_numbers, state_of
 from ..models import DiscoveredItem, DiscoveryCheck, DiscoverySource, Event, SkipRule, Venue
 from ..schemas import (BatchHeld, BatchIn, BatchOut, BudgetIn, DelayIn, DiscoveredItemOut, DiscoveredPage, DiscoveryOverview, DiscoverySourceOut, DiscoverySourcePatch,
@@ -324,7 +324,7 @@ def _add_to_catalog(db: DB, item: DiscoveredItem, body: EventIn, user) -> None:
     db.add(event)
     db.flush()
     item.status, item.event_id, item.skip_reason = "approved", event.id, ""
-    sync_performances(db, item)  # CC-79: its dates and times, for Find an outing
+    sync_found_shows(db, item)  # CC-79: its dates and times, for Find an outing
 
 
 @router.post("/items/batch", response_model=BatchOut)
@@ -454,6 +454,8 @@ def accept(item_id: int, db: DB, _: AdminUser):
     if item.status != "update" or event is None:
         raise HTTPException(status.HTTP_409_CONFLICT, "There's no update to accept")
     for field, (_, found) in (item.changes or {}).items():
+        if event.show_run_exact and field in ("begin_date", "end_date", "weekly", "weeks"):
+            continue  # CC-301: a person's Show Run owns these; a stale proposal can't break its first and last show
         if field in ("begin_date", "end_date"):
             setattr(event, field, date.fromisoformat(found) if found else None)
         elif field == "min_price":

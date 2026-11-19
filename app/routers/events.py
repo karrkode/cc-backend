@@ -12,10 +12,10 @@ from ..deps import DB, AdminUser, CurrentUser, OptionalUser, require_verified_em
 from .. import event_images, photos
 from ..autoreject import reject_if_caught
 from .. import fromlink
-from ..models import Area, Event, EventRunDate, EventStatus, Plan, PlanStatus, Region, Role, Venue, WentPhoto
+from ..models import FOUND, Area, Event, EventRunDate, EventStatus, Plan, PlanStatus, Region, Role, Venue, WentPhoto
 from ..crewplans import attach_crew_plans, crew_plans_condition
 from ..picks import attach_picks, pick_condition
-from ..schemas import EventFacets, EventIn, EventOut, EventPage, EventPatch, LinkDraft, LinkIn, RunDate, VenueIn
+from ..schemas import EventFacets, EventIn, EventOut, EventPage, EventPatch, LinkDraft, LinkIn, RunDate, Show, VenueIn
 from ..takes import attach_takes
 from ..venuereview import accept_venue, drop_if_unused
 from ..visibility import live_condition, visible_to
@@ -36,21 +36,33 @@ def get_or_create_venue(db: DB, v: VenueIn, pending: bool = False) -> Venue:
     return venue
 
 
-def _no_past_run_dates(dates: list[RunDate], kept: set[date] = frozenset()) -> None:
-    """CC-96: a fixed run's dates can't be in the past (in Chicago), except ones the event already had."""
+def _no_past_shows(dates: list[Show | RunDate], kept: set[date] = frozenset()) -> None:
+    """CC-96, CC-301: a show can't be on a past day (in Chicago), except on days the event already had a show."""
     today = today_in_chicago()
     if any(r.date < today and r.date not in kept for r in dates):
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "A fixed run's dates can't be in the past")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "A show's date can't be in the past")
 
 
-def _run_dates_of(dates: list[RunDate]) -> list[EventRunDate]:
-    return [EventRunDate(date=r.date, time=r.time, end_time=r.end_time) for r in dates]
+def _shows_of(dates: list[Show | RunDate], origin: str) -> list[EventRunDate]:
+    return [EventRunDate(date=r.date, time=r.time, end_time=r.end_time, origin=origin) for r in dates]
+
+
+def _origin_for(user) -> str:
+    """CC-301: who saved the shows: an admin in a form, or a member sending the event in."""
+    return "admin" if user.role == Role.admin else "member"
+
+
+def with_show_run(event: Event) -> Event:
+    """CC-301: single-event responses carry the whole Show Run (lists don't, to keep them small)."""
+    event.show_run = sorted(event.shows, key=lambda r: (r.date, r.time))
+    return event
 
 
 def _on_between(date_from: date | None, date_to: date | None):
-    """CC-96: an event with a fixed run is only on its chosen dates, not the days between them."""
+    """CC-96: an event with an exact Show Run is only on its show dates, not the days between them. CC-301: one with only
+    found shows is left alone, as before: it may be on between them, by its weekly pattern."""
     window = and_(EventRunDate.date >= date_from if date_from else true(), EventRunDate.date <= date_to if date_to else true())
-    return or_(~Event.run_dates.any(), Event.run_dates.any(window))
+    return or_(~Event.shows.any(EventRunDate.origin != FOUND), Event.shows.any(window))
 
 
 Sort = Literal["start", "closing", "opening", "az", "price"]
@@ -179,7 +191,7 @@ def get_event(event_id: int, db: DB, user: OptionalUser):
     event = db.get(Event, event_id)
     if event is None or not visible_to(event, user):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Event not found")
-    return attach_takes(db, attach_crew_plans(db, attach_picks(db, [event]), user)[0], user)  # CC-112
+    return with_show_run(attach_takes(db, attach_crew_plans(db, attach_picks(db, [event]), user)[0], user))  # CC-112, CC-301
 
 
 @router.get("/{event_id}/calendar.ics", response_class=Response,
@@ -203,14 +215,14 @@ def create_event(body: EventIn, db: DB, user: CurrentUser):
     """Everyone's submissions wait for review, except that admins can choose to publish
     now or at a set time (publish / publish_at)."""
     require_verified_email(user, "sending in events")
-    _no_past_run_dates(body.run_dates)
+    _no_past_shows(body.run_dates)
     event = new_event(db, body, user)
     if user.role != Role.admin:
         reject_if_caught(db, event)
     db.add(event)
     db.commit()
     db.refresh(event)
-    return event
+    return with_show_run(event)
 
 
 @router.post("/from-link", response_model=LinkDraft)
@@ -254,7 +266,7 @@ def new_event(db: DB, body: EventIn, user) -> Event:
         accept_venue(venue, category, opera)
     return Event(**body.model_dump(exclude={"venue_id", "venue", "publish", "publish_at", "run_dates", "category", "opera"}),
                  category=category, opera=opera, venue_id=venue.id, submitted_by=user.id, status=status_,
-                 publish_at=publish_at, run_dates=_run_dates_of(body.run_dates))
+                 publish_at=publish_at, shows=_shows_of(body.run_dates, _origin_for(user)))
 
 
 def category_for(body: EventIn, venue: Venue, user) -> tuple[str, bool]:
@@ -287,14 +299,16 @@ def update_event(event_id: int, body: EventPatch, db: DB, _: AdminUser):
         changes["category"] = OPERA_IS
     elif changes.get("category") not in (None, OPERA_IS):
         changes["opera"] = False
-    if "run_dates" in changes:  # CC-96: the run sets the dates; new dates can't be in the past (ones it had can stay)
-        _no_past_run_dates(body.run_dates, {r.date for r in event.run_dates})
-        event.run_dates.clear()
-        db.flush()  # the old dates go first, so a date kept in the new run doesn't clash with itself
-        event.run_dates = _run_dates_of(body.run_dates)
-        del changes["run_dates"]
-        if body.run_dates:
-            changes.update(begin_date=body.run_dates[0].date, end_date=body.run_dates[-1].date, open_run=False, weekly={}, weeks={})
+    if "show_run" in changes or "run_dates" in changes:  # CC-96, CC-301: the shows replace the whole Show Run
+        given = body.show_run if "show_run" in changes else body.run_dates
+        _no_past_shows(given, {r.date for r in event.shows})  # new days can't be in the past (ones it had can stay)
+        event.shows.clear()
+        db.flush()  # the old shows go first, so a show kept in the new run doesn't clash with itself
+        event.shows = _shows_of(given, "admin")  # only admins patch: what they save is always admin's
+        changes.pop("show_run", None)
+        changes.pop("run_dates", None)
+        if given:  # the first and last show are its opening and closing; it has no weekly pattern
+            changes.update(begin_date=given[0].date, end_date=given[-1].date, open_run=False, weekly={}, weeks={})
     for field, value in changes.items():
         setattr(event, field, value)
     if event.status in (EventStatus.approved, EventStatus.pending) and event.category in REMOVED:
@@ -302,6 +316,8 @@ def update_event(event_id: int, body: EventPatch, db: DB, _: AdminUser):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Give it Theater, Music or Visual Art")
     if event.status != EventStatus.withdrawn:
         event.withdrawn_reason = ""  # CC-133: brought back, so off the review list
+    if event.show_run_exact:  # CC-301: an exact Show Run's opening and closing are always its first and last show
+        event.begin_date, event.end_date, event.open_run = min(r.date for r in event.shows), max(r.date for r in event.shows), False
     if "weekly" in changes or "weeks" in changes:  # CC-88: weeks of the month only for days it's still on
         event.weeks = {d: sorted(set(w)) for d, w in (event.weeks or {}).items() if d in (event.weekly or {})}
     if event.begin_date and event.end_date and event.end_date < event.begin_date:
@@ -313,7 +329,7 @@ def update_event(event_id: int, body: EventPatch, db: DB, _: AdminUser):
         drop_if_unused(db, old_venue_id)
     db.commit()
     db.refresh(event)
-    return event
+    return with_show_run(event)
 
 
 # CC-265: a manual image choice appears everywhere via EventOut.image_url.
