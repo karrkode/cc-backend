@@ -70,7 +70,7 @@ def test_start_validation(client, make_event):
     assert client.post(url, json=body(ev, options=too_many, hi=20), headers=p["Ben"]).status_code == 422
     out = start(client, p["Ben"], crew, ev)
     assert client.post(url, json=body(ev), headers=p["Cy"]).status_code == 409  # a second open one
-    assert out["started_by"] == "Ben" and out["can_manage"] is True and out["members_total"] == 3 and out["status"] == "open"
+    assert out["started_by"] == "Ben" and out["can_manage"] is False and out["members_total"] == 3 and out["status"] == "open"
     assert [(o["date"], o["time"]) for o in out["options"]] == [(d(2), "19:30"), (d(3), "14:00"), (d(3), "19:30")]
     other = make_event("Macbeth")
     ready(client, crew, other, p["Ana"], p["Ben"])
@@ -138,22 +138,24 @@ def test_lock_and_cancel(client, make_event):
     opt = poll["options"][1]["id"]
     answer(client, p["Cy"], crew, poll, [(3, "14:00")])
     assert client.post(url + "/lock", json={"option_id": opt}, headers=p["Cy"]).status_code == 403
-    assert client.post(url + "/cancel", headers=p["Ana"]).status_code == 403  # the leader isn't the starter while Ben is in
-    assert client.post(url + "/lock", json={"option_id": 999999}, headers=p["Ben"]).status_code == 422
+    assert client.post(url + "/cancel", headers=p["Ben"]).status_code == 403  # the starter isn't the leader
+    assert client.post(url + "/lock", json={"option_id": 999999}, headers=p["Ana"]).status_code == 422
     assert client.post(url + "/lock", json={"option_id": opt}, headers=p["Dee"]).status_code == 404
-    r = client.post(url + "/lock", json={"option_id": opt}, headers=p["Ben"]).json()
+    r = client.post(url + "/lock", json={"option_id": opt}, headers=p["Ana"]).json()
     assert r["status"] == "locked" and r["locked"]["date"] == d(3) and r["locked"]["yours"] is False and r["locked"]["names"] == ["Cy"]
     assert answer(client, p["Cy"], crew, poll, [(2, "19:30")]).status_code == 409  # refused after lock
-    assert client.post(url + "/cancel", headers=p["Ben"]).status_code == 409
+    assert client.post(url + "/cancel", headers=p["Ana"]).status_code == 409
     again = start(client, p["Ana"], crew, ev)  # a locked poll doesn't block a new one
     assert client.post(f"/crews/{crew['id']}/polls/{again['id']}/cancel", headers=p["Ana"]).json()["status"] == "cancelled"
     assert answer(client, p["Cy"], crew, again, [(2, "19:30")]).status_code == 409
 
 
-def test_leader_manages_once_starter_has_left(client, make_event):
+def test_only_the_leader_manages_whoever_started_it(client, make_event):
     p, crew, ev = setup(client, make_event)
     poll = start(client, p["Ben"], crew, ev)
-    client.post(f"/crews/{crew['id']}/leave", headers=p["Ben"])
+    assert client.get(f"/crews/{crew['id']}/polls", headers=p["Ana"]).json()[0]["can_manage"] is True
+    assert client.get(f"/crews/{crew['id']}/polls", headers=p["Ben"]).json()[0]["can_manage"] is False
+    client.post(f"/crews/{crew['id']}/leave", headers=p["Ben"])  # the starter leaving changes nothing
     r = client.get(f"/crews/{crew['id']}/polls", headers=p["Ana"]).json()[0]
     assert r["can_manage"] is True and r["started_by"] == "A former member"
     assert client.get(f"/crews/{crew['id']}/polls", headers=p["Cy"]).json()[0]["can_manage"] is False

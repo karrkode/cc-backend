@@ -155,7 +155,7 @@ def _manage(db: DB, crew_id: int, poll_id: int, user) -> tuple[Crew, DatePoll]:
     crew = _member_crew(db, crew_id, user)
     poll = _poll(db, crew, poll_id, write=True)
     if not can_manage(poll, crew, user):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only whoever started the poll can do that")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only the crew leader can do that")
     _open(poll)
     return crew, poll
 

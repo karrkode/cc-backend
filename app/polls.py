@@ -1,5 +1,5 @@
 """CC-297: crew date polls. A member starts a poll for an event from one of their crews, picking showtimes inside a
-window; crew-mates tick the ones that work; the starter locks one in. Only the crew's members ever see a poll, and
+window; crew-mates tick the ones that work; the crew leader locks one in. Only the crew's members ever see a poll, and
 only first names (never emails).
 
 - best_options: the top three options by how many current members ticked them (a tie goes to the earliest)
@@ -32,11 +32,8 @@ def state(poll: DatePoll, today: date | None = None) -> str:
 
 
 def can_manage(poll: DatePoll, crew: Crew, user: User) -> bool:
-    """The starter; or the crew's leader once the starter has left the crew."""
-    if poll.started_by == user.id:
-        return True
-    starter_in = any(m.user_id == poll.started_by for m in crew.members)
-    return not starter_in and crew.owner_id == user.id
+    """CC-297: only the crew's leader locks a time in or cancels a poll, whoever started it."""
+    return crew.owner_id == user.id
 
 
 def best_options(options: list[DatePollOption], picks: dict[int, list[str]], members_total: int, limit: int = 3, today: date | None = None) -> list[dict]:
