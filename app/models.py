@@ -6,7 +6,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (JSON, Boolean, CheckConstraint, Date, DateTime, Enum, Float, ForeignKey, ForeignKeyConstraint, Index, Integer,
-                        Numeric, String, Text, UniqueConstraint, Uuid, false, func, true as sa_true)
+                        Numeric, String, Text, UniqueConstraint, Uuid, false, func, text, true as sa_true)
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from .clock import today_in_chicago
@@ -550,6 +550,59 @@ class CrewMember(Base):
 
     crew: Mapped[Crew] = relationship(back_populates="members")
     user: Mapped[User] = relationship(lazy="joined")
+
+
+class DatePoll(Base):
+    """CC-297: a crew picking a date to see one event together. Only the crew's members ever see it."""
+    __tablename__ = "date_polls"
+    __table_args__ = (
+        # One open poll per crew per event. Partial, so a locked or cancelled one doesn't block the next.
+        Index("uq_date_polls_one_open", "crew_id", "event_id", unique=True,
+              postgresql_where=text("status = 'open'"), sqlite_where=text("status = 'open'")),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    crew_id: Mapped[int] = mapped_column(ForeignKey("crews.id", ondelete="CASCADE"), index=True)
+    event_id: Mapped[int] = mapped_column(ForeignKey("events.id", ondelete="CASCADE"), index=True)
+    started_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    kind: Mapped[str] = mapped_column(String(10), default="shows", server_default="shows")  # CC-298 adds "hours"
+    status: Mapped[str] = mapped_column(String(10), default="open", server_default="open")  # open / locked / cancelled
+    window_from: Mapped[date] = mapped_column(Date)
+    window_to: Mapped[date] = mapped_column(Date)
+    locked_option_id: Mapped[int | None] = mapped_column(Integer)  # no FK: options cascade with the poll
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    options: Mapped[list["DatePollOption"]] = relationship(cascade="all, delete-orphan", order_by="DatePollOption.date, DatePollOption.time",
+                                                           lazy="selectin")
+    event: Mapped["Event"] = relationship(lazy="joined")
+
+
+class DatePollOption(Base):
+    __tablename__ = "date_poll_options"
+    __table_args__ = (UniqueConstraint("poll_id", "date", "time", name="uq_date_poll_options"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    poll_id: Mapped[int] = mapped_column(ForeignKey("date_polls.id", ondelete="CASCADE"), index=True)
+    date: Mapped[date] = mapped_column(Date)
+    time: Mapped[str] = mapped_column(String(5), default="", server_default="")  # HH:MM; "" is reserved for CC-298's days
+
+
+class DatePollAnswer(Base):
+    """That this member has answered, even with no showtime ticked ("none of these work")."""
+    __tablename__ = "date_poll_answers"
+
+    poll_id: Mapped[int] = mapped_column(ForeignKey("date_polls.id", ondelete="CASCADE"), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True, index=True)
+    answered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class DatePollPick(Base):
+    """An option that works for a member."""
+    __tablename__ = "date_poll_picks"
+
+    option_id: Mapped[int] = mapped_column(ForeignKey("date_poll_options.id", ondelete="CASCADE"), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True, index=True)
 
 
 class CrewRemoval(Base):
