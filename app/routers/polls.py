@@ -4,12 +4,12 @@ possible (inside the window and the event's dates, today or later, a valid time)
 from datetime import UTC, datetime, time
 
 from fastapi import APIRouter, HTTPException, status
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 
 from ..clock import today_in_chicago, utcnow
 from ..deps import DB, CurrentUser
-from ..models import Crew, CrewMember, DatePoll, DatePollAnswer, DatePollOption, DatePollPick, Event
+from ..models import Crew, CrewMember, DatePoll, DatePollAnswer, DatePollOption, DatePollPick, Event, PlanShare
 from ..polls import MAX_WINDOW_DAYS, can_manage, ended, interest, poll_out, recent_since
 from ..ratelimit import SlidingWindowLimiter
 from ..schemas import PollAnswerIn, PollIn, PollLockIn, PollOut
@@ -82,6 +82,25 @@ def poll_interest(event_id: int, db: DB, user: CurrentUser):
     return [interest(db, event_id, cid) for cid in ids]
 
 
+@router.get("/poll-ready")
+def poll_ready(db: DB, user: CurrentUser):
+    """CC-297: the events a majority of one of your crews has shared interest in that have no poll yet. A poll opens by
+    itself: the site starts it (it knows the event's showtimes) the first time a member's page sees one of these."""
+    today = today_in_chicago()
+    out = []
+    for crew_id in db.scalars(select(CrewMember.crew_id).where(CrewMember.user_id == user.id)).all():
+        total = db.scalar(select(func.count()).select_from(CrewMember).where(CrewMember.crew_id == crew_id)) or 0
+        for event_id, n in db.execute(select(PlanShare.event_id, func.count()).where(PlanShare.crew_id == crew_id).group_by(PlanShare.event_id)).all():
+            if n * 2 <= total:
+                continue
+            event = db.get(Event, event_id)
+            if event is None or not is_live(event) or (event.end_date and event.end_date < today):
+                continue
+            if db.scalar(select(DatePoll.id).where(DatePoll.crew_id == crew_id, DatePoll.event_id == event_id).limit(1)) is None:
+                out.append({"crew_id": crew_id, "event_id": event_id})
+    return out
+
+
 @router.post("/{crew_id}/polls", response_model=PollOut, status_code=status.HTTP_201_CREATED)
 def start_poll(crew_id: int, body: PollIn, db: DB, user: CurrentUser):
     crew = _member_crew(db, crew_id, user)
@@ -103,9 +122,10 @@ def start_poll(crew_id: int, body: PollIn, db: DB, user: CurrentUser):
         if (o.date, o.time) in seen:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "The same showtime is listed twice.")
         seen.add((o.date, o.time))
-    for old in db.scalars(select(DatePoll).where(DatePoll.crew_id == crew.id, DatePoll.event_id == event.id, DatePoll.status == "open")):
-        if not ended(old, today):
-            raise HTTPException(status.HTTP_409_CONFLICT, "This crew already has an open poll for this event.")
+    # CC-297: a crew gets one poll for an event. A locked or cancelled one isn't reopened by the next page that sees the majority.
+    for old in db.scalars(select(DatePoll).where(DatePoll.crew_id == crew.id, DatePoll.event_id == event.id, DatePoll.status.in_(("open", "locked", "cancelled")))):
+        if old.status != "open" or not ended(old, today):
+            raise HTTPException(status.HTTP_409_CONFLICT, "This crew already has a poll for this event.")
         old.status = "ended"  # one that's run out of dates mustn't block the next; it stays "ended", not "cancelled"
         old.closed_at = datetime.combine(max(o.date for o in old.options), time.min, tzinfo=UTC)
     if not poll_limiter.hit(str(user.id), POLLS_PER_DAY):

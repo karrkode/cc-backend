@@ -145,9 +145,13 @@ def test_lock_and_cancel(client, make_event):
     assert r["status"] == "locked" and r["locked"]["date"] == d(3) and r["locked"]["yours"] is False and r["locked"]["names"] == ["Cy"]
     assert answer(client, p["Cy"], crew, poll, [(2, "19:30")]).status_code == 409  # refused after lock
     assert client.post(url + "/cancel", headers=p["Ana"]).status_code == 409
-    again = start(client, p["Ana"], crew, ev)  # a locked poll doesn't block a new one
+    assert client.post(f"/crews/{crew['id']}/polls", json=body(ev), headers=p["Ana"]).status_code == 409  # one poll per crew and event: a locked one stays
+    other = make_event("Cancelled one")
+    ready(client, crew, other, p["Ana"], p["Ben"])
+    again = start(client, p["Ana"], crew, other)
     assert client.post(f"/crews/{crew['id']}/polls/{again['id']}/cancel", headers=p["Ana"]).json()["status"] == "cancelled"
     assert answer(client, p["Cy"], crew, again, [(2, "19:30")]).status_code == 409
+    assert client.post(f"/crews/{crew['id']}/polls", json=body(other), headers=p["Ana"]).status_code == 409  # and a cancelled one isn't reopened by the next page
 
 
 def test_only_the_leader_manages_whoever_started_it(client, make_event):
@@ -296,3 +300,14 @@ def test_poll_needs_more_than_half_of_the_crew_interested(client, make_event):
     ready(client, other, ev2, p["Dee"])
     ready(client, crew, ev2, p["Ana"], p["Ben"])
     assert client.get(f"/crews/poll-interest?event_id={ev2.id}", headers=p["Dee"]).json()[0]["shared"] == 1
+
+
+def test_poll_ready_lists_majority_events_without_a_poll(client, make_event):
+    p, crew, ev = setup(client, make_event)  # Ana and Ben shared Hamlet: 2 of 3
+    assert client.get("/crews/poll-ready", headers=p["Cy"]).json() == [{"crew_id": crew["id"], "event_id": ev.id}]
+    assert client.get("/crews/poll-ready", headers=p["Dee"]).json() == []  # in no crew
+    solo = make_event("Solo")
+    ready(client, crew, solo, p["Ana"])  # 1 of 3: not a majority
+    assert [r["event_id"] for r in client.get("/crews/poll-ready", headers=p["Ana"]).json()] == [ev.id]
+    start(client, p["Cy"], crew, ev)  # the site opens it; then it isn't listed again
+    assert client.get("/crews/poll-ready", headers=p["Ana"]).json() == []
