@@ -22,7 +22,16 @@ def setup(client, make_event):
     for n in ("Ben", "Cy"):
         token = client.post(f"/crews/{crew['id']}/invites", headers=p["Ana"]).json()["token"]
         assert client.post("/crews/join", json={"token": token}, headers=p[n]).status_code in (200, 201)
-    return p, crew, make_event("Hamlet")
+    ev = make_event("Hamlet")
+    ready(client, crew, ev, p["Ana"], p["Ben"])  # two of the three have shared interest: a majority
+    return p, crew, ev
+
+
+def ready(client, crew, ev, *heads):
+    """The given members share interest in the event with the crew (CC-297: a poll needs more than half of the crew)."""
+    for h in heads:
+        assert client.put(f"/me/plans/{ev.id}", json={"status": "interested"}, headers=h).status_code in (200, 201)
+        assert client.put(f"/me/plans/{ev.id}/crews", json={"crews": [crew["id"]]}, headers=h).status_code == 200
 
 
 def body(ev, options=((2, "19:30"), (3, "19:30"), (3, "14:00")), lo=1, hi=10):
@@ -64,12 +73,14 @@ def test_start_validation(client, make_event):
     assert out["started_by"] == "Ben" and out["can_manage"] is True and out["members_total"] == 3 and out["status"] == "open"
     assert [(o["date"], o["time"]) for o in out["options"]] == [(d(2), "19:30"), (d(3), "14:00"), (d(3), "19:30")]
     other = make_event("Macbeth")
+    ready(client, crew, other, p["Ana"], p["Ben"])
     assert client.post(url, json=body(other), headers=p["Cy"]).status_code == 201  # another event is fine
 
 
 def test_event_must_still_be_running_for_each_option(client, make_event):
     p, crew, _ = setup(client, make_event)
     short = make_event("Short run", begin=T, end=T + timedelta(days=3))
+    ready(client, crew, short, p["Ana"], p["Ben"])
     r = client.post(f"/crews/{crew['id']}/polls", json=body(short, options=[(5, "19:30")]), headers=p["Ana"])
     assert r.status_code == 422
 
@@ -160,6 +171,7 @@ def test_outsiders_and_other_crews_get_404(client, make_event):
     assert client.post(url + "/lock", json={"option_id": poll["options"][0]["id"]}, headers=p["Dee"]).status_code == 404
     assert client.get(f"/crews/{crew['id']}/polls", headers=p["Dee"]).status_code == 404
     # a poll's option ids can't be used from another poll of the member's own crew
+    ready(client, other, ev, p["Dee"])
     mine = start(client, p["Dee"], other, ev)
     r = client.put(f"/crews/{other['id']}/polls/{mine['id']}/answer", json={"option_ids": [poll["options"][0]["id"]]}, headers=p["Dee"])
     assert r.status_code == 422
@@ -241,7 +253,9 @@ def test_cascades(client, make_event, db):
 def setup2(client, make_event):
     p = {n: auth(register(client, email=f"{n.lower()}2@example.com", name=n)) for n in ("Ana",)}
     crew = client.post("/crews", json={"name": "Second"}, headers=p["Ana"]).json()
-    return p, crew, make_event("Lear")
+    ev = make_event("Lear")
+    ready(client, crew, ev, p["Ana"])
+    return p, crew, ev
 
 
 def test_no_email_anywhere_and_rate_limit(client, make_event):
@@ -255,5 +269,28 @@ def test_no_email_anywhere_and_rate_limit(client, make_event):
     polls.poll_limiter.reset()
     for i in range(20):
         e = make_event(f"Show {i}")
+        ready(client, crew, e, p["Ana"], p["Ben"])
         assert client.post(f"/crews/{crew['id']}/polls", json=body(e), headers=p["Ben"]).status_code == 201
-    assert client.post(f"/crews/{crew['id']}/polls", json=body(make_event("One more")), headers=p["Ben"]).status_code == 429
+    last = make_event("One more")
+    ready(client, crew, last, p["Ana"], p["Ben"])
+    assert client.post(f"/crews/{crew['id']}/polls", json=body(last), headers=p["Ben"]).status_code == 429
+
+
+def test_poll_needs_more_than_half_of_the_crew_interested(client, make_event):
+    p, crew, _ = setup(client, make_event)
+    ev = make_event("Macbeth")
+    url = f"/crews/{crew['id']}/polls"
+    assert client.get(f"/crews/poll-interest?event_id={ev.id}", headers=p["Ana"]).json() == [{"crew_id": crew["id"], "shared": 0, "members_total": 3, "ready": False}]
+    ready(client, crew, ev, p["Ana"])  # 1 of 3
+    r = client.post(url, json=body(ev), headers=p["Ana"])
+    assert r.status_code == 409 and "more than half" in r.text
+    ready(client, crew, ev, p["Ben"])  # 2 of 3
+    assert client.get(f"/crews/poll-interest?event_id={ev.id}", headers=p["Cy"]).json()[0]["ready"] is True
+    assert client.post(url, json=body(ev), headers=p["Ana"]).status_code == 201
+    # interest shared with another crew doesn't count here, and an outsider sees no crews
+    assert client.get(f"/crews/poll-interest?event_id={ev.id}", headers=p["Dee"]).json() == []
+    other = client.post("/crews", json={"name": "Other"}, headers=p["Dee"]).json()
+    ev2 = make_event("Othello")
+    ready(client, other, ev2, p["Dee"])
+    ready(client, crew, ev2, p["Ana"], p["Ben"])
+    assert client.get(f"/crews/poll-interest?event_id={ev2.id}", headers=p["Dee"]).json()[0]["shared"] == 1

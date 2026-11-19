@@ -10,7 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from ..clock import today_in_chicago, utcnow
 from ..deps import DB, CurrentUser
 from ..models import Crew, CrewMember, DatePoll, DatePollAnswer, DatePollOption, DatePollPick, Event
-from ..polls import MAX_WINDOW_DAYS, can_manage, ended, poll_out, recent_since
+from ..polls import MAX_WINDOW_DAYS, can_manage, ended, interest, poll_out, recent_since
 from ..ratelimit import SlidingWindowLimiter
 from ..schemas import PollAnswerIn, PollIn, PollLockIn, PollOut
 from ..visibility import is_live
@@ -75,6 +75,13 @@ def crew_polls(crew_id: int, db: DB, user: CurrentUser):
     return rows
 
 
+@router.get("/poll-interest")
+def poll_interest(event_id: int, db: DB, user: CurrentUser):
+    """For each of your crews: how many members have shared interest in this event, and whether that's enough for a poll."""
+    ids = db.scalars(select(CrewMember.crew_id).where(CrewMember.user_id == user.id)).all()
+    return [interest(db, event_id, cid) for cid in ids]
+
+
 @router.post("/{crew_id}/polls", response_model=PollOut, status_code=status.HTTP_201_CREATED)
 def start_poll(crew_id: int, body: PollIn, db: DB, user: CurrentUser):
     crew = _member_crew(db, crew_id, user)
@@ -83,6 +90,8 @@ def start_poll(crew_id: int, body: PollIn, db: DB, user: CurrentUser):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Event not found")
     if event.category == "Visual Art" and not event.schedule["dates"]:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Date polls are for performances, not exhibitions.")
+    if not interest(db, event.id, crew.id)["ready"]:
+        raise HTTPException(status.HTTP_409_CONFLICT, "A poll opens once more than half of the crew has shared interest in this event.")
     today = today_in_chicago()
     lo, hi = body.window_from, body.window_to
     if hi < lo or (hi - lo).days >= MAX_WINDOW_DAYS or hi < today:

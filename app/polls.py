@@ -8,10 +8,10 @@ only first names (never emails).
 """
 from datetime import date, timedelta
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 
 from .clock import today_in_chicago
-from .models import Crew, DatePoll, DatePollAnswer, DatePollOption, DatePollPick, User
+from .models import Crew, CrewMember, DatePoll, DatePollAnswer, DatePollOption, DatePollPick, PlanShare, User
 
 MAX_WINDOW_DAYS = 60
 RECENT_DAYS = 14  # how long a closed poll stays listed
@@ -81,3 +81,11 @@ def drop_member_answers(db, user_id, crew_id: int) -> None:
 
 def recent_since(today: date) -> date:
     return today - timedelta(days=RECENT_DAYS)
+
+
+def interest(db, event_id: int, crew_id: int) -> dict:
+    """CC-297: how many of a crew's members have shared interest (or a going plan) in an event with it. A poll can be
+    opened once more than half have: members choose which crews see their interest, so each crew counts its own."""
+    shared = db.scalar(select(func.count()).select_from(PlanShare).where(PlanShare.event_id == event_id, PlanShare.crew_id == crew_id)) or 0
+    total = db.scalar(select(func.count()).select_from(CrewMember).where(CrewMember.crew_id == crew_id)) or 0
+    return {"crew_id": crew_id, "shared": shared, "members_total": total, "ready": total > 0 and shared * 2 > total}
