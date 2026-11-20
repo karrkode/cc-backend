@@ -447,13 +447,18 @@ def _settled(item: DiscoveredItem, event: Event | None) -> str:
 
 
 def _apply_shows(db: DB, event: Event, found: dict) -> None:
-    """CC-302: the shows from an accepted update. Shows already past stay as they are; the rest become found shows."""
+    """CC-302: the shows from an accepted update. Shows already past stay as they are; the ones still to come become the found
+    shows (dates that have passed since the proposal was made are left out)."""
     today = chicago_day(utcnow())
-    keep = [r for r in event.shows if r.date < today]
-    event.shows.clear()
-    db.flush()
-    new = [EventRunDate(date=date.fromisoformat(d), time=t, origin=FOUND) for d, times in found.items() for t in times]
-    event.shows = [*keep, *new]
+    for r in [r for r in event.shows if r.date >= today]:
+        event.shows.remove(r)
+    db.flush()  # the old ones go first, so a show kept doesn't clash with itself
+    kept = {(r.date, r.time) for r in event.shows}
+    for d, times in found.items():
+        day = date.fromisoformat(d)
+        for t in times:
+            if day >= today and (day, t) not in kept:
+                event.shows.append(EventRunDate(date=day, time=t, origin=FOUND))
 
 
 @router.post("/items/{item_id}/accept", response_model=DiscoveredItemOut)

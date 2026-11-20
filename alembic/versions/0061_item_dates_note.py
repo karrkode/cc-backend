@@ -15,7 +15,7 @@ depends_on = None
 
 def upgrade() -> None:
     # One new column with a default, so every existing row gets '' and the live site (which never reads it) is unaffected.
-    op.add_column('discovered_items', sa.Column('dates_note', sa.String(400), nullable=False, server_default=''))
+    op.add_column('discovered_items', sa.Column('dates_note', sa.String(1000), nullable=False, server_default=''))
 
 
 def downgrade() -> None:

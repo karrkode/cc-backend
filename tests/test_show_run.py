@@ -234,19 +234,16 @@ def found_event(*pairs, **kw):
                       performances=[Performance(date=d.isoformat(), time=t) for d, t in pairs], **kw)
 
 
-def test_sync_fills_when_empty_leaves_found_to_review_and_never_touches_a_saved_run(db, make_event):
+def test_found_dates_wait_for_review_on_a_live_event_and_never_touch_a_saved_run(db, make_event):
     s = make_source(db)
     ev = make_event("Hamlet", venue_name="Goodman Theatre", neighborhood="Loop", begin=day(1), end=day(90))
     record(db, s, found_event((day(5), "19:30"), (day(5), None), (day(6), None)), "")
     db.commit(); db.expire_all()
     ev = db.get(Event, ev.id)
-    assert [(r.date, r.time, r.origin) for r in ev.shows] == [(day(5), "19:30", "found"), (day(6), "", "found")]  # untimed yields to timed
-    assert (ev.begin_date, ev.end_date) == (day(1), day(90))  # begin and end are never touched
-    record(db, s, found_event((day(7), "20:00")), "")
-    db.commit(); db.expire_all()
-    # CC-302: later dates are an update for an admin to accept (changes_against), not a replacement by themselves
-    assert [(r.date, r.time) for r in db.get(Event, ev.id).shows] == [(day(5), "19:30"), (day(6), "")]
-    ev = db.get(Event, ev.id)
+    assert ev.shows == []  # CC-302: a live event's dates change only when an admin accepts (sync_found_shows is for approval)
+    item = db.scalar(select(DiscoveredItem).where(DiscoveredItem.title == "Hamlet"))
+    assert item.status == "update" and item.changes["performances"][1] == {day(5).isoformat(): ["19:30"], day(6).isoformat(): [""]}
+    assert (ev.begin_date, ev.end_date) == (day(1), day(90))
     ev.shows = [EventRunDate(date=day(9), time="18:00", origin="admin")]
     db.commit()
     record(db, s, found_event((day(11), "20:00")), "")

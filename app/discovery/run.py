@@ -191,7 +191,9 @@ def read_event_page(db, client, item: DiscoveredItem, today: date, mark: str) ->
         for e in same[:1]:
             e.url = item.url  # the same item, whatever links the page has
             _store(db, source, [e], out)
-        if item.category in PERFORMING_CATEGORIES and not item.performances and item.kind != "permanent":
+        live = db.get(Event, item.event_id) if item.event_id else None
+        if (item.category in PERFORMING_CATEGORIES and not item.performances and item.kind != "permanent"
+                and not (live is not None and live.show_run_exact)):  # a person's Show Run is theirs: nothing would be proposed
             _read_tickets(db, client, item, source, page, today, out)  # CC-302: still no exact dates
     except web.Blocked as e:
         out.status, out.notes = "blocked", [str(e)]
@@ -221,26 +223,33 @@ def _look_for_dates(db, client, item: DiscoveredItem, source: DiscoverySource, p
     """CC-302: the exact dates of a found or live performance, from the tickets or calendar page its own page links to
     (the theater's, or a box office's). Every fetch is web.fetch's: public hosts, robots.txt and AI opt-outs, spacing. A page
     that refuses is noted on the item and never asked again. Dates for a live event go to review as an update."""
-    refused = item.dates_note[len("Refused: "):].split(": ", 1)[0] if item.dates_note.startswith("Refused: ") else ""
-    links = [(u, t) for u, t in links_of(page.text, page.url) if u != refused]
+    refused = _refused_links(item.dates_note)
+    links = [(u, t) for u, t in links_of(page.text, page.url) if u not in refused]
+    keep = item.dates_note if refused else ""  # what was refused stays on the item, whatever the later looks find
     if not links:
-        item.dates_note = item.dates_note if refused else "No tickets or calendar link on its page"
+        item.dates_note = keep or "No tickets or calendar link on its page"
         return
-    pick, tin, tout = read_link_choice(client, page.url, item.title, links)
+    try:
+        pick, tin, tout = read_link_choice(client, page.url, item.title, links)
+    except ReadFailed as e:  # the event page's own read still stands
+        out.pages_read += 1; out.tokens_in += e.tokens_in; out.tokens_out += e.tokens_out
+        item.dates_note = keep or f"Its page's links couldn't be read: {e}"[:MAX_REFUSED]
+        return
     out.pages_read += 1; out.tokens_in += tin; out.tokens_out += tout
     if pick is None:
-        item.dates_note = item.dates_note if refused else "No link on its page looked like one that lists the dates"
+        item.dates_note = keep or "No link on its page looked like one that lists the dates"
         return
     link = links[pick][0]
     try:
         tpage = web.fetch(link)
     except web.Blocked as e:
-        item.dates_note = f"Refused: {link}: {e}"[:MAX_REFUSED]
-        out.notes.append(f"dates page not read: {item.dates_note}")
+        line = f"Refused: {link}: {e}"[:MAX_REFUSED]
+        item.dates_note = "\n".join([*keep.splitlines()[-2:], line])  # the last three refusals
+        out.notes.append(f"dates page not read: {line}")
         return
     except web.FetchError as e:  # costs nothing, and the next scheduled look tries again
-        item.dates_note = f"Couldn't read {link}: {e}"[:MAX_REFUSED]
-        out.notes.append(item.dates_note)
+        item.dates_note = keep or f"Couldn't read {link}: {e}"[:MAX_REFUSED]
+        out.notes.append(f"Couldn't read {link}: {e}"[:MAX_REFUSED])
         return
     data = [e for e in events_in(tpage.text, tpage.url, source.kind.value) if norm_title(e.title) == norm_title(item.title)]
     found = data[0].performances if data else []
@@ -250,25 +259,30 @@ def _look_for_dates(db, client, item: DiscoveredItem, source: DiscoverySource, p
             reading, tin, tout = read_page(client, source.name, source.kind.value, tpage.url, text, today, TICKETS_PAGE_NOTE)
         except ReadFailed as e:
             out.pages_read += 1; out.tokens_in += e.tokens_in; out.tokens_out += e.tokens_out
-            item.dates_note = f"Its dates page {link} couldn't be read: {e}"[:MAX_REFUSED]
-            out.notes.append(item.dates_note)
+            item.dates_note = keep or f"Its dates page {link} couldn't be read: {e}"[:MAX_REFUSED]
             return
         out.pages_read += 1; out.tokens_in += tin; out.tokens_out += tout
-        match = [e for e in reading.events if norm_title(e.title) == norm_title(item.title)] or \
-            (reading.events if len(reading.events) == 1 else [])
+        # a title that matches: a link to another show's page must not give this show its dates
+        match = [e for e in reading.events if norm_title(e.title) == norm_title(item.title)]
         found = match[0].performances if match else []
     shows = fields_of(FoundEvent(title=item.title, kind="production", performances=found))["performances"]
     if not shows:
-        item.dates_note = f"Read {link}: it lists no dates for this show"
+        item.dates_note = "\n".join([f"Read {link}: it lists no dates for this show", *keep.splitlines()])
         return
-    item.dates_note = f"Exact dates read from {link}"
+    item.dates_note = "\n".join([f"Exact dates read from {link}", *keep.splitlines()])
     item.performances = shows
     listed = db.get(Event, item.event_id) if item.event_id else None
     if listed is not None and item.status in ("listed", "update", "approved"):
         diff = changes_against(listed, {"cost_text": "", "min_price": None, "begin_date": None, "end_date": None,
                                         "weekly": {}, "weeks": {}, "performances": shows})
-        if diff:  # a live event keeps its dates until an admin accepts
-            item.changes, item.status = {**(item.changes or {}), **diff}, "update"
+        if diff and diff.get("performances") != (item.changes or {}).get("performances"):  # new, not already proposed or dismissed
+            item.changes = {**(item.changes or {}), **diff} if item.status == "update" else diff
+            item.status = "update"  # a live event keeps its dates until an admin accepts
+
+
+def _refused_links(note: str) -> set[str]:
+    """The addresses an item's note says refused (one 'Refused: <address>: <why>' per line)."""
+    return {line[len("Refused: "):].split(": ", 1)[0] for line in note.splitlines() if line.startswith("Refused: ")}
 
 
 def check_missing(db, client, today: date) -> list[tuple[DiscoverySource, Outcome]]:

@@ -221,3 +221,90 @@ def test_the_tickets_page_is_read_with_the_same_instructions_note_that_names_no_
     read_event_page(db, claude, item, TODAY, "x")
     system = claude.calls[2]["system"]
     assert "tickets or calendar page" in system and "Hamlet" not in system and BOX not in system
+
+
+# ---- CC-302 review: what must not change a live event, or break ----------------------------------
+
+def a_live_hamlet_without_shows(db, make_event):
+    s, item = a_found_hamlet(db)
+    ev = make_event("Hamlet", begin=TODAY + timedelta(days=60), end=TODAY + timedelta(days=100))
+    ev.found_by_id, item.event_id, item.status = s.id, ev.id, "approved"
+    db.commit()
+    return s, item, ev
+
+
+def test_a_live_event_with_no_shows_gets_tickets_dates_only_through_accept(client, admin_token, db, pages, make_event):
+    served, _ = pages
+    served[HAMLET], served[BOX] = {"html": EVENT_PAGE}, {"html": "<p>dates</p>"}
+    s, item, ev = a_live_hamlet_without_shows(db, make_event)
+    read_event_page(db, SmartClaude(1, [FoundEvent(title="Hamlet", kind="production", category="Theater")], [hamlet_dates(D1)]), item, TODAY, "x")
+    db.commit()
+    record(db, s, FoundEvent(title="Hamlet", url=HAMLET, kind="production", category="Theater", cost_text="$40"), ""); db.commit()  # a later list read
+    db.refresh(ev)
+    assert not ev.shows and item.status == "update" and "performances" in item.changes  # still waiting, and kept with the price
+    h = auth(admin_token)
+    client.post(f"/admin/discovery/items/{item.id}/dismiss", headers=h)
+    record(db, s, FoundEvent(title="Hamlet", url=HAMLET, kind="production", category="Theater"), ""); db.commit()
+    db.expire_all()
+    assert not db.get(type(ev), ev.id).shows  # dismissed dates don't go live on the next read
+
+
+def test_accepting_with_a_past_show_and_dates_that_have_since_passed(client, admin_token, db, pages, make_event):
+    s, item, ev = a_live_hamlet(db, make_event)
+    ev.shows.append(EventRunDate(date=TODAY - timedelta(days=3), time="19:30", origin=FOUND))
+    gone = (TODAY - timedelta(days=1)).isoformat()
+    item.status, item.changes = "update", {"performances": [{}, {gone: ["19:30"], D1: ["19:30"]}]}
+    db.commit()
+    r = client.post(f"/admin/discovery/items/{item.id}/accept", headers=auth(admin_token))
+    assert r.status_code == 200
+    db.expire_all()
+    assert sorted(r.date.isoformat() for r in ev.shows) == [(TODAY - timedelta(days=3)).isoformat(), D1]
+
+
+def test_the_recap_copes_with_a_dates_update_for_an_event_with_no_shows(db, make_event):
+    from app.discovery.recap import _change
+    assert _change("performances", {}) == "none" and "1 dates" in _change("performances", {D1: ["19:30"]})
+
+
+def test_the_look_is_skipped_when_a_person_owns_the_show_run(db, pages, make_event):
+    served, calls = pages
+    served[HAMLET], served[BOX] = {"html": EVENT_PAGE}, {"html": "<p>dates</p>"}
+    _, item, ev = a_live_hamlet(db, make_event)
+    ev.shows.clear(); db.flush()
+    ev.shows = [EventRunDate(date=TODAY + timedelta(days=61), time="19:30", origin="admin")]
+    db.commit()
+    claude = SmartClaude(1, [FoundEvent(title="Hamlet", kind="production", category="Theater")])
+    read_event_page(db, claude, item, TODAY, "x")
+    assert BOX not in [u for u, _ in calls] and len(claude.calls) == 1
+
+
+def test_a_page_about_another_show_gives_no_dates(db, pages):
+    served, _ = pages
+    served[HAMLET], served[BOX] = {"html": EVENT_PAGE}, {"html": "<p>dates</p>"}
+    _, item = a_found_hamlet(db)
+    other = FoundEvent(title="Macbeth", kind="production", category="Theater", performances=[Performance(date=D1)])
+    read_event_page(db, SmartClaude(1, [FoundEvent(title="Hamlet", kind="production", category="Theater")], [other]), item, TODAY, "x")
+    assert not item.performances
+
+
+def test_every_refusal_is_remembered_and_a_failed_link_question_keeps_the_page_read(db, pages):
+    served, calls = pages
+    box2 = "https://more-tickets.example/hamlet"
+    served[HAMLET] = {"html": EVENT_PAGE + f'<a href="{box2}">Tickets</a>'}
+    served[BOX] = served[box2] = web.Blocked("refused")
+    _, item = a_found_hamlet(db)
+    bare = [FoundEvent(title="Hamlet", kind="production", category="Theater")]
+    read_event_page(db, SmartClaude(1, bare), item, TODAY, "x")
+    read_event_page(db, SmartClaude(1, bare), item, TODAY, "x")
+    assert item.dates_note.count("Refused:") == 2 and [u for u, _ in calls].count(BOX) == 1 and [u for u, _ in calls].count(box2) == 1
+
+    class BadChoice(SmartClaude):
+        def create(self, **kw):
+            if "choice" in kw["output_config"]["format"]["schema"]["properties"]:
+                return SimpleNamespace(stop_reason="end_turn", usage=SimpleNamespace(input_tokens=10, output_tokens=5),
+                                       content=[SimpleNamespace(type="text", text="not json")])
+            return super().create(**kw)
+    served[HAMLET] = {"html": EVENT_PAGE.replace("Buy Tickets", "Buy Tickets 2") + '<a href="/x-tickets">Tickets</a>'}
+    _, item2 = a_found_hamlet(db) if False else (None, item)
+    _, out = read_event_page(db, BadChoice(1, bare), item2, TODAY, "x")
+    assert out.status == "ok" and out.tokens_in >= 10

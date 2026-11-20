@@ -53,6 +53,8 @@ def _change(field_name: str, v) -> str:
         return _md(datetime.fromisoformat(v))
     if field_name == "min_price":
         return "free" if v == 0 else f"${v:g}"
+    if field_name == "performances" and not v:
+        return "none"
     if field_name == "performances":  # CC-302: {"2026-12-05": ["19:30"]}: how many dates, and the first and last
         days = sorted(v)
         return f"{len(days)} dates, {_md(datetime.fromisoformat(days[0]))} to {_md(datetime.fromisoformat(days[-1]))}"

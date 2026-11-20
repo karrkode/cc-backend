@@ -230,7 +230,8 @@ def _show_map(shows, today: date) -> dict:
         day = _date(p.get("date"))
         if day and day >= today:
             out.setdefault(day.isoformat(), []).append(_hhmm(p.get("time")) or "")
-    return {d: sorted(set(ts)) for d, ts in sorted(out.items())}
+    # an untimed show yields to a timed one that day, as in sync_found_shows
+    return {d: sorted({t for t in ts if t} or {""}) for d, ts in sorted(out.items())}
 
 
 def changes_against(event: Event, f: dict) -> dict:
@@ -256,6 +257,11 @@ def changes_against(event: Event, f: dict) -> dict:
         for k in ("begin_date", "end_date", "weekly", "weeks"):
             out.pop(k, None)
     return out
+
+
+def _with_found_dates(item: DiscoveredItem, f: dict) -> dict:
+    """CC-302: a reading that gives no dates (a list page) still proposes the ones a tickets page gave the item."""
+    return {**f, "performances": f.get("performances") or item.performances}
 
 
 def _same_title(db, source: DiscoverySource, found: FoundEvent, key: str):
@@ -333,11 +339,7 @@ def record(db, source: DiscoverySource, found: FoundEvent, skip: str) -> str:
     """Store one found event. Returns what it was: new | update | skipped | seen."""
     if not on_source_site(found.url, source):
         found.url = None
-    what = _record(db, source, found, skip)
-    item = db.scalar(select(DiscoveredItem).where(DiscoveredItem.source_id == source.id, DiscoveredItem.key == key_for(found)))
-    if item is not None:
-        sync_found_shows(db, item)
-    return what
+    return _record(db, source, found, skip)  # CC-302: found shows are filled once, at approval (sync_found_shows), never here
 
 
 def _record(db, source: DiscoverySource, found: FoundEvent, skip: str) -> str:
@@ -381,11 +383,10 @@ def _record(db, source: DiscoverySource, found: FoundEvent, skip: str) -> str:
     if item.status in DECIDED or item.status in ("skipped", "hidden"):
         if item.status == "approved" and item.event_id:  # live now: offer the source's changes as an update
             listed = db.get(Event, item.event_id)
-            diff = changes_against(listed, f) if listed else {}
+            diff = changes_against(listed, _with_found_dates(item, f)) if listed else {}
             if diff and diff != item.changes:
                 item.changes, item.status = diff, "update"
-                for k, v in f.items():
-                    setattr(item, k, v)
+                _refresh(item, f)  # CC-302: keeps the dates a tickets page gave when this reading has none
                 return "update"
         return "seen"
     _refresh(item, f)
@@ -394,7 +395,7 @@ def _record(db, source: DiscoverySource, found: FoundEvent, skip: str) -> str:
         return "skipped"
     if item.status in ("listed", "update") and item.event_id:
         listed = db.get(Event, item.event_id)
-        diff = changes_against(listed, f) if listed else {}
+        diff = changes_against(listed, _with_found_dates(item, f)) if listed else {}
         if diff and diff != item.changes:
             item.changes, item.status = diff, "update"
             return "update"

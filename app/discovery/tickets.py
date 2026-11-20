@@ -15,7 +15,8 @@ from html.parser import HTMLParser
 from urllib.parse import urljoin, urlsplit
 
 MAX_LINKS = 30  # shown to the model, at most
-MAX_REFUSED = 400  # the item's note
+MAX_REFUSED = 300  # one refusal line in the item's note
+MAX_LINK = 200  # a longer address is skipped, so a refusal line always holds it whole
 TICKET_WORDS = ("ticket", "calendar", "buy", "book", "schedule", "dates", "showtimes", "performances", "box office",
                 "box-office", "on sale", "seats", "events", "whats-on", "what's on")
 SKIP_SUFFIX = (".pdf", ".ics", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".zip", ".mp3", ".mp4")
@@ -59,7 +60,7 @@ def links_of(html: str, base: str) -> list[tuple[str, str]]:
             continue
         if parts.scheme.lower() not in ("http", "https") or not parts.hostname or url.rstrip("/") == here or url in seen:
             continue
-        if parts.path.lower().endswith(SKIP_SUFFIX):
+        if len(url) > MAX_LINK or parts.path.lower().endswith(SKIP_SUFFIX):
             continue
         hint = f"{text} {parts.path}".lower()
         if not any(w in hint for w in TICKET_WORDS):
