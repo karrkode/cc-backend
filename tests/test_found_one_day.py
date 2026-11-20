@@ -83,3 +83,57 @@ def test_found_items_on_for_under_a_week_list_their_dates_for_the_form(client, a
     by = {i["title"]: i for i in client.get("/admin/discovery/items", headers=auth(admin_token)).json()["items"]}
     assert by["Weekend"]["short_dates"] == [{"date": iso(0), "time": "19:30"}, {"date": iso(2), "time": "14:00"}]
     assert by["Long Run"]["short_dates"] == []  # a week or more: the form starts as a date range, as before
+
+
+# CC-308: the sourcing page's Show Run calendar
+def test_a_found_item_lists_every_date_found_for_the_calendar(client, admin_token, db):
+    s = make_source(db)
+    first = today_in_chicago() + timedelta(days=10)
+    iso = lambda n: (first + timedelta(days=n)).isoformat()
+    shows = [Performance(date=iso(n), time="19:30") for n in range(0, 40, 7)] + [Performance(date=iso(7))]
+    record(db, s, found("Long Run", "https://goodman.example/long", begin_date=iso(0), end_date=iso(35), performances=shows), ""); db.commit()
+    item = client.get("/admin/discovery/items", headers=auth(admin_token)).json()["items"][0]
+    assert item["short_dates"] == []  # longer than a week
+    assert [p["date"] for p in item["performances"]] == [iso(n) for n in range(0, 40, 7)]  # the untimed one yields to the timed one
+    assert item["performances"][0] == {"date": iso(0), "time": "19:30"}
+
+
+def test_approving_with_the_calendar_saves_exactly_its_shows(client, admin_token, db):
+    s = make_source(db)
+    first = today_in_chicago() + timedelta(days=10)
+    iso = lambda n: (first + timedelta(days=n)).isoformat()
+    record(db, s, found("Long Run", "https://goodman.example/long", begin_date=iso(0), end_date=iso(35),
+                        performances=[Performance(date=iso(0), time="19:30"), Performance(date=iso(7), time="19:30")]), ""); db.commit()
+    item = item_named(db, "Long Run")
+    run = [{"date": iso(0), "time": "19:30"}, {"date": iso(14), "time": ""}, {"date": iso(21), "time": "14:00"}]  # one found, two added
+    r = approve(client, admin_token, item, s.venue_id, iso(0), category="Theater", show_run=run)
+    assert r.status_code == 200
+    event = db.get(Event, r.json()["event"]["id"])
+    assert [(d.date.isoformat(), d.time, d.origin) for d in sorted(event.shows, key=lambda d: d.date)] == \
+        [(iso(0), "19:30", "admin"), (iso(14), "", "admin"), (iso(21), "14:00", "admin")]  # the found day-7 show was taken out
+    assert event.show_run_exact  # the calendar is the dates, even when every show in it was found
+    assert (event.begin_date.isoformat(), event.end_date.isoformat(), event.open_run) == (iso(0), iso(21), False)
+
+
+def test_approving_with_an_empty_calendar_or_a_past_day_is_refused(client, admin_token, db):
+    s = make_source(db)
+    day = (today_in_chicago() + timedelta(days=10)).isoformat()
+    record(db, s, found("Show", "https://goodman.example/s", begin_date=day, end_date=day), ""); db.commit()
+    item = item_named(db, "Show")
+    r = approve(client, admin_token, item, s.venue_id, day, category="Theater", show_run=[])
+    assert r.status_code == 422 and r.json()["detail"] == "Add at least one show."
+    past = (today_in_chicago() - timedelta(days=3)).isoformat()
+    r = approve(client, admin_token, item, s.venue_id, day, category="Theater", show_run=[{"date": past, "time": ""}])
+    assert r.status_code == 422 and "past" in r.json()["detail"]
+    db.refresh(item); assert item.status == "new" and item.event_id is None  # nothing was added
+
+
+def test_a_calendar_of_only_found_shows_is_still_an_exact_run(client, admin_token, db):
+    s = make_source(db)
+    first = today_in_chicago() + timedelta(days=10)
+    iso = lambda n: (first + timedelta(days=n)).isoformat()
+    record(db, s, found("Two Nights", "https://goodman.example/two", begin_date=iso(0), end_date=iso(14),
+                        performances=[Performance(date=iso(n), time="19:30") for n in (0, 7, 14)]), ""); db.commit()
+    item = item_named(db, "Two Nights")
+    r = approve(client, admin_token, item, s.venue_id, iso(0), category="Theater", show_run=[{"date": iso(0), "time": "19:30"}, {"date": iso(14), "time": "19:30"}])
+    assert r.status_code == 200 and db.get(Event, r.json()["event"]["id"]).show_run_exact
