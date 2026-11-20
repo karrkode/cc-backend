@@ -43,9 +43,9 @@ class _Anchors(HTMLParser):
             self.href = None
 
 
-def links_of(html: str, base: str) -> list[tuple[str, str]]:
+def links_of(html: str, base: str, any_link: bool = False, limit: int = MAX_LINKS) -> list[tuple[str, str]]:
     """(address, text) of the links on a page that might list a show's dates: web addresses other than the page itself, once
-    each, in page order, at most MAX_LINKS."""
+    each, in page order, at most `limit`. CC-304: any_link keeps links whatever their words, for the stronger model to choose from."""
     parser = _Anchors()
     parser.feed(html)
     parser.close()
@@ -63,10 +63,10 @@ def links_of(html: str, base: str) -> list[tuple[str, str]]:
         if len(url) > MAX_LINK or parts.path.lower().endswith(SKIP_SUFFIX):
             continue
         hint = f"{text} {parts.path}".lower()
-        if not any(w in hint for w in TICKET_WORDS):
+        if not any_link and not any(w in hint for w in TICKET_WORDS):
             continue
         seen.add(url)
         out.append((url, text[:80]))
-        if len(out) >= MAX_LINKS:
+        if len(out) >= limit:
             break
     return out

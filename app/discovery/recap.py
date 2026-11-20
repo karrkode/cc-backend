@@ -180,11 +180,12 @@ def gather(db, now: datetime) -> Week:
         nxt = "By hand" if src.manual else _md(src.next_check_on) if src.next_check_on else "Within the hour"
         w.sources.append((src.name, "By hand" if src.manual else how, nxt))
 
-    checks, pages, tin, tout = db.execute(select(func.count(), func.coalesce(func.sum(DiscoveryCheck.pages_read), 0),
-                                                 func.coalesce(func.sum(DiscoveryCheck.input_tokens), 0),
-                                                 func.coalesce(func.sum(DiscoveryCheck.output_tokens), 0))
-                                          .where(DiscoveryCheck.checked_at >= since)).one()
-    w.checks, w.pages, w.week_cost = checks, int(pages), cost_usd(int(tin), int(tout))
+    checks, pages, tin, tout, strong = db.execute(select(func.count(), func.coalesce(func.sum(DiscoveryCheck.pages_read), 0),
+                                                         func.coalesce(func.sum(DiscoveryCheck.input_tokens), 0),
+                                                         func.coalesce(func.sum(DiscoveryCheck.output_tokens), 0),
+                                                         func.coalesce(func.sum(DiscoveryCheck.strong_usd), 0))
+                                                  .where(DiscoveryCheck.checked_at >= since)).one()
+    w.checks, w.pages, w.week_cost = checks, int(pages), round(cost_usd(int(tin), int(tout)) + float(strong), 4)  # CC-304
     w.state, w.spent, w.budget = budget_state(db, now)
     for i in db.scalars(select(IssueReport).where(IssueReport.created_at >= since).order_by(IssueReport.created_at)):
         # CC-185: on one line, so a member's text can't add lines of its own to the recap

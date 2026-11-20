@@ -25,18 +25,18 @@ import json
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 
 from ..clock import chicago_day, utcnow
 from ..models import DiscoveredItem, DiscoveryCheck, DiscoverySource, Event
 from . import fetch as web
-from .budget import alert_if_short, best_first, budget_state
+from .budget import alert_if_short, best_first, budget_state, strong_room
 from .hours import apply_open_hours, apply_show_times, link_venue
 from .jsonld import complete, events_in
 from .needs import look_again, needs
 from .pictures import add_pictures
 from .pagetext import page_text, text_hash
-from .readers import OWN_PAGE_NOTE, TICKETS_PAGE_NOTE, FoundEvent, ReadFailed, cost_usd, read_aic, read_link_choice, read_page
+from .readers import OWN_PAGE_NOTE, TICKETS_PAGE_NOTE, FoundEvent, ReadFailed, cost_usd, read_aic, read_link_choice, read_page, read_strong_step, strong_cost_usd
 from .rules import PERFORMING_CATEGORIES, apply_rules, norm_title
 from .store import (changes_against, drop_passed_hidden, fields_of, release_delayed, note_addresses, on_source_site, record,
                     venue_for)
@@ -48,6 +48,10 @@ MAX_GAP_DAYS = 60
 DETAIL_DAYS = (60, 45)
 DETAIL_LIMIT = 10  # event pages per run, at most
 DETAIL_SOON_DAYS = 7  # an event opening within a week isn't read again: there's no time for news to matter
+# CC-304: the trial (3 real shows, about $0.035 each, 1 settled) set these. A show needing 3 fetched pages settled, so 3 stays
+STRONG_READS = 3  # pages the stronger model may fetch for one show
+STRONG_PER_DAY = 3  # shows it looks at in a day, at most, whatever the budget says
+STRONG_LINKS = 40  # links it's shown on a page
 MIN_LISTED = 3  # a list page's structured data is trusted when it has at least this many complete events
 
 
@@ -60,6 +64,7 @@ class Outcome:
     pages_read: int = 0
     tokens_in: int = 0
     tokens_out: int = 0
+    strong_usd: float = 0.0  # CC-304: what the stronger model's reads cost, in dollars (its tokens aren't in the two above)
     notes: list[str] = field(default_factory=list)
 
 
@@ -244,6 +249,8 @@ def _read_tickets(db, client, item: DiscoveredItem, source: DiscoverySource, pag
     before = (out.tokens_in, out.tokens_out)
     try:
         _look_for_dates(db, client, item, source, page, today, out)
+        if not item.performances:  # CC-304: the Haiku look couldn't settle it
+            _stronger_look(db, client, item, source, page, today, out)
     finally:
         tin, tout = out.tokens_in - before[0], out.tokens_out - before[1]
         if tin or tout:
@@ -296,11 +303,18 @@ def _look_for_dates(db, client, item: DiscoveredItem, source: DiscoverySource, p
         # a title that matches: a link to another show's page must not give this show its dates
         match = [e for e in reading.events if _same_show(e.title, item.title)]
         found = match[0].performances if match else []
+    if not _settle(db, item, found, link, keep):
+        return
+
+
+def _settle(db, item: DiscoveredItem, found: list, link: str, keep: str, how: str = "") -> bool:
+    """CC-302: what a read's dates do to the item, whichever model found them. True when it had dates. Dates for a live
+    event go to review as an update, and never replace its own."""
     shows = fields_of(FoundEvent(title=item.title, kind="production", performances=found))["performances"]
     if not shows:
         item.dates_note = "\n".join([f"Read {link}: it lists no dates for this show", *keep.splitlines()])
-        return
-    item.dates_note = "\n".join([f"Exact dates read from {link}", *keep.splitlines()])
+        return False
+    item.dates_note = "\n".join([f"Exact dates read from {link}{how}", *keep.splitlines()])
     item.performances = shows
     listed = db.get(Event, item.event_id) if item.event_id else None
     if listed is not None and item.status in ("listed", "update", "approved"):
@@ -309,6 +323,70 @@ def _look_for_dates(db, client, item: DiscoveredItem, source: DiscoverySource, p
         if diff and diff.get("performances") != (item.changes or {}).get("performances"):  # new, not already proposed or dismissed
             item.changes = {**(item.changes or {}), **diff} if item.status == "update" else diff
             item.status = "update"  # a live event keeps its dates until an admin accepts
+    return True
+
+
+def _stronger_look(db, client, item: DiscoveredItem, source: DiscoverySource, page, today: date, out: Outcome) -> None:
+    """CC-304: a show the Haiku look couldn't settle goes to a stronger model, once. It's shown the show's own page and chooses
+    which numbered link to read next, up to STRONG_READS pages. Every page is fetched by web.fetch (public hosts, robots.txt
+    and its AI opt-out on every redirect, spacing), the address always comes from a page's own links by number, and all of it is
+    data in the user message (CC-198). The budget guard runs before every step; each step's cost is in the check's note."""
+    if item.strong_looked_at is not None:
+        return
+    since = utcnow() - timedelta(days=1)
+    today_n = db.scalar(select(func.count()).select_from(DiscoveredItem).where(DiscoveredItem.strong_looked_at >= since)) or 0
+    if today_n >= STRONG_PER_DAY:
+        return  # tomorrow
+    refused = _refused_links(item.dates_note)
+    keep = item.dates_note if refused else ""
+
+    def room() -> bool:
+        return strong_room(db, cost_usd(out.tokens_in, out.tokens_out) + out.strong_usd)
+    if not room():
+        out.notes.append("stronger look waits: the monthly budget is close")  # not marked: it tries again when there's room
+        return
+    item.strong_looked_at = utcnow()
+    read, cur, left, found, link = [page.url], page, STRONG_READS, [], page.url
+    while True:
+        if not room():
+            out.notes.append("stronger look stopped: the monthly budget is close")
+            break
+        links = [(u, t) for u, t in links_of(cur.text, cur.url, True, STRONG_LINKS) if u not in read and u not in refused]
+        text, _ = page_text(cur.text, cur.url)
+        try:
+            step, tin, tout = read_strong_step(client, today, item.title, read, cur.url, text, links, left)
+        except ReadFailed as e:  # the tokens are spent, the reply is no use
+            out.pages_read += 1; out.strong_usd += strong_cost_usd(e.tokens_in, e.tokens_out)
+            out.notes.append(f"stronger read {len(read)}: {cur.url}: {e}, about ${strong_cost_usd(e.tokens_in, e.tokens_out):.4f}")
+            break
+        cost = strong_cost_usd(tin, tout)
+        out.pages_read += 1; out.strong_usd += cost
+        out.notes.append(f"stronger read {len(read)}: {cur.url}: {tin} in, {tout} out, ${cost:.4f}: {step.action}")
+        if step.action == "dates":
+            found, link = step.performances, cur.url
+            break
+        if step.action != "read" or left <= 0:
+            break
+        nxt = links[step.link - 1][0]  # read_strong_step checked the number
+        left -= 1
+        read.append(nxt)
+        try:
+            cur = web.fetch(nxt)
+        except web.Blocked as e:
+            line = f"Refused: {nxt}: {e}"[:MAX_REFUSED]
+            keep = "\n".join([*keep.splitlines()[-2:], line]); refused.add(nxt)
+            out.notes.append(f"dates page not read: {line}")
+            continue
+        except web.FetchError as e:
+            out.notes.append(f"Couldn't read {nxt}: {e}"[:MAX_REFUSED])
+            continue
+        data = [e for e in events_in(cur.text, cur.url, source.kind.value) if _same_show(e.title, item.title)]
+        if data and data[0].performances:  # the page's own event data: no more to ask the model
+            found, link = data[0].performances, cur.url
+            break
+    if found and _settle(db, item, found, link, keep, " (stronger look)"):
+        return
+    item.dates_note = "\n".join(["The stronger look found no dates", *(keep or item.dates_note).splitlines()])[:1000]
 
 
 def _same_show(a: str, b: str) -> bool:
@@ -378,7 +456,7 @@ def check_details(db, client, today: date, limit: int = DETAIL_LIMIT) -> list[tu
 def log(db, source: DiscoverySource, out: Outcome, what: str = "source") -> None:
     db.add(DiscoveryCheck(source_id=source.id, what=what, status=out.status, new_items=out.new, updates=out.updates,
                           skipped=out.skipped, pages_read=out.pages_read, input_tokens=out.tokens_in,
-                          output_tokens=out.tokens_out, note="; ".join(out.notes)[:2000]))
+                          output_tokens=out.tokens_out, strong_usd=round(out.strong_usd, 4), note="; ".join(out.notes)[:2000]))
 
 
 def _day(ts: datetime) -> date:

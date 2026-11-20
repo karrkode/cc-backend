@@ -61,14 +61,16 @@ def sources(db: DB, _: AdminUser):
     rows = db.execute(select(DiscoveryCheck.source_id, func.count(), func.coalesce(func.sum(DiscoveryCheck.pages_read), 0))
                       .where(DiscoveryCheck.checked_at >= since).group_by(DiscoveryCheck.source_id)).all()
     checks = {sid: (n, int(pages)) for sid, n, pages in rows}
-    tin, tout = db.execute(select(func.coalesce(func.sum(DiscoveryCheck.input_tokens), 0),
-                                  func.coalesce(func.sum(DiscoveryCheck.output_tokens), 0))
-                           .where(DiscoveryCheck.checked_at >= since)).one()
+    tin, tout, strong = db.execute(select(func.coalesce(func.sum(DiscoveryCheck.input_tokens), 0),
+                                          func.coalesce(func.sum(DiscoveryCheck.output_tokens), 0),
+                                          func.coalesce(func.sum(DiscoveryCheck.strong_usd), 0))
+                                   .where(DiscoveryCheck.checked_at >= since)).one()
     listed = db.scalars(select(DiscoverySource).order_by(func.lower(DiscoverySource.name))).all()
     state, spent, budget = budget_state(db)
     grid = grid_numbers(db, listed, today_in_chicago())
     return DiscoveryOverview(sources=[_out(s, waiting, checks, grid) for s in listed], tokens_in_30d=int(tin), tokens_out_30d=int(tout),
-                             cost_30d_usd=cost_usd(int(tin), int(tout)), spent_month_usd=spent, budget_usd=budget, budget_state=state)
+                             cost_30d_usd=round(cost_usd(int(tin), int(tout)) + float(strong), 4),  # CC-304: with the stronger model's reads
+                              spent_month_usd=spent, budget_usd=budget, budget_state=state)
 
 
 @router.get("/summary", response_model=SourcingSummary)
