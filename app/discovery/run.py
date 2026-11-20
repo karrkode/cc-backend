@@ -51,6 +51,7 @@ DETAIL_SOON_DAYS = 7  # an event opening within a week isn't read again: there's
 # CC-304: the trial (3 real shows, about $0.035 each, 1 settled) set these. A show needing 3 fetched pages settled, so 3 stays
 STRONG_READS = 3  # pages the stronger model may fetch for one show
 STRONG_PER_DAY = 3  # shows it looks at in a day, at most, whatever the budget says
+STRONG_WITHIN_DAYS = 60  # the stronger look waits until a show opens within this many days
 STRONG_LINKS = 40  # links it's shown on a page
 MIN_LISTED = 3  # a list page's structured data is trusted when it has at least this many complete events
 
@@ -332,6 +333,10 @@ def _stronger_look(db, client, item: DiscoveredItem, source: DiscoverySource, pa
     and its AI opt-out on every redirect, spacing), the address always comes from a page's own links by number, and all of it is
     data in the user message (CC-198). The budget guard runs before every step; each step's cost is in the check's note."""
     if item.strong_looked_at is not None:
+        return
+    # the product owner's call: only within 60 days of opening (or while it runs). Far-off shows haven't published dates, and
+    # this is the costly look, once per show. Not marked, so the 60- and 45-day checks (check_details) try it when it's time
+    if item.begin_date is not None and (item.begin_date - today).days > STRONG_WITHIN_DAYS:
         return
     since = utcnow() - timedelta(days=1)
     today_n = db.scalar(select(func.count()).select_from(DiscoveredItem).where(DiscoveredItem.strong_looked_at >= since)) or 0

@@ -329,3 +329,15 @@ def test_the_ticket_looking_links_come_first_in_a_big_menu():
     menu = "".join(f'<a href="/m{i}">Menu {i}</a>' for i in range(60)) + '<a href="/x">Get your seats</a>'
     first = links_of(menu, "https://t.example/show", any_link=True, limit=40)
     assert first[0][0].endswith("/x") and len(first) == 40
+
+
+def test_a_show_far_from_opening_waits_for_the_stronger_look(db, pages):
+    served, _ = pages
+    serve(served)
+    s, item = a_found_hamlet(db)
+    item.begin_date = TODAY + timedelta(days=120); db.commit()
+    claude = Fake(READ1, DATES)
+    read_event_page(db, claude, item, TODAY, "x")
+    assert not claude.strong_calls() and item.strong_looked_at is None
+    read_event_page(db, claude, item, TODAY + timedelta(days=70), "later")  # now 50 days out
+    assert claude.strong_calls() and [p["date"] for p in item.performances] == [D1, D2]
