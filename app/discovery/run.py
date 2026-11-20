@@ -248,8 +248,8 @@ def _read_tickets(db, client, item: DiscoveredItem, source: DiscoverySource, pag
     so they count toward the monthly budget)."""
     before = (out.tokens_in, out.tokens_out)
     try:
-        _look_for_dates(db, client, item, source, page, today, out)
-        if not item.performances:  # CC-304: the Haiku look couldn't settle it
+        decided = _look_for_dates(db, client, item, source, page, today, out)
+        if decided is not False and not item.performances:  # CC-304: the Haiku look couldn't settle it
             _stronger_look(db, client, item, source, page, today, out)
     finally:
         tin, tout = out.tokens_in - before[0], out.tokens_out - before[1]
@@ -257,7 +257,7 @@ def _read_tickets(db, client, item: DiscoveredItem, source: DiscoverySource, pag
             out.notes.append(f"dates page look: {tin} in, {tout} out, about ${cost_usd(tin, tout):.4f}")
 
 
-def _look_for_dates(db, client, item: DiscoveredItem, source: DiscoverySource, page, today: date, out: Outcome) -> None:
+def _look_for_dates(db, client, item: DiscoveredItem, source: DiscoverySource, page, today: date, out: Outcome) -> bool | None:
     """CC-302: the exact dates of a found or live performance, from the tickets or calendar page its own page links to
     (the theater's, or a box office's). Every fetch is web.fetch's: public hosts, robots.txt and AI opt-outs, spacing. A page
     that refuses is noted on the item and never asked again. Dates for a live event go to review as an update."""
@@ -272,7 +272,7 @@ def _look_for_dates(db, client, item: DiscoveredItem, source: DiscoverySource, p
     except ReadFailed as e:  # the event page's own read still stands
         out.pages_read += 1; out.tokens_in += e.tokens_in; out.tokens_out += e.tokens_out
         item.dates_note = keep or f"Its page's links couldn't be read: {e}"[:MAX_REFUSED]
-        return
+        return False  # CC-304: the next look may do better; the stronger one isn't spent on it
     out.pages_read += 1; out.tokens_in += tin; out.tokens_out += tout
     if pick is None:
         item.dates_note = keep or "No link on its page looked like one that lists the dates"
@@ -288,7 +288,7 @@ def _look_for_dates(db, client, item: DiscoveredItem, source: DiscoverySource, p
     except web.FetchError as e:  # costs nothing, and the next scheduled look tries again
         item.dates_note = keep or f"Couldn't read {link}: {e}"[:MAX_REFUSED]
         out.notes.append(f"Couldn't read {link}: {e}"[:MAX_REFUSED])
-        return
+        return False  # CC-304: a failure that may pass: the next look tries it again
     data = [e for e in events_in(tpage.text, tpage.url, source.kind.value) if _same_show(e.title, item.title)]
     found = data[0].performances if data else []
     if not found:
@@ -312,9 +312,9 @@ def _settle(db, item: DiscoveredItem, found: list, link: str, keep: str, how: st
     event go to review as an update, and never replace its own."""
     shows = fields_of(FoundEvent(title=item.title, kind="production", performances=found))["performances"]
     if not shows:
-        item.dates_note = "\n".join([f"Read {link}: it lists no dates for this show", *keep.splitlines()])
+        item.dates_note = "\n".join([f"Read {link}: it lists no dates for this show", *keep.splitlines()])[:1000]
         return False
-    item.dates_note = "\n".join([f"Exact dates read from {link}{how}", *keep.splitlines()])
+    item.dates_note = "\n".join([f"Exact dates read from {link}{how}", *keep.splitlines()])[:1000]  # the column's size (CC-304)
     item.performances = shows
     listed = db.get(Event, item.event_id) if item.event_id else None
     if listed is not None and item.status in ("listed", "update", "approved"):
@@ -346,10 +346,11 @@ def _stronger_look(db, client, item: DiscoveredItem, source: DiscoverySource, pa
         out.notes.append("stronger look waits: the monthly budget is close")  # not marked: it tries again when there's room
         return
     item.strong_looked_at = utcnow()
-    read, cur, left, found, link = [page.url], page, STRONG_READS, [], page.url
+    read, cur, left, found, link, stopped = [page.url], page, STRONG_READS, [], page.url, False
     while True:
         if not room():
             out.notes.append("stronger look stopped: the monthly budget is close")
+            stopped = True
             break
         links = [(u, t) for u, t in links_of(cur.text, cur.url, True, STRONG_LINKS) if u not in read and u not in refused]
         text, _ = page_text(cur.text, cur.url)
@@ -357,13 +358,18 @@ def _stronger_look(db, client, item: DiscoveredItem, source: DiscoverySource, pa
             step, tin, tout = read_strong_step(client, today, item.title, read, cur.url, text, links, left)
         except ReadFailed as e:  # the tokens are spent, the reply is no use
             out.pages_read += 1; out.strong_usd += strong_cost_usd(e.tokens_in, e.tokens_out)
-            out.notes.append(f"stronger read {len(read)}: {cur.url}: {e}, about ${strong_cost_usd(e.tokens_in, e.tokens_out):.4f}")
+            out.notes.append(f"stronger read {len(read)}: {cur.url[:80]}: {e}, about ${strong_cost_usd(e.tokens_in, e.tokens_out):.4f}")
+            break
+        except Exception as e:  # noqa: BLE001 - an overloaded API or a timeout: nothing was spent that we can see, and it may pass
+            out.notes.append(f"stronger read {len(read)}: {cur.url[:80]}: {type(e).__name__}, will try again")
+            stopped = True
             break
         cost = strong_cost_usd(tin, tout)
         out.pages_read += 1; out.strong_usd += cost
-        out.notes.append(f"stronger read {len(read)}: {cur.url}: {tin} in, {tout} out, ${cost:.4f}: {step.action}")
+        out.notes.append(f"stronger read {len(read)}: {cur.url[:80]}: {tin} in, {tout} out, ${cost:.4f}: {step.action}")
         if step.action == "dates":
-            found, link = step.performances, cur.url
+            if _same_show(step.title, item.title):  # as the Haiku look checks: another show's dates aren't this one's
+                found, link = step.performances, cur.url
             break
         if step.action != "read" or left <= 0:
             break
@@ -384,6 +390,9 @@ def _stronger_look(db, client, item: DiscoveredItem, source: DiscoverySource, pa
         if data and data[0].performances:  # the page's own event data: no more to ask the model
             found, link = data[0].performances, cur.url
             break
+    if stopped:
+        item.strong_looked_at = None  # the budget or the API stopped it, not the show: it may try again
+        return
     if found and _settle(db, item, found, link, keep, " (stronger look)"):
         return
     item.dates_note = "\n".join(["The stronger look found no dates", *(keep or item.dates_note).splitlines()])[:1000]
@@ -399,6 +408,15 @@ def _same_show(a: str, b: str) -> bool:
 def _refused_links(note: str) -> set[str]:
     """The addresses an item's note says refused (one 'Refused: <address>: <why>' per line)."""
     return {line[len("Refused: "):].split(": ", 1)[0] for line in note.splitlines() if line.startswith("Refused: ")}
+
+
+def _read_and_log(db, client, item: DiscoveredItem, today: date, mark: str) -> tuple[DiscoverySource, Outcome]:
+    """CC-304: one event page, logged and committed at once. The stronger look's budget guard reads the month's logged spend, so
+    a batch that logged only at its end would let each show see none of the others' spend."""
+    source, out = read_event_page(db, client, item, today, mark)
+    log(db, source, out, what="detail")
+    db.commit()
+    return source, out
 
 
 def check_missing(db, client, today: date) -> list[tuple[DiscoverySource, Outcome]]:
@@ -417,7 +435,7 @@ def check_missing(db, client, today: date) -> list[tuple[DiscoverySource, Outcom
         if item.dates_note == FESTIVAL_NOTE or not missing or not look_again(item, _day(item.first_seen_at), today):
             continue
         item.looked_on = [*(item.looked_on or []), today.isoformat()]
-        done.append(read_event_page(db, client, item, today, "missing " + ("a date" if missing == "date" else "show days")))
+        done.append(_read_and_log(db, client, item, today, "missing " + ("a date" if missing == "date" else "show days")))
     return done
 
 
@@ -447,9 +465,8 @@ def check_details(db, client, today: date, limit: int = DETAIL_LIMIT) -> list[tu
         if (days < DETAIL_SOON_DAYS and not wants_dates) or (item.cost_text and item.performances):
             item.detail_checks = sorted({*(item.detail_checks or []), *DETAIL_DAYS})
             continue
-        source, out = read_event_page(db, client, item, today, f"{mark} days before opening")
         item.detail_checks = sorted({*(item.detail_checks or []), *[d for d in DETAIL_DAYS if days <= d]})
-        done.append((source, out))
+        done.append(_read_and_log(db, client, item, today, f"{mark} days before opening"))
     return done
 
 
@@ -492,9 +509,7 @@ def run(db, client, today: date, only: int | None = None, force: bool = False) -
                 f"${spent:.2f} of the ${budget:.2f} monthly budget is spent, so event pages wait for next month"])))
         else:
             missing = check_missing(db, client, today)
-            for source, out in missing + check_details(db, client, today, DETAIL_LIMIT - len(missing)):
-                log(db, source, out, what="detail")
-                db.commit()
+            for source, out in missing + check_details(db, client, today, DETAIL_LIMIT - len(missing)):  # already logged
                 results.append((source.name + " (event page)", out))
         for name, status, note in add_pictures(db):  # CC-246
             results.append((name + " (picture)", Outcome(status=status, notes=[note])))

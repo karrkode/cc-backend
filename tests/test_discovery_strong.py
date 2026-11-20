@@ -52,7 +52,7 @@ class Fake:
 
 
 READ1 = StrongStep(action="read", link=1)
-DATES = StrongStep(action="dates", performances=[Performance(date=D1, time="19:30"), Performance(date=D2, time="19:30")])
+DATES = StrongStep(action="dates", title="Hamlet", performances=[Performance(date=D1, time="19:30"), Performance(date=D2, time="19:30")])
 
 
 def serve(served, **more):
@@ -239,3 +239,93 @@ def test_a_page_that_refuses_is_noted_and_the_model_may_pick_another(db, pages):
     third = claude.strong_calls()[-1]["messages"][0]["content"]
     assert f"<{OTHER}>" in third.split("Pages already read")[1].split("More pages")[0]
     assert "1. one" not in third.split("The page's numbered links:")[1]
+
+
+# ---- the review's findings ----------------------------------------------------------------------
+
+def test_each_event_page_in_a_batch_is_logged_before_the_next_so_the_guard_sees_it(db, pages):
+    from app.discovery.readers import STRONG_STEP_CEILING
+    from app.discovery.run import check_details
+    served, _ = pages
+    serve(served)
+    s = make_source(db)
+    for n in range(3):
+        record(db, s, FoundEvent(title=f"Hamlet {n}", url=HAMLET, kind="production", category="Theater",
+                                 begin_date=(TODAY + timedelta(days=40)).isoformat(),
+                                 end_date=(TODAY + timedelta(days=90)).isoformat()), "")
+    db.commit()
+    for i in db.scalars(select(DiscoveredItem)):
+        i.first_seen_at = i.first_seen_at - timedelta(days=3)
+    # room for one step in all: the first show's look uses it, and the others must see that it's gone
+    set_monthly_budget(db, (STRONG_STEP_CEILING * 1.05) / 0.8); db.commit()
+    claude = Fake(READ1, StrongStep(action="give_up"))
+    claude_calls_before = len(claude.strong_calls())
+    check_details(db, claude, TODAY)
+    steps = len(claude.strong_calls()) - claude_calls_before
+    spent = sum(r.strong_usd for r in db.scalars(select(DiscoveryCheck)))
+    assert spent == pytest.approx(steps * strong_cost_usd(TIN, TOUT)) and spent < (STRONG_STEP_CEILING * 1.05) / 0.8 * 0.8
+    assert steps == 1  # not one per show: later shows saw the earlier ones' spend
+
+
+def test_the_dates_note_never_outgrows_its_column(db, pages):
+    served, _ = pages
+    long = "https://seller.example/" + "x" * 170
+    served[HAMLET] = {"html": f'<a href="{long}1">a</a><a href="{long}2">b</a><a href="{long}3">c</a><a href="{OTHER}">d</a>'}
+    served[long + "1"] = web.Blocked("r" * 300); served[long + "2"] = web.Blocked("r" * 300)
+    served[long + "3"] = web.Blocked("r" * 300); served[OTHER] = {"html": "<p>Jan 12</p>"}
+    _, item = a_found_hamlet(db)
+    claude = Fake(StrongStep(action="read", link=1), StrongStep(action="read", link=1), StrongStep(action="read", link=1),
+                  StrongStep(action="read", link=1), DATES)
+    read_event_page(db, claude, item, TODAY, "x")
+    assert len(item.dates_note) <= 1000
+
+
+def test_an_api_error_mid_look_keeps_the_cost_notes_and_lets_it_try_again(db, pages):
+    served, _ = pages
+    serve(served)
+    _, item = a_found_hamlet(db)
+
+    class Flaky(Fake):
+        def create(self, **kw):
+            if "action" in kw["output_config"]["format"]["schema"]["properties"] and getattr(self, "hit", 0):
+                raise TimeoutError("slow")
+            if "action" in kw["output_config"]["format"]["schema"]["properties"]:
+                self.hit = 1
+            return super().create(**kw)
+    _, out = read_event_page(db, Flaky(READ1), item, TODAY, "x")
+    assert any(n.startswith("stronger read 1") and "$" in n for n in out.notes) and any("try again" in n for n in out.notes)
+    assert item.strong_looked_at is None and out.status == "ok" and out.strong_usd > 0
+
+
+def test_dates_from_another_show_are_not_taken(db, pages):
+    served, _ = pages
+    serve(served)
+    _, item = a_found_hamlet(db)
+    other = StrongStep(action="dates", title="Macbeth", performances=[Performance(date=D1, time="19:30")])
+    read_event_page(db, Fake(READ1, other), item, TODAY, "x")
+    assert not item.performances and item.dates_note.startswith("The stronger look found no dates")
+
+
+def test_a_temporary_failure_on_the_haiku_looks_page_doesnt_spend_the_stronger_look(db, pages):
+    served, _ = pages
+    served[HAMLET] = {"html": f'<a href="{BOX}">Buy Tickets</a>'}
+    served[BOX] = web.FetchError("timed out")
+
+    class Pick(Fake):
+        def create(self, **kw):
+            if "choice" in kw["output_config"]["format"]["schema"]["properties"]:
+                self.calls.append(kw)
+                return SimpleNamespace(stop_reason="end_turn", usage=SimpleNamespace(input_tokens=10, output_tokens=5),
+                                       content=[SimpleNamespace(type="text", text=LinkChoice(choice=1).model_dump_json())])
+            return super().create(**kw)
+    claude = Pick(DATES)
+    _, item = a_found_hamlet(db)
+    read_event_page(db, claude, item, TODAY, "x")
+    assert not claude.strong_calls() and item.strong_looked_at is None
+
+
+def test_the_ticket_looking_links_come_first_in_a_big_menu():
+    from app.discovery.tickets import links_of
+    menu = "".join(f'<a href="/m{i}">Menu {i}</a>' for i in range(60)) + '<a href="/x">Get your seats</a>'
+    first = links_of(menu, "https://t.example/show", any_link=True, limit=40)
+    assert first[0][0].endswith("/x") and len(first) == 40
