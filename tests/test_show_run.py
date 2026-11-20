@@ -234,7 +234,7 @@ def found_event(*pairs, **kw):
                       performances=[Performance(date=d.isoformat(), time=t) for d, t in pairs], **kw)
 
 
-def test_sync_fills_when_empty_replaces_found_and_never_touches_a_saved_run(db, make_event):
+def test_sync_fills_when_empty_leaves_found_to_review_and_never_touches_a_saved_run(db, make_event):
     s = make_source(db)
     ev = make_event("Hamlet", venue_name="Goodman Theatre", neighborhood="Loop", begin=day(1), end=day(90))
     record(db, s, found_event((day(5), "19:30"), (day(5), None), (day(6), None)), "")
@@ -244,7 +244,8 @@ def test_sync_fills_when_empty_replaces_found_and_never_touches_a_saved_run(db, 
     assert (ev.begin_date, ev.end_date) == (day(1), day(90))  # begin and end are never touched
     record(db, s, found_event((day(7), "20:00")), "")
     db.commit(); db.expire_all()
-    assert [(r.date, r.time) for r in db.get(Event, ev.id).shows] == [(day(7), "20:00")]  # replaced, not added to
+    # CC-302: later dates are an update for an admin to accept (changes_against), not a replacement by themselves
+    assert [(r.date, r.time) for r in db.get(Event, ev.id).shows] == [(day(5), "19:30"), (day(6), "")]
     ev = db.get(Event, ev.id)
     ev.shows = [EventRunDate(date=day(9), time="18:00", origin="admin")]
     db.commit()
