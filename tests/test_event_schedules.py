@@ -37,7 +37,7 @@ def test_the_schedule_comes_from_the_event_then_its_venue(client, admin_token, d
     assert "schedule" in client.get("/events").json()["items"][0]
 
 
-def test_discovery_passes_dates_on_to_listed_and_approved_events(client, admin_token, db, make_event):
+def test_discovery_proposes_dates_for_listed_events_and_copies_them_on_approval(client, admin_token, db, make_event):
     s = make_source(db)
     listed = make_event("Hamlet", venue_name="Goodman Theatre", neighborhood="Loop")
     db.commit()
@@ -45,7 +45,9 @@ def test_discovery_passes_dates_on_to_listed_and_approved_events(client, admin_t
     shows = [Performance(date=later, time="19:30"), Performance(date=later, time="14:00"), Performance(date=later, time="19:30")]
     record(db, s, FoundEvent(title="Hamlet", kind="production", category="Theater", performances=shows), "")
     db.commit(); db.refresh(listed)
-    assert [(r.date.isoformat(), r.time, r.origin) for r in listed.shows] == [(later, "14:00", "found"), (later, "19:30", "found")]  # sorted, no repeats
+    assert listed.shows == []  # CC-302: a live event's dates wait for an admin to accept (an update), they don't change by themselves
+    held = db.scalar(select(DiscoveredItem).where(DiscoveredItem.title == "Hamlet"))
+    assert held.status == "update" and held.changes["performances"][1] == {later: ["14:00", "19:30"]}  # sorted, no repeats
     # approving a found event copies its dates too
     record(db, s, FoundEvent(title="Macbeth", url="https://goodman.example/macbeth", kind="production", category="Theater",
                              performances=[Performance(date=later, time="20:00")]), "")

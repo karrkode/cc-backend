@@ -15,6 +15,9 @@ Reading as little as possible (agreed with the product owner):
   then weekly for 4 weeks (needs.py); these come first within the 10 event pages per run
 - CC-246: newly approved events get their picture from their own page (pictures.py). That costs no tokens, so it runs
   whatever the budget says
+- CC-302: a found or live performance whose own page gives no exact dates has a tickets or calendar page it links to
+  read too (tickets.py), through the same polite fetch. The extra tokens are logged and counted like any read, and new dates
+  for a live event wait in review as an update (they never replace its dates by themselves)
 - CC-198: a failed read's tokens count toward the budget, and a source whose reads keep failing waits longer each time
   (1, 2, 4, 8... days, up to 60). Check now still runs it. A page that can't be fetched costs nothing, so that's tomorrow.
 """
@@ -22,10 +25,10 @@ import json
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from ..clock import chicago_day, utcnow
-from ..models import DiscoveredItem, DiscoveryCheck, DiscoverySource
+from ..models import DiscoveredItem, DiscoveryCheck, DiscoverySource, Event
 from . import fetch as web
 from .budget import alert_if_short, best_first, budget_state
 from .hours import apply_open_hours, apply_show_times, link_venue
@@ -33,9 +36,11 @@ from .jsonld import complete, events_in
 from .needs import look_again, needs
 from .pictures import add_pictures
 from .pagetext import page_text, text_hash
-from .readers import ReadFailed, read_aic, read_page
-from .rules import apply_rules, norm_title
-from .store import drop_passed_hidden, release_delayed, note_addresses, on_source_site, record, venue_for
+from .readers import OWN_PAGE_NOTE, TICKETS_PAGE_NOTE, FoundEvent, ReadFailed, cost_usd, read_aic, read_link_choice, read_page
+from .rules import PERFORMING_CATEGORIES, apply_rules, norm_title
+from .store import (changes_against, drop_passed_hidden, fields_of, release_delayed, note_addresses, on_source_site, record,
+                    venue_for)
+from .tickets import MAX_REFUSED, links_of
 from .venuesources import add_missing, use_calendar_link
 
 STRETCH_AFTER = 3
@@ -168,7 +173,7 @@ def check_source(db, source: DiscoverySource, client, today: date) -> Outcome:
 
 def read_event_page(db, client, item: DiscoveredItem, today: date, mark: str) -> tuple[DiscoverySource, Outcome]:
     """Read one found event's own page (its schema.org data first, Claude only when that's incomplete) and store what it says."""
-    source, out = db.get(DiscoverySource, item.source_id), Outcome(status="ok")
+    source, out, festival = db.get(DiscoverySource, item.source_id), Outcome(status="ok"), False
     try:
         if not on_source_site(item.url, source):  # CC-189: a link stored before these were limited to the source's site
             raise web.Blocked("this event's link isn't on the source's site")
@@ -180,22 +185,142 @@ def read_event_page(db, client, item: DiscoveredItem, today: date, mark: str) ->
             out.notes.append("read from the page's event data")
         else:
             text, _ = page_text(page.text, page.url)
-            reading, tin, tout = read_page(client, source.name, source.kind.value, page.url, text, today)
-            out.pages_read, out.tokens_in, out.tokens_out = 1, tin, tout
-            same = [e for e in reading.events if norm_title(e.title) == norm_title(item.title)] or reading.events[:1]
+            reading, tin, tout = read_page(client, source.name, source.kind.value, page.url, text, today, OWN_PAGE_NOTE, item.title)
+            out.pages_read += 1; out.tokens_in += tin; out.tokens_out += tout
+            works = _works_of(reading.events, item.title)
+            if len(works) >= MIN_WORKS:  # CC-302: a festival or series: each work is an event of its own
+                _store_works(db, source, item, works, out)
+                same, festival = [], True
+            else:
+                same = [e for e in reading.events if norm_title(e.title) == norm_title(item.title)] or reading.events[:1]
         for e in same[:1]:
             e.url = item.url  # the same item, whatever links the page has
             _store(db, source, [e], out)
+        live = db.get(Event, item.event_id) if item.event_id else None
+        if (item.category in PERFORMING_CATEGORIES and not item.performances and item.kind != "permanent" and not festival
+                and not (live is not None and live.show_run_exact)):  # a person's Show Run is theirs: nothing would be proposed
+            _read_tickets(db, client, item, source, page, today, out)  # CC-302: still no exact dates
     except web.Blocked as e:
         out.status, out.notes = "blocked", [str(e)]
     except ReadFailed as e:  # each event page is only tried on its own schedule, so there's nothing to back off
-        out.pages_read, out.tokens_in, out.tokens_out = 1, e.tokens_in, e.tokens_out
+        out.pages_read += 1; out.tokens_in += e.tokens_in; out.tokens_out += e.tokens_out  # CC-302: on top of any read before it
         out.status, out.notes = "error", [str(e)]
     except Exception as e:  # noqa: BLE001 - one event page must not stop the rest
         out.status, out.notes = "error", [f"{type(e).__name__}: {e}"[:500]]
     out.notes.insert(0, f"{item.title}: {mark}")
     return source, out
 
+
+
+FESTIVAL_NOTE = "A festival or series: its works are separate events"
+MIN_WORKS = 2  # CC-302: a page with this many separate works with dates is a festival or series
+MAX_WORKS = 12
+
+
+def _works_of(events: list[FoundEvent], title: str) -> list[FoundEvent]:
+    """CC-302: the separate works a festival's own page presents: events other than the page's own, each with dates."""
+    return [e for e in events if norm_title(e.title) != norm_title(title) and (e.performances or e.begin_date)][:MAX_WORKS]
+
+
+def _store_works(db, source: DiscoverySource, item: DiscoveredItem, works: list[FoundEvent], out: Outcome) -> None:
+    """CC-302: each work of a festival is a new event, titled with the festival's name first ("New Stages Festival 26/27:
+    House Gyalz"). It has no page of its own to link, so it's kept by its title. The festival's own item is left as it was."""
+    prefix = norm_title(item.title)
+    for e in works:
+        if not norm_title(e.title).startswith(prefix):
+            e.title = f"{item.title}: {e.title.strip()}"[:300]
+        e.url = None
+        e.recurring = False
+        if not e.category:
+            e.category = item.category
+        _store(db, source, [e], out)
+    item.dates_note = FESTIVAL_NOTE  # CC-302: its own item isn't read again for what it's missing: its dates are its works
+    out.notes.append(f"a festival or series: {len(works)} works, each its own event")
+
+
+def _read_tickets(db, client, item: DiscoveredItem, source: DiscoverySource, page, today: date, out: Outcome) -> None:
+    """CC-302: the look for exact dates, with what it cost written in the check's note (its tokens are in the check's totals,
+    so they count toward the monthly budget)."""
+    before = (out.tokens_in, out.tokens_out)
+    try:
+        _look_for_dates(db, client, item, source, page, today, out)
+    finally:
+        tin, tout = out.tokens_in - before[0], out.tokens_out - before[1]
+        if tin or tout:
+            out.notes.append(f"dates page look: {tin} in, {tout} out, about ${cost_usd(tin, tout):.4f}")
+
+
+def _look_for_dates(db, client, item: DiscoveredItem, source: DiscoverySource, page, today: date, out: Outcome) -> None:
+    """CC-302: the exact dates of a found or live performance, from the tickets or calendar page its own page links to
+    (the theater's, or a box office's). Every fetch is web.fetch's: public hosts, robots.txt and AI opt-outs, spacing. A page
+    that refuses is noted on the item and never asked again. Dates for a live event go to review as an update."""
+    refused = _refused_links(item.dates_note)
+    links = [(u, t) for u, t in links_of(page.text, page.url) if u not in refused]
+    keep = item.dates_note if refused else ""  # what was refused stays on the item, whatever the later looks find
+    if not links:
+        item.dates_note = keep or "No tickets or calendar link on its page"
+        return
+    try:
+        pick, tin, tout = read_link_choice(client, page.url, item.title, links)
+    except ReadFailed as e:  # the event page's own read still stands
+        out.pages_read += 1; out.tokens_in += e.tokens_in; out.tokens_out += e.tokens_out
+        item.dates_note = keep or f"Its page's links couldn't be read: {e}"[:MAX_REFUSED]
+        return
+    out.pages_read += 1; out.tokens_in += tin; out.tokens_out += tout
+    if pick is None:
+        item.dates_note = keep or "No link on its page looked like one that lists the dates"
+        return
+    link = links[pick][0]
+    try:
+        tpage = web.fetch(link)
+    except web.Blocked as e:
+        line = f"Refused: {link}: {e}"[:MAX_REFUSED]
+        item.dates_note = "\n".join([*keep.splitlines()[-2:], line])  # the last three refusals
+        out.notes.append(f"dates page not read: {line}")
+        return
+    except web.FetchError as e:  # costs nothing, and the next scheduled look tries again
+        item.dates_note = keep or f"Couldn't read {link}: {e}"[:MAX_REFUSED]
+        out.notes.append(f"Couldn't read {link}: {e}"[:MAX_REFUSED])
+        return
+    data = [e for e in events_in(tpage.text, tpage.url, source.kind.value) if _same_show(e.title, item.title)]
+    found = data[0].performances if data else []
+    if not found:
+        text, _ = page_text(tpage.text, tpage.url)
+        try:
+            reading, tin, tout = read_page(client, source.name, source.kind.value, tpage.url, text, today, TICKETS_PAGE_NOTE)
+        except ReadFailed as e:
+            out.pages_read += 1; out.tokens_in += e.tokens_in; out.tokens_out += e.tokens_out
+            item.dates_note = keep or f"Its dates page {link} couldn't be read: {e}"[:MAX_REFUSED]
+            return
+        out.pages_read += 1; out.tokens_in += tin; out.tokens_out += tout
+        # a title that matches: a link to another show's page must not give this show its dates
+        match = [e for e in reading.events if _same_show(e.title, item.title)]
+        found = match[0].performances if match else []
+    shows = fields_of(FoundEvent(title=item.title, kind="production", performances=found))["performances"]
+    if not shows:
+        item.dates_note = "\n".join([f"Read {link}: it lists no dates for this show", *keep.splitlines()])
+        return
+    item.dates_note = "\n".join([f"Exact dates read from {link}", *keep.splitlines()])
+    item.performances = shows
+    listed = db.get(Event, item.event_id) if item.event_id else None
+    if listed is not None and item.status in ("listed", "update", "approved"):
+        diff = changes_against(listed, {"cost_text": "", "min_price": None, "begin_date": None, "end_date": None,
+                                        "weekly": {}, "weeks": {}, "performances": shows})
+        if diff and diff.get("performances") != (item.changes or {}).get("performances"):  # new, not already proposed or dismissed
+            item.changes = {**(item.changes or {}), **diff} if item.status == "update" else diff
+            item.status = "update"  # a live event keeps its dates until an admin accepts
+
+
+def _same_show(a: str, b: str) -> bool:
+    """CC-302: a tickets page names a show a little differently ("Mrs. Doubtfire (Chicago)", "Hamlet - Tickets"): the same
+    words, or one's whole words inside the other's. A different show's page still doesn't match."""
+    na, nb = f" {norm_title(a)} ", f" {norm_title(b)} "
+    return len(na) > 5 and len(nb) > 5 and (na in nb or nb in na)
+
+
+def _refused_links(note: str) -> set[str]:
+    """The addresses an item's note says refused (one 'Refused: <address>: <why>' per line)."""
+    return {line[len("Refused: "):].split(": ", 1)[0] for line in note.splitlines() if line.startswith("Refused: ")}
 
 
 def check_missing(db, client, today: date) -> list[tuple[DiscoverySource, Outcome]]:
@@ -211,7 +336,7 @@ def check_missing(db, client, today: date) -> list[tuple[DiscoverySource, Outcom
         if len(done) >= DETAIL_LIMIT:
             break
         missing = needs(item, venue_for(db, item.source, item))
-        if not missing or not look_again(item, _day(item.first_seen_at), today):
+        if item.dates_note == FESTIVAL_NOTE or not missing or not look_again(item, _day(item.first_seen_at), today):
             continue
         item.looked_on = [*(item.looked_on or []), today.isoformat()]
         done.append(read_event_page(db, client, item, today, "missing " + ("a date" if missing == "date" else "show days")))
@@ -224,7 +349,8 @@ def check_details(db, client, today: date, limit: int = DETAIL_LIMIT) -> list[tu
         return []
     items = db.scalars(select(DiscoveredItem).join(DiscoverySource)
                        .where(DiscoveredItem.status.in_(["new", "listed", "update", "approved"]), DiscoveredItem.url != "",
-                              DiscoveredItem.begin_date > today, DiscoverySource.active, DiscoverySource.reader == "claude")
+                              or_(DiscoveredItem.begin_date > today, DiscoveredItem.end_date >= today),  # CC-302: running now too
+                       DiscoverySource.active, DiscoverySource.reader == "claude")
                        .order_by(DiscoveredItem.begin_date)).all()
     done = []
     for item in items:
@@ -237,7 +363,10 @@ def check_details(db, client, today: date, limit: int = DETAIL_LIMIT) -> list[tu
         found_today = item.first_seen_at and _day(item.first_seen_at) >= today  # its list page was just read
         if found_today:
             continue  # the next run looks again
-        if days < DETAIL_SOON_DAYS or (item.cost_text and item.performances):  # too soon, or nothing left to learn
+        # too soon, or nothing left to learn. CC-302: a performance still without exact dates is read however soon it opens
+        # (or even while it runs): its own page or tickets page is where the dates are, and they matter most now
+        wants_dates = item.category in PERFORMING_CATEGORIES and not item.performances and item.kind != "permanent"
+        if (days < DETAIL_SOON_DAYS and not wants_dates) or (item.cost_text and item.performances):
             item.detail_checks = sorted({*(item.detail_checks or []), *DETAIL_DAYS})
             continue
         source, out = read_event_page(db, client, item, today, f"{mark} days before opening")

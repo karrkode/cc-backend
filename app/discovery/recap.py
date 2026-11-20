@@ -32,7 +32,7 @@ DAYS = 7
 GRAPH_WEEKS = 12  # CC-207: the Event Sourcing page's graph of new events found
 FOUND_STATUSES = ("new", "approved", "rejected", "hidden")  # CC-207: hiding an event doesn't unfind it
 SEND_WEEKDAY, SEND_HOUR = 1, 10  # Tuesday, 10 AM Chicago time
-CHANGE_NAMES = {"cost_text": "Price", "min_price": "Lowest price", "begin_date": "Opens", "end_date": "Closes", "weekly": "Show days", "weeks": "Weeks of the month"}
+CHANGE_NAMES = {"cost_text": "Price", "min_price": "Lowest price", "begin_date": "Opens", "end_date": "Closes", "weekly": "Show days", "weeks": "Weeks of the month", "performances": "Dates"}
 EVERY = {7: "Every week", 14: "Every 2 weeks", 30: "Every month", 60: "Every 2 months"}
 MAX_UPDATES = 20
 # the site's daytime ("Paper and signal") colors
@@ -53,6 +53,11 @@ def _change(field_name: str, v) -> str:
         return _md(datetime.fromisoformat(v))
     if field_name == "min_price":
         return "free" if v == 0 else f"${v:g}"
+    if field_name == "performances" and not v:
+        return "none"
+    if field_name == "performances":  # CC-302: {"2026-12-05": ["19:30"]}: how many dates, and the first and last
+        days = sorted(v)
+        return f"{len(days)} dates, {_md(datetime.fromisoformat(days[0]))} to {_md(datetime.fromisoformat(days[-1]))}"
     if field_name == "weekly":
         return show_days_text(v)
     if field_name == "weeks":

@@ -188,7 +188,17 @@ class _CheckedRedirects(urllib.request.HTTPRedirectHandler):
     """CC-124: every hop of a redirect is checked too, so a public page can't send us on to a private address."""
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         _check_form(newurl)
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
+        polite = getattr(req, "polite", None)  # CC-302: set on a page fetch (not on a robots.txt one, which would loop)
+        if polite:
+            ai, timeout, wait = polite
+            if urlsplit(newurl).netloc != urlsplit(req.full_url).netloc:
+                _polite(newurl, ai, timeout, wait)  # another site: its robots.txt, AI opt-out and spacing, as for any page
+            else:
+                _allowed(newurl, ai, timeout)
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and polite:
+            new.polite = polite
+        return new
 
 
 @lru_cache(maxsize=1)
@@ -201,9 +211,10 @@ def _opener() -> urllib.request.OpenerDirector:
     return opener
 
 
-def _open(url: str, headers: dict[str, str], timeout: float = TIMEOUT):
+def _open(url: str, headers: dict[str, str], timeout: float = TIMEOUT, polite: tuple | None = None):
     _check_form(url)
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept-Language": "en-US", **headers})
+    req.polite = polite
     return _opener().open(req, timeout=timeout)
 
 
@@ -246,8 +257,8 @@ def _read(r, max_bytes: int, deadline: float | None) -> bytes:
             raise FetchError(f"page is larger than {max_bytes / 1_000_000:g} MB")
 
 
-def _polite(url: str, ai: bool, timeout: float, wait: bool) -> None:
-    """robots.txt (and, when ai, its AI opt-out), then the gap between requests to one site."""
+def _allowed(url: str, ai: bool, timeout: float) -> Robots:
+    """robots.txt, and when ai its AI opt-out, for this address."""
     parts = urlsplit(url)
     if parts.scheme not in ("http", "https"):
         raise Blocked(f"not a web address: {url}")
@@ -256,6 +267,13 @@ def _polite(url: str, ai: bool, timeout: float, wait: bool) -> None:
         raise Blocked("the site's robots.txt opts out of AI crawlers, so its pages aren't sent to Claude")
     if not rules.allows(parts.path or "/"):
         raise Blocked("robots.txt asks crawlers not to read this page")
+    return rules
+
+
+def _polite(url: str, ai: bool, timeout: float, wait: bool) -> None:
+    """robots.txt (and, when ai, its AI opt-out), then the gap between requests to one site."""
+    parts = urlsplit(url)
+    rules = _allowed(url, ai, timeout)
     gap = max(MIN_GAP_SECONDS, rules.crawl_delay)
     pause = _last_hit.get(parts.netloc, 0) + gap - time.monotonic()
     if wait and pause > 0:
@@ -283,8 +301,10 @@ def fetch(url: str, etag: str = "", last_modified: str = "", ai: bool = True, ti
         headers["If-None-Match"] = etag
     if last_modified:
         headers["If-Modified-Since"] = last_modified
+    final = ""
     try:
-        with _open(url, headers, timeout) as r:
+        with _open(url, headers, timeout, (ai, timeout, wait)) as r:
+            final = r.geturl()
             body = _read(r, max_bytes, deadline)
             return Page(url=r.geturl(), status=r.status, text=body.decode(charset_of(r.headers.get_content_charset()), "replace"),
                         etag=r.headers.get("ETag", ""), last_modified=r.headers.get("Last-Modified", ""),
@@ -297,6 +317,8 @@ def fetch(url: str, etag: str = "", last_modified: str = "", ai: bool = True, ti
         raise FetchError(f"couldn't reach {parts.netloc}: {e}") from e
     finally:
         _last_hit[parts.netloc] = time.monotonic()
+        if final and urlsplit(final).netloc != parts.netloc:  # CC-302: a redirect's last site was hit too
+            _last_hit[urlsplit(final).netloc] = time.monotonic()
 
 
 @dataclass

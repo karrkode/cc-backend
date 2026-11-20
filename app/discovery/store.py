@@ -24,7 +24,7 @@ from urllib.parse import urlsplit
 
 from sqlalchemy import func, select
 
-from ..clock import CHICAGO, utcnow
+from ..clock import CHICAGO, chicago_day, utcnow
 from ..addresses import found_address
 from ..areas import is_out_of_town
 from ..categories import BY_SOURCE_KIND, REMOVED
@@ -222,6 +222,18 @@ def _place(name: str) -> str:
     return n[4:] if n.startswith("the ") else n
 
 
+def _show_map(shows, today: date) -> dict:
+    """CC-302: the shows still to come as {"2026-12-05": ["19:30", "21:00"]} ("" is a show with no time yet), the form a
+    proposed change is kept in. Past shows are left out: a tickets page only lists what's left."""
+    out: dict[str, list[str]] = {}
+    for p in shows or []:
+        day = _date(p.get("date"))
+        if day and day >= today:
+            out.setdefault(day.isoformat(), []).append(_hhmm(p.get("time")) or "")
+    # an untimed show yields to a timed one that day, as in sync_found_shows
+    return {d: sorted({t for t in ts if t} or {""}) for d, ts in sorted(out.items())}
+
+
 def changes_against(event: Event, f: dict) -> dict:
     """What the source now says differently from the listed event, in the fields it fills in later."""
     out = {}
@@ -236,10 +248,24 @@ def changes_against(event: Event, f: dict) -> dict:
         out["weekly"] = [None, f["weekly"]]
         if f.get("weeks"):
             out["weeks"] = [None, f["weeks"]]
+    new_shows = _show_map(f.get("performances"), chicago_day(utcnow()))
+    if new_shows and not event.show_run_exact:  # CC-302: dates found on a tickets or calendar page go to review, never straight in
+        now_shows = _show_map([{"date": r.date.isoformat(), "time": r.time} for r in event.shows], chicago_day(utcnow()))
+        # CC-302: a source may list only part of a run (Ticketmaster's page carries its first 20 shows), so it speaks only
+        # for the days from its first to its last date; shows the catalog has outside that span aren't differences
+        first, last = min(new_shows), max(new_shows)
+        now_shows = {d: t for d, t in now_shows.items() if first <= d <= last}
+        if new_shows != now_shows:
+            out["performances"] = [now_shows, new_shows]
     if event.show_run_exact:  # CC-301: a person's Show Run owns the dates; its first and last show are the opening and closing
         for k in ("begin_date", "end_date", "weekly", "weeks"):
             out.pop(k, None)
     return out
+
+
+def _with_found_dates(item: DiscoveredItem, f: dict) -> dict:
+    """CC-302: a reading that gives no dates (a list page) still proposes the ones a tickets page gave the item."""
+    return {**f, "performances": f.get("performances") or item.performances}
 
 
 def _same_title(db, source: DiscoverySource, found: FoundEvent, key: str):
@@ -260,12 +286,12 @@ def _same_title(db, source: DiscoverySource, found: FoundEvent, key: str):
 
 def sync_found_shows(db, item: DiscoveredItem) -> None:
     """CC-79, CC-301: give the catalog event this item is the dates and times found for it (when any were found), as
-    its found shows. Only when it has no shows or every one is found: a Show Run a person saved is never replaced
-    (until CC-302). Replaces them all, and never touches begin_date or end_date."""
+    its found shows. CC-302: only when it has none yet (the first fill, at approval). Later dates are an update
+    for review (changes_against), so a live event's dates never change by themselves. Never touches begin_date or end_date."""
     if not item.event_id or not item.performances:
         return
     event = db.get(Event, item.event_id)
-    if event is None or any(r.origin != FOUND for r in event.shows):
+    if event is None or event.shows:
         return
     found = {(day, _hhmm(p.get("time")) or "") for p in item.performances if (day := _date(p.get("date")))}
     found = {(d, t) for d, t in found if t or not any(d == d2 and t2 for d2, t2 in found)}  # an untimed one yields to a timed one that day
@@ -317,11 +343,7 @@ def record(db, source: DiscoverySource, found: FoundEvent, skip: str) -> str:
     """Store one found event. Returns what it was: new | update | skipped | seen."""
     if not on_source_site(found.url, source):
         found.url = None
-    what = _record(db, source, found, skip)
-    item = db.scalar(select(DiscoveredItem).where(DiscoveredItem.source_id == source.id, DiscoveredItem.key == key_for(found)))
-    if item is not None:
-        sync_found_shows(db, item)
-    return what
+    return _record(db, source, found, skip)  # CC-302: found shows are filled once, at approval (sync_found_shows), never here
 
 
 def _record(db, source: DiscoverySource, found: FoundEvent, skip: str) -> str:
@@ -365,11 +387,10 @@ def _record(db, source: DiscoverySource, found: FoundEvent, skip: str) -> str:
     if item.status in DECIDED or item.status in ("skipped", "hidden"):
         if item.status == "approved" and item.event_id:  # live now: offer the source's changes as an update
             listed = db.get(Event, item.event_id)
-            diff = changes_against(listed, f) if listed else {}
+            diff = changes_against(listed, _with_found_dates(item, f)) if listed else {}
             if diff and diff != item.changes:
                 item.changes, item.status = diff, "update"
-                for k, v in f.items():
-                    setattr(item, k, v)
+                _refresh(item, f)  # CC-302: keeps the dates a tickets page gave when this reading has none
                 return "update"
         return "seen"
     _refresh(item, f)
@@ -378,7 +399,7 @@ def _record(db, source: DiscoverySource, found: FoundEvent, skip: str) -> str:
         return "skipped"
     if item.status in ("listed", "update") and item.event_id:
         listed = db.get(Event, item.event_id)
-        diff = changes_against(listed, f) if listed else {}
+        diff = changes_against(listed, _with_found_dates(item, f)) if listed else {}
         if diff and diff != item.changes:
             item.changes, item.status = diff, "update"
             return "update"

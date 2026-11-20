@@ -17,7 +17,7 @@ from ..discovery.recap import budget_note, found_by_week, gather, next_send
 from ..discovery.rules import norm_title
 from ..discovery.store import matching_rule, possible_duplicates, release_delayed, rule_reason, sync_found_shows, venue_for
 from ..discovery.venuesources import covers, grid_numbers, state_of
-from ..models import DiscoveredItem, DiscoveryCheck, DiscoverySource, Event, SkipRule, Venue
+from ..models import FOUND, DiscoveredItem, DiscoveryCheck, DiscoverySource, Event, EventRunDate, SkipRule, Venue
 from ..schemas import (BatchHeld, BatchIn, BatchOut, BudgetIn, DelayIn, DiscoveredItemOut, DiscoveredPage, DiscoveryOverview, DiscoverySourceOut, DiscoverySourcePatch,
                        EventIn, EventRef, FoundChange, RUN_DATES_MAX, RejectIn, RejectOut, SkipRuleOut, SourcingCount, SourcingSummary,
                        SourcingUnreadable, SourcingWeek, UnreadableSource)
@@ -446,6 +446,23 @@ def _settled(item: DiscoveredItem, event: Event | None) -> str:
     return "approved" if event is not None and event.found_by_id == item.source_id else "listed"
 
 
+def _apply_shows(db: DB, event: Event, found: dict) -> None:
+    """CC-302: the shows from an accepted update. Shows already past stay, and so do ones outside the span from the found
+    list's first date to its last (a tickets page may list only part of a run); inside the span they become the found shows
+    (dates that have passed since the proposal was made are left out)."""
+    today = chicago_day(utcnow())
+    first, last = (date.fromisoformat(min(found)), date.fromisoformat(max(found))) if found else (today, today)
+    for r in [r for r in event.shows if max(today, first) <= r.date <= last]:  # only the span the source speaks for
+        event.shows.remove(r)
+    db.flush()  # the old ones go first, so a show kept doesn't clash with itself
+    kept = {(r.date, r.time) for r in event.shows}
+    for d, times in found.items():
+        day = date.fromisoformat(d)
+        for t in times:
+            if day >= today and (day, t) not in kept:
+                event.shows.append(EventRunDate(date=day, time=t, origin=FOUND))
+
+
 @router.post("/items/{item_id}/accept", response_model=DiscoveredItemOut)
 def accept(item_id: int, db: DB, _: AdminUser):
     """Apply a proposed update (a price added, dates moved) to the catalog event."""
@@ -466,6 +483,8 @@ def accept(item_id: int, db: DB, _: AdminUser):
             event.weekly = found or {}
         elif field == "weeks":
             event.weeks = found or {}
+        elif field == "performances" and not event.show_run_exact:  # CC-302: found shows replace the found ones still to come
+            _apply_shows(db, event, found or {})
     if event.end_date:
         event.open_run = False
     if event.begin_date and event.end_date and event.end_date < event.begin_date:
