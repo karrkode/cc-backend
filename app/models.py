@@ -859,6 +859,8 @@ class DiscoveredItem(Base):
     looked_on: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
     # CC-302: what the last look for exact dates on a tickets or calendar page found ("Refused: <address>: why", or why none)
     dates_note: Mapped[str] = mapped_column(String(1000), default="", server_default="")
+    # CC-304: when the stronger model last looked for this show's dates. One look per show: it's the costly one
+    strong_looked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     weeks: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")  # some weeks of the month only, as on events
     # CC-257: a hidden item an admin delayed; it goes back to "new" once this moment has passed (store.release_delayed)
     delayed_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
@@ -942,6 +944,9 @@ class DiscoveryCheck(Base):
     pages_read: Mapped[int] = mapped_column(Integer, default=0)  # pages that had to go to the model
     input_tokens: Mapped[int] = mapped_column(Integer, default=0)
     output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    # CC-304: what the stronger model's reads cost, in dollars. Its tokens aren't in the two columns above, which are priced
+    # as Haiku's; the budget, the recap and the source ordering add this on top
+    strong_usd: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
     note: Mapped[str] = mapped_column(Text, default="")
 
 

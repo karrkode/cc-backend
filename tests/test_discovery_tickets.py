@@ -27,6 +27,12 @@ D1, D2 = (TODAY + timedelta(days=70)).isoformat(), (TODAY + timedelta(days=72)).
 EVENT_PAGE = f'<h1>Hamlet</h1><p>Opens in the new year.</p><nav><a href="{BOX}">Buy Tickets</a> <a href="/about">About</a></nav>'
 
 
+@pytest.fixture(autouse=True)
+def _no_stronger_look(monkeypatch):
+    """CC-304: these tests are about the Haiku look; the stronger model's fallback has its own file."""
+    monkeypatch.setattr("app.discovery.run.STRONG_PER_DAY", 0)
+
+
 class SmartClaude:
     """Answers the link question with `choice`, and each page read with the next of `reads` (a list of events; the last one
     repeats), whichever shape the call asks for. The first page read is the event's own page, the second its tickets page."""

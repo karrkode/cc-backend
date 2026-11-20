@@ -21,7 +21,7 @@ from ..clock import CHICAGO, utcnow
 from ..config import get_settings
 from ..mail import Email, send
 from ..models import AppSetting, DiscoveredItem, DiscoveryCheck, Event, EventStatus
-from .readers import cost_usd
+from .readers import STRONG_STEP_CEILING, cost_usd
 
 KEY = "discovery_budget_usd"
 DEFAULT_USD = 10.0
@@ -58,7 +58,16 @@ def spent_this_month(db, now: datetime | None = None) -> float:
     tin, tout = db.execute(select(func.coalesce(func.sum(DiscoveryCheck.input_tokens), 0),
                                   func.coalesce(func.sum(DiscoveryCheck.output_tokens), 0))
                            .where(DiscoveryCheck.checked_at >= since)).one()
-    return cost_usd(int(tin), int(tout))
+    strong = db.scalar(select(func.coalesce(func.sum(DiscoveryCheck.strong_usd), 0)).where(DiscoveryCheck.checked_at >= since))
+    return round(cost_usd(int(tin), int(tout)) + float(strong or 0), 4)  # CC-304: the stronger model's reads on top
+
+
+def strong_room(db, unlogged: float = 0.0, now: datetime | None = None) -> bool:
+    """CC-304: whether the stronger model may take one more step. It's the first thing to stop: only in the "ok" state, and
+    only while the month's spend, this check's reads not yet logged (`unlogged`), and the most one step can cost still fit
+    under the saving line. A guard that checked only the logged spend would let a long run go past the budget."""
+    state, spent, budget = budget_state(db, now)
+    return state == "ok" and spent + unlogged + STRONG_STEP_CEILING < budget * SAVE_FROM
 
 
 def budget_state(db, now: datetime | None = None) -> tuple[str, float, float]:
@@ -76,8 +85,9 @@ def best_first(db, sources: list) -> list:
                                .where(DiscoveredItem.status == "approved", Event.status == EventStatus.approved,
                                       DiscoveredItem.source_id.is_not(None))
                                .group_by(DiscoveredItem.source_id)).all())
-    costs = {sid: cost_usd(int(tin), int(tout)) for sid, tin, tout in db.execute(
-        select(DiscoveryCheck.source_id, func.sum(DiscoveryCheck.input_tokens), func.sum(DiscoveryCheck.output_tokens))
+    costs = {sid: cost_usd(int(tin), int(tout)) + float(strong or 0) for sid, tin, tout, strong in db.execute(
+        select(DiscoveryCheck.source_id, func.sum(DiscoveryCheck.input_tokens), func.sum(DiscoveryCheck.output_tokens),
+               func.sum(DiscoveryCheck.strong_usd))
         .where(DiscoveryCheck.source_id.is_not(None)).group_by(DiscoveryCheck.source_id))}
     all_approved, all_cost = sum(approved.values()), sum(costs.values())
 
