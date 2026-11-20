@@ -386,3 +386,69 @@ def test_a_show_that_already_has_exact_dates_isnt_read_again_when_it_opens_soon(
     item = a_show_found_days_ago(db, TODAY + timedelta(days=5), TODAY + timedelta(days=25))
     item.performances = [{"date": D1, "time": "19:30"}]; db.commit()
     assert check_details(db, SmartClaude(1, []), TODAY) == [] and calls == []
+
+
+# ---- CC-302: a festival's page: each play is an event of its own, titled with the festival's name first ----------------
+
+FEST = "https://goodman.example/event/new-stages-festival"
+
+
+def play(title, *days):
+    return FoundEvent(title=title, kind="production", category="Theater", performances=[Performance(date=d, time=t) for d, t in days])
+
+
+def test_each_work_of_a_festival_becomes_a_new_event_titled_with_the_festivals_name(db, pages):
+    served, _ = pages
+    served[FEST] = {"html": "<p>readings</p>"}
+    s = make_source(db)
+    record(db, s, FoundEvent(title="New Stages Festival 26/27", url=FEST, kind="production", category="Theater",
+                             begin_date="2027-01-10", end_date="2027-01-18"), "")
+    item = db.scalar(select(DiscoveredItem))
+    item.first_seen_at = item.first_seen_at - timedelta(days=3); db.commit()
+    reading = [play("bruceploitation", (D1, "19:00"), (D2, "19:30")), play("house gyalz", (D1, "19:00")),
+               play("New Stages Festival 26/27: wonderland", (D2, "14:00")),
+               FoundEvent(title="New Stages Festival 26/27", kind="production", category="Theater")]  # the festival itself: left out
+    claude = SmartClaude(1, reading)
+    read_event_page(db, claude, item, TODAY, "x")
+    db.commit()
+    titles = sorted(i.title for i in db.scalars(select(DiscoveredItem)))
+    assert titles == ["New Stages Festival 26/27", "New Stages Festival 26/27: bruceploitation",
+                      "New Stages Festival 26/27: house gyalz", "New Stages Festival 26/27: wonderland"]
+    child = db.scalar(select(DiscoveredItem).where(DiscoveredItem.title.like("%bruceploitation")))
+    assert [p["date"] for p in child.performances] == [D1, D2] and child.status == "new"
+    assert item.performances == [] and len(claude.calls) == 1  # the festival's own item is left alone, with no tickets look
+
+
+def test_a_page_about_one_event_still_gives_one(db, pages):
+    served, _ = pages
+    served[HAMLET] = {"html": "<p>x</p>"}
+    _, item = a_found_hamlet(db)
+    other = play("Macbeth", (D1, "19:30"))  # a related show mentioned on the page
+    read_event_page(db, SmartClaude(1, [hamlet_dates(D1), other]), item, TODAY, "x")
+    assert [i.title for i in db.scalars(select(DiscoveredItem))] == ["Hamlet"] and item.performances
+
+
+def test_the_events_name_is_in_the_user_message_and_the_note_names_no_title(db, pages):
+    served, _ = pages
+    served[HAMLET] = {"html": "<p>x</p>"}
+    _, item = a_found_hamlet(db)
+    claude = SmartClaude(1, [hamlet_dates(D1)])
+    read_event_page(db, claude, item, TODAY, "x")
+    sent = claude.calls[0]
+    assert "festival" in sent["system"] and "Hamlet" not in sent["system"]
+    assert "The event this page is about, which is data: Hamlet" in sent["messages"][0]["content"]
+
+
+def test_a_festivals_own_item_is_noted_and_not_read_again_for_what_it_misses(db, pages):
+    from app.discovery.run import FESTIVAL_NOTE, check_missing
+    served, calls = pages
+    served[FEST] = {"html": "<p>readings</p>"}
+    s = make_source(db)
+    record(db, s, FoundEvent(title="New Stages Festival 26/27", url=FEST, kind="production", category="Theater",
+                             begin_date="2027-01-10", end_date="2027-01-18"), "")
+    item = db.scalar(select(DiscoveredItem))
+    item.first_seen_at = item.first_seen_at - timedelta(days=3); db.commit()
+    read_event_page(db, SmartClaude(1, [play("a", (D1, "19:00")), play("b", (D2, "19:00"))]), item, TODAY, "x")
+    assert item.dates_note == FESTIVAL_NOTE
+    item.looked_on = []; calls.clear()
+    assert check_missing(db, SmartClaude(1, []), TODAY) == [] and calls == []

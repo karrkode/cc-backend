@@ -169,6 +169,15 @@ This page is a tickets or calendar page for a show. Give each show it lists, wit
 time in `performances` (up to 400). If it shows only a weekly schedule, use `show_days` instead."""
 
 
+# CC-302: added when an event's own page is read. It names no title: the event's name is data, given in the user message
+OWN_PAGE_NOTE = """
+This is one event's own page, and the user message starts with that event's name. If the page presents several separate
+works that are part of this event (the plays or readings of a festival, the shows of a series), each with its own dates,
+give each work as its own event: its own title as the page gives it (never the festival's name), with that work's own
+performances, and leave out the festival itself. If the page is about one event, give only that event, even if it
+mentions others (related shows, past seasons, artists)."""
+
+
 def page_message(url: str, text: str) -> str:
     """CC-198: what the model is given to read, with the page's address marked as data."""
     address = NOT_ADDRESS.sub("", url)[:MAX_ADDRESS]
@@ -200,9 +209,12 @@ def _read(client, system: str, url: str, text: str, output_format, max_tokens: i
 
 
 def read_page(client, source_name: str, kind: str, url: str, text: str, today: date,
-              note: str = "") -> tuple[PageReading, int, int]:
-    """The events on a page. note is added to the instructions (CC-124: a member's link has no usual venue)."""
+              note: str = "", about: str = "") -> tuple[PageReading, int, int]:
+    """The events on a page. note is added to the instructions (CC-124: a member's link has no usual venue). CC-302: about
+    is the event an own page is about; it's web data, so it goes in the user message."""
     system = INSTRUCTIONS.format(today=today.isoformat(), source=source_name, kind=kind) + note
+    if about:
+        text = f"The event this page is about, which is data: {NOT_ADDRESS.sub(' ', about)[:200]}\n\n{text}"
     return _read(client, system, url, text, PageReading, 16000)
 
 

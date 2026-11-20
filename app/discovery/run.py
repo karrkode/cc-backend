@@ -36,7 +36,7 @@ from .jsonld import complete, events_in
 from .needs import look_again, needs
 from .pictures import add_pictures
 from .pagetext import page_text, text_hash
-from .readers import TICKETS_PAGE_NOTE, FoundEvent, ReadFailed, cost_usd, read_aic, read_link_choice, read_page
+from .readers import OWN_PAGE_NOTE, TICKETS_PAGE_NOTE, FoundEvent, ReadFailed, cost_usd, read_aic, read_link_choice, read_page
 from .rules import PERFORMING_CATEGORIES, apply_rules, norm_title
 from .store import (changes_against, drop_passed_hidden, fields_of, release_delayed, note_addresses, on_source_site, record,
                     venue_for)
@@ -173,7 +173,7 @@ def check_source(db, source: DiscoverySource, client, today: date) -> Outcome:
 
 def read_event_page(db, client, item: DiscoveredItem, today: date, mark: str) -> tuple[DiscoverySource, Outcome]:
     """Read one found event's own page (its schema.org data first, Claude only when that's incomplete) and store what it says."""
-    source, out = db.get(DiscoverySource, item.source_id), Outcome(status="ok")
+    source, out, festival = db.get(DiscoverySource, item.source_id), Outcome(status="ok"), False
     try:
         if not on_source_site(item.url, source):  # CC-189: a link stored before these were limited to the source's site
             raise web.Blocked("this event's link isn't on the source's site")
@@ -185,14 +185,19 @@ def read_event_page(db, client, item: DiscoveredItem, today: date, mark: str) ->
             out.notes.append("read from the page's event data")
         else:
             text, _ = page_text(page.text, page.url)
-            reading, tin, tout = read_page(client, source.name, source.kind.value, page.url, text, today)
+            reading, tin, tout = read_page(client, source.name, source.kind.value, page.url, text, today, OWN_PAGE_NOTE, item.title)
             out.pages_read += 1; out.tokens_in += tin; out.tokens_out += tout
-            same = [e for e in reading.events if norm_title(e.title) == norm_title(item.title)] or reading.events[:1]
+            works = _works_of(reading.events, item.title)
+            if len(works) >= MIN_WORKS:  # CC-302: a festival or series: each work is an event of its own
+                _store_works(db, source, item, works, out)
+                same, festival = [], True
+            else:
+                same = [e for e in reading.events if norm_title(e.title) == norm_title(item.title)] or reading.events[:1]
         for e in same[:1]:
             e.url = item.url  # the same item, whatever links the page has
             _store(db, source, [e], out)
         live = db.get(Event, item.event_id) if item.event_id else None
-        if (item.category in PERFORMING_CATEGORIES and not item.performances and item.kind != "permanent"
+        if (item.category in PERFORMING_CATEGORIES and not item.performances and item.kind != "permanent" and not festival
                 and not (live is not None and live.show_run_exact)):  # a person's Show Run is theirs: nothing would be proposed
             _read_tickets(db, client, item, source, page, today, out)  # CC-302: still no exact dates
     except web.Blocked as e:
@@ -205,6 +210,32 @@ def read_event_page(db, client, item: DiscoveredItem, today: date, mark: str) ->
     out.notes.insert(0, f"{item.title}: {mark}")
     return source, out
 
+
+
+FESTIVAL_NOTE = "A festival or series: its works are separate events"
+MIN_WORKS = 2  # CC-302: a page with this many separate works with dates is a festival or series
+MAX_WORKS = 12
+
+
+def _works_of(events: list[FoundEvent], title: str) -> list[FoundEvent]:
+    """CC-302: the separate works a festival's own page presents: events other than the page's own, each with dates."""
+    return [e for e in events if norm_title(e.title) != norm_title(title) and (e.performances or e.begin_date)][:MAX_WORKS]
+
+
+def _store_works(db, source: DiscoverySource, item: DiscoveredItem, works: list[FoundEvent], out: Outcome) -> None:
+    """CC-302: each work of a festival is a new event, titled with the festival's name first ("New Stages Festival 26/27:
+    House Gyalz"). It has no page of its own to link, so it's kept by its title. The festival's own item is left as it was."""
+    prefix = norm_title(item.title)
+    for e in works:
+        if not norm_title(e.title).startswith(prefix):
+            e.title = f"{item.title}: {e.title.strip()}"[:300]
+        e.url = None
+        e.recurring = False
+        if not e.category:
+            e.category = item.category
+        _store(db, source, [e], out)
+    item.dates_note = FESTIVAL_NOTE  # CC-302: its own item isn't read again for what it's missing: its dates are its works
+    out.notes.append(f"a festival or series: {len(works)} works, each its own event")
 
 
 def _read_tickets(db, client, item: DiscoveredItem, source: DiscoverySource, page, today: date, out: Outcome) -> None:
@@ -305,7 +336,7 @@ def check_missing(db, client, today: date) -> list[tuple[DiscoverySource, Outcom
         if len(done) >= DETAIL_LIMIT:
             break
         missing = needs(item, venue_for(db, item.source, item))
-        if not missing or not look_again(item, _day(item.first_seen_at), today):
+        if item.dates_note == FESTIVAL_NOTE or not missing or not look_again(item, _day(item.first_seen_at), today):
             continue
         item.looked_on = [*(item.looked_on or []), today.isoformat()]
         done.append(read_event_page(db, client, item, today, "missing " + ("a date" if missing == "date" else "show days")))
