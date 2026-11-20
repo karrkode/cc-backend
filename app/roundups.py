@@ -140,11 +140,11 @@ def times_on(event: Event, d: date) -> list[str] | None:
     """The start times it's on at on day d ([] = on, time not known), or None when it isn't on that day."""
     if event.begin_date and d < event.begin_date or event.end_date and d > event.end_date:
         return None
-    if event.run_dates:  # CC-96: a fixed run is only on its own dates
-        return [r.time for r in event.run_dates if r.date == d and r.time] if any(r.date == d for r in event.run_dates) else None
-    dated = [p.get("time") or "" for p in event.performances or [] if p.get("date") == d.isoformat()]
-    if dated:
-        return sorted(t for t in dated if t)
+    shows = [r for r in event.shows if r.date == d]
+    if event.show_run_exact:  # CC-96, CC-301: an exact Show Run is only on its own show days, never on the weekly pattern
+        return sorted(r.time for r in shows if r.time) if shows else None
+    if shows:  # found shows: on those days at their times; other days fall back to the weekly pattern
+        return sorted(r.time for r in shows if r.time)
     key = WEEKDAYS[d.weekday()]
     venue = event.venue
     weekly = event.weekly or (venue.show_times if venue else {}) or {}

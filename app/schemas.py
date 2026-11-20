@@ -372,6 +372,7 @@ class ScheduleOut(BaseModel):
     weekly_from: str = ""
     weeks: dict = {}  # CC-88: days of the weekly pattern on some weeks of the month only, {"thu": [1, 3]}
     hours: dict = {}
+    dates_from: str = ""  # CC-301: where dates came from: "event" (a person's exact Show Run), "found" (sourcing's), or ""
 
 
 class CrewPlansOut(BaseModel):
@@ -419,7 +420,10 @@ class EventOut(ORM):
     submitted_by_name: str | None
     pick: PickOut | None = None  # CC-66: the owner's public pick (null when there isn't one)
     schedule: ScheduleOut = ScheduleOut()  # CC-79: for Find an outing; not shown on cards
-    run_dates: list[RunDate] = []  # CC-96: a fixed run's dates, every one (the site shows the upcoming ones)
+    # CC-301: the Show Run, every show including past ones (GET, POST and PATCH /events/{id} only; lists leave it out)
+    show_run: list["Show"] = []
+    # CC-96, LEGACY: the timed shows of an exact Show Run. The live site still reads it; use show_run instead.
+    run_dates: list[RunDate] = []
     crew_plans: list[CrewPlansOut] = []  # CC-75: signed in only: your crew-mates' shared plans
     takes: list[TakeOut] = []  # CC-112: members' shared journal entries (GET /events/<id> only)
 
@@ -518,22 +522,51 @@ class EventAdminPage(BaseModel):
 
 
 class RunDate(BaseModel):
-    """CC-96: one date of a fixed run: its start time, and its end time if known."""
+    """CC-96, LEGACY (CC-301: see Show): one date of a fixed run: its start time, and its end time if known."""
     model_config = ConfigDict(from_attributes=True)
     date: date_
     time: Clock
     end_time: Clock | Literal[""] = ""
 
 
-RUN_DATES_MAX = 30  # CC-96: the product owner's limit; beyond that a weekly schedule fits better
-RunDates = Annotated[list[RunDate], Field(max_length=RUN_DATES_MAX)]
+class Show(BaseModel):
+    """CC-301: one show of an event's Show Run. time is "" when it isn't posted yet; end_time needs a time."""
+    model_config = ConfigDict(from_attributes=True)
+    date: date_
+    time: Clock | Literal[""] = ""
+    end_time: Clock | Literal[""] = ""
 
 
-def _one_time_a_day(v: list[RunDate]) -> list[RunDate]:
-    days = [r.date for r in v]
-    if len(set(days)) != len(days):
-        raise ValueError("Each date can only be chosen once")
-    return sorted(v, key=lambda r: r.date)
+SHOW_RUN_MAX = 500  # CC-301: a safety cap on one event's shows (CC-96's 30 was the product owner's old limit)
+SHOWS_A_DAY_MAX = 6
+RUN_DATES_MAX = 30  # CC-96: still the limit for a link draft (fromlink) and a found event's short run
+ShowRun = Annotated[list[Show], Field(max_length=SHOW_RUN_MAX)]
+RunDates = Annotated[list[RunDate], Field(max_length=SHOW_RUN_MAX)]  # CC-301: legacy run_dates on a PATCH (an admin)
+SubmitRunDates = Annotated[list[RunDate], Field(max_length=RUN_DATES_MAX)]  # CC-301: a member's POST keeps CC-96's 30
+
+
+def _shows_ok(v):
+    """CC-301: one show once (by date and time), at most 6 a day, an untimed show alone on its day, an end after its
+    start; sorted by date then time. Works on Show and RunDate alike."""
+    keys = [(r.date, r.time) for r in v]
+    if len(set(keys)) != len(keys):
+        raise ValueError("Each show can only be listed once (a date with a time)")
+    per_day: dict = {}
+    for r in v:
+        per_day.setdefault(r.date, []).append(r)
+        if r.end_time and not r.time:
+            raise ValueError("A show with an end time needs a start time")
+        if r.end_time and r.end_time <= r.time:
+            raise ValueError("A show has to end after it starts")
+    for day in per_day.values():
+        if len(day) > SHOWS_A_DAY_MAX:
+            raise ValueError(f"At most {SHOWS_A_DAY_MAX} shows a day")
+        if len(day) > 1 and any(not r.time for r in day):
+            raise ValueError("A show with no time has to be the only one that day")
+    return sorted(v, key=lambda r: (r.date, r.time))
+
+
+_one_time_a_day = _shows_ok  # CC-96's name: each (date, time) once. Legacy run_dates always have a time.
 
 
 class _EventFields(BaseModel):
@@ -587,7 +620,7 @@ class EventIn(_EventFields):
     weeks: Weeks = {}  # CC-88: of those days, any on some weeks of the month only
     # CC-96: a fixed run: on these dates only, a time each. Its opening and closing dates are then the first and last
     # of them (begin_date and end_date are set from them), and it has no weekly pattern.
-    run_dates: RunDates = []
+    run_dates: SubmitRunDates = []
 
     _run_dates_once = field_validator("run_dates")(_one_time_a_day)
 
@@ -636,9 +669,14 @@ class EventPatch(BaseModel):
     publish_at: datetime | None = None  # null publishes as soon as the event is approved
     weekly: ShowTimes | None = None  # CC-79: its usual show times, over the venue's; {} goes back to the venue's
     weeks: Weeks | None = None  # CC-88: days of those on some weeks of the month only; {} = every week
-    run_dates: RunDates | None = None  # CC-96: a fixed run's dates (sets the opening and closing dates); [] ends the fixed run
+    # CC-301: the whole Show Run, replaced (admin rows). Not empty: sets begin_date and end_date to the first and last
+    # show, open_run false, weekly and weeks {}. []: removes the Show Run (begin and end come from this request, else stay).
+    show_run: ShowRun | None = None
+    # CC-96, LEGACY: the live site's fixed run: timed shows only; writes the same Show Run. Not together with show_run.
+    run_dates: RunDates | None = None
 
-    _run_dates_once = field_validator("run_dates")(lambda v: v if v is None else _one_time_a_day(v))
+    _show_run_ok = field_validator("show_run")(lambda v: v if v is None else _shows_ok(v))
+    _run_dates_once = field_validator("run_dates")(lambda v: v if v is None else _shows_ok(v))
 
     @field_validator("publish_at")
     @classmethod
@@ -657,9 +695,11 @@ class EventPatch(BaseModel):
     @model_validator(mode="after")
     def _no_nulls_where_required(self):
         # Leaving a field out keeps it; only dates, price and publish time can be cleared with null.
-        for name in ("title", "venue_id", "open_run", "cost_text", "category", "opera", "url", "status", "weekly", "weeks", "run_dates"):
+        for name in ("title", "venue_id", "open_run", "cost_text", "category", "opera", "url", "status", "weekly", "weeks", "show_run", "run_dates"):
             if name in self.model_fields_set and getattr(self, name) is None:
                 raise ValueError(f"{name} can't be empty")
+        if "show_run" in self.model_fields_set and "run_dates" in self.model_fields_set:
+            raise ValueError("Send show_run or run_dates, not both")
         return self
 
 

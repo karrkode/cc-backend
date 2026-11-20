@@ -6,7 +6,7 @@ from sqlalchemy import select
 from app.clock import today_in_chicago
 from app.discovery.readers import FoundEvent, Performance
 from app.discovery.store import record
-from app.models import DiscoveredItem, Event, Venue
+from app.models import DiscoveredItem, Event, EventRunDate, Venue
 
 from .conftest import auth
 from .test_discovery import make_source
@@ -21,11 +21,11 @@ def test_the_schedule_comes_from_the_event_then_its_venue(client, admin_token, d
     venue = db.get(Venue, ev.venue_id)
     venue.show_times, venue.open_hours = {"thu": ["19:30"]}, {"mon": None}
     soon, past = (today_in_chicago() + timedelta(days=3)).isoformat(), (today_in_chicago() - timedelta(days=3)).isoformat()
-    ev.performances = [{"date": past, "time": "19:30"}, {"date": soon, "time": "14:00"}]
+    ev.shows = [EventRunDate(date=date.fromisoformat(d), time=t, origin="found") for d, t in ((past, "19:30"), (soon, "14:00"))]
     db.commit()
     s = schedule_of(client, ev.id)
     assert s == {"dates": [{"date": soon, "time": "14:00"}], "weekly": {"thu": ["19:30"]}, "weekly_from": "venue", "weeks": {},
-                 "hours": {"mon": None}}
+                 "hours": {"mon": None}, "dates_from": "found"}
     h = auth(admin_token)
     assert client.patch(f"/events/{ev.id}", json={"weekly": {"sat": ["20:00"]}}, headers=h).status_code == 200
     s = schedule_of(client, ev.id)
@@ -45,7 +45,7 @@ def test_discovery_passes_dates_on_to_listed_and_approved_events(client, admin_t
     shows = [Performance(date=later, time="19:30"), Performance(date=later, time="14:00"), Performance(date=later, time="19:30")]
     record(db, s, FoundEvent(title="Hamlet", kind="production", category="Theater", performances=shows), "")
     db.commit(); db.refresh(listed)
-    assert listed.performances == [{"date": later, "time": "14:00"}, {"date": later, "time": "19:30"}]  # sorted, no repeats
+    assert [(r.date.isoformat(), r.time, r.origin) for r in listed.shows] == [(later, "14:00", "found"), (later, "19:30", "found")]  # sorted, no repeats
     # approving a found event copies its dates too
     record(db, s, FoundEvent(title="Macbeth", url="https://goodman.example/macbeth", kind="production", category="Theater",
                              performances=[Performance(date=later, time="20:00")]), "")
@@ -54,4 +54,4 @@ def test_discovery_passes_dates_on_to_listed_and_approved_events(client, admin_t
     body = {"title": "Macbeth", "category": "Theater", "venue_id": s.venue_id, "url": item.url, "publish": "now"}
     r = client.post(f"/admin/discovery/items/{item.id}/approve", json=body, headers=auth(admin_token))
     db.expire_all()
-    assert db.get(Event, r.json()["event"]["id"]).performances == [{"date": later, "time": "20:00"}]
+    assert [(r.date.isoformat(), r.time, r.origin) for r in db.get(Event, r.json()["event"]["id"]).shows] == [(later, "20:00", "found")]

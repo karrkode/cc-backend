@@ -35,8 +35,9 @@ def test_checks(client, user_token):
     assert submit(client, h, [{"date": day(-1), "time": "20:00"}]).status_code == 422  # in the past
     assert submit(client, h, [{"date": day(1)}]).status_code == 422  # every date needs a time
     assert submit(client, h, [{"date": day(1), "time": "8pm"}]).status_code == 422
-    assert submit(client, h, [{"date": day(1), "time": "20:00"}, {"date": day(1), "time": "21:00"}]).status_code == 422  # twice
-    assert submit(client, h, [{"date": day(i), "time": "20:00"} for i in range(31)]).status_code == 422  # 30 at most
+    assert submit(client, h, [{"date": day(1), "time": "20:00"}, {"date": day(1), "time": "20:00"}]).status_code == 422  # twice
+    assert submit(client, h, [{"date": day(1), "time": "14:00"}, {"date": day(1), "time": "20:00"}]).status_code == 201  # CC-301: a matinee and an evening
+    assert submit(client, h, [{"date": day(i), "time": "20:00"} for i in range(31)]).status_code == 422  # CC-301: a submission keeps the 30 cap (500 is for an admin's PATCH)
     assert submit(client, h, [{"date": day(i), "time": "20:00"} for i in range(30)]).status_code == 201
     assert submit(client, h, [{"date": day(0), "time": "20:00"}]).status_code == 201  # today is fine
 
@@ -70,7 +71,7 @@ def test_a_past_date_it_already_had_can_stay(client, admin_token, db):
     from app.models import Event, EventRunDate
     e = submit(client, auth(admin_token), [{"date": day(2), "time": "20:00"}], publish="now").json()
     ev = db.get(Event, e["id"])
-    ev.run_dates.append(EventRunDate(date=T - timedelta(days=3), time="20:00"))
+    ev.shows.append(EventRunDate(date=T - timedelta(days=3), time="20:00"))
     db.commit()
     r = client.patch(f"/events/{e['id']}", json={"run_dates": [{"date": day(-3), "time": "20:00"}, {"date": day(4), "time": "20:00"}]},
                      headers=auth(admin_token))

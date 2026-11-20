@@ -47,7 +47,7 @@ def test_this_weekend_lists_what_is_on_each_day_once(client, make_event, db):
     sunday_show.weekly = {"sun": ["14:00"]}
     fixed = make_event(title="Fixed Run Elsewhere", venue_name="Fixed Hall", begin=TODAY - timedelta(days=10),
                        end=SUN + timedelta(days=10))
-    fixed.run_dates = [EventRunDate(date=SUN + timedelta(days=3), time="19:30")]
+    fixed.shows = [EventRunDate(date=SUN + timedelta(days=3), time="19:30")]
     db.commit()
 
     html = page(client, "this-weekend")
@@ -223,9 +223,10 @@ def test_roundups_are_lakefront_rows_under_day_heads(client, make_event, db):
 def test_a_time_that_cant_be_read_is_left_out_and_the_page_still_renders(client, make_event, db):
     """CC-198: older found dates can hold anything a page said."""
     day = SUN.isoformat()
-    make_event(title="Half Readable", venue_name="Hall One", begin=SUN, end=SUN).performances = [
-        {"date": day, "time": "8ish"}, {"date": day, "time": "20:00"}, {"date": day, "time": "25:99"}]
-    make_event(title="Not Readable", venue_name="Hall Two", begin=SUN, end=SUN).performances = [{"date": day, "time": "evening"}]
+    # CC-301: found shows; the migration makes an unreadable time "", but older rows or a later reader may hold anything
+    make_event(title="Half Readable", venue_name="Hall One", begin=SUN, end=SUN).shows = [
+        EventRunDate(date=SUN, time=t, origin="found") for t in ("8ish", "20:00", "25:99")]
+    make_event(title="Not Readable", venue_name="Hall Two", begin=SUN, end=SUN).shows = [EventRunDate(date=SUN, time="", origin="found")]
     db.commit()
     sunday = page(client, "this-weekend").split(f'id="h-{day}"')[1]
     assert "Half Readable" in sunday and "8 pm" in sunday and "8ish" not in sunday

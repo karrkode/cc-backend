@@ -28,7 +28,7 @@ from ..clock import CHICAGO, utcnow
 from ..addresses import found_address
 from ..areas import is_out_of_town
 from ..categories import BY_SOURCE_KIND, REMOVED
-from ..models import DiscoveredItem, DiscoverySource, Event, SkipRule, Venue, VenueAddressSuggestion
+from ..models import FOUND, DiscoveredItem, DiscoverySource, Event, EventRunDate, SkipRule, Venue, VenueAddressSuggestion
 from .jsonld import event_addresses
 from .readers import FoundEvent
 from .rules import norm_title
@@ -236,6 +236,9 @@ def changes_against(event: Event, f: dict) -> dict:
         out["weekly"] = [None, f["weekly"]]
         if f.get("weeks"):
             out["weeks"] = [None, f["weeks"]]
+    if event.show_run_exact:  # CC-301: a person's Show Run owns the dates; its first and last show are the opening and closing
+        for k in ("begin_date", "end_date", "weekly", "weeks"):
+            out.pop(k, None)
     return out
 
 
@@ -255,15 +258,21 @@ def _same_title(db, source: DiscoverySource, found: FoundEvent, key: str):
     return None
 
 
-def sync_performances(db, item: DiscoveredItem) -> None:
-    """CC-79: give the catalog event this item is the dates and times found for it (when any were found)."""
+def sync_found_shows(db, item: DiscoveredItem) -> None:
+    """CC-79, CC-301: give the catalog event this item is the dates and times found for it (when any were found), as
+    its found shows. Only when it has no shows or every one is found: a Show Run a person saved is never replaced
+    (until CC-302). Replaces them all, and never touches begin_date or end_date."""
     if not item.event_id or not item.performances:
         return
     event = db.get(Event, item.event_id)
-    found = sorted({(p.get("date"), p.get("time")) for p in item.performances if p.get("date")}, key=lambda dt: (dt[0], dt[1] or ""))
-    dates = [{"date": d, "time": t} for d, t in found]
-    if event is not None and dates and dates != (event.performances or []):
-        event.performances = dates
+    if event is None or any(r.origin != FOUND for r in event.shows):
+        return
+    found = {(day, _hhmm(p.get("time")) or "") for p in item.performances if (day := _date(p.get("date")))}
+    found = {(d, t) for d, t in found if t or not any(d == d2 and t2 for d2, t2 in found)}  # an untimed one yields to a timed one that day
+    if found and found != {(r.date, r.time) for r in event.shows}:
+        event.shows.clear()
+        db.flush()  # the old ones go first, so a show kept doesn't clash with itself
+        event.shows = [EventRunDate(date=d, time=t, origin=FOUND) for d, t in sorted(found)]
 
 
 def last_date(item: DiscoveredItem) -> date | None:
@@ -311,7 +320,7 @@ def record(db, source: DiscoverySource, found: FoundEvent, skip: str) -> str:
     what = _record(db, source, found, skip)
     item = db.scalar(select(DiscoveredItem).where(DiscoveredItem.source_id == source.id, DiscoveredItem.key == key_for(found)))
     if item is not None:
-        sync_performances(db, item)
+        sync_found_shows(db, item)
     return what
 
 
