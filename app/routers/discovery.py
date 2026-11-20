@@ -447,10 +447,12 @@ def _settled(item: DiscoveredItem, event: Event | None) -> str:
 
 
 def _apply_shows(db: DB, event: Event, found: dict) -> None:
-    """CC-302: the shows from an accepted update. Shows already past stay as they are; the ones still to come become the found
-    shows (dates that have passed since the proposal was made are left out)."""
+    """CC-302: the shows from an accepted update. Shows already past stay, and so do ones outside the span from the found
+    list's first date to its last (a tickets page may list only part of a run); inside the span they become the found shows
+    (dates that have passed since the proposal was made are left out)."""
     today = chicago_day(utcnow())
-    for r in [r for r in event.shows if r.date >= today]:
+    first, last = (date.fromisoformat(min(found)), date.fromisoformat(max(found))) if found else (today, today)
+    for r in [r for r in event.shows if max(today, first) <= r.date <= last]:  # only the span the source speaks for
         event.shows.remove(r)
     db.flush()  # the old ones go first, so a show kept doesn't clash with itself
     kept = {(r.date, r.time) for r in event.shows}

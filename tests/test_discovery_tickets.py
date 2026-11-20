@@ -162,7 +162,8 @@ def test_accepting_puts_the_found_dates_on_the_live_event(client, admin_token, d
     assert [c["field"] for c in shown["proposed"]] == ["performances"] and shown["dates_note"].startswith("Exact dates read")
     assert client.post(f"/admin/discovery/items/{item.id}/accept", headers=h).json()["status"] == "approved"
     db.expire_all()
-    assert sorted((r.date.isoformat(), r.time, r.origin) for r in ev.shows) == [(D1, "19:30", FOUND), (D2, "19:30", FOUND)]
+    early = (TODAY + timedelta(days=61)).isoformat()  # before the found list's first date: not its to change
+    assert sorted((r.date.isoformat(), r.time, r.origin) for r in ev.shows) == [(early, "19:30", FOUND), (D1, "19:30", FOUND), (D2, "19:30", FOUND)]
 
 
 def test_a_people_owned_show_run_gets_no_proposal(db, make_event):
@@ -335,3 +336,20 @@ def test_a_tickets_page_may_name_the_show_a_little_differently():
     from app.discovery.run import _same_show
     assert _same_show("Mrs. Doubtfire (Chicago)", "Mrs. Doubtfire") and _same_show("Hamlet", "Hamlet - Tickets")
     assert not _same_show("Macbeth", "Hamlet") and not _same_show("Ham", "Hamlet") and not _same_show("", "Hamlet")
+
+
+def test_a_source_that_lists_only_part_of_a_run_leaves_the_later_shows_alone(client, admin_token, db, make_event):
+    """Ticketmaster's page carries a show's first 20 results: accepting them mustn't drop the shows after them."""
+    _, item, ev = a_live_hamlet(db, make_event)
+    later = TODAY + timedelta(days=90)
+    ev.shows.append(EventRunDate(date=later, time="19:30", origin=FOUND))
+    db.commit()
+    f = {"cost_text": "", "min_price": None, "begin_date": None, "end_date": None, "weekly": {}, "weeks": {},
+         "performances": [{"date": D1, "time": "19:30"}, {"date": D2, "time": "19:30"}]}
+    diff = changes_against(ev, f)
+    assert diff["performances"][0] == {}  # nothing of the catalog's falls inside the span D1..D2
+    item.status, item.changes = "update", diff
+    db.commit()
+    assert client.post(f"/admin/discovery/items/{item.id}/accept", headers=auth(admin_token)).status_code == 200
+    db.expire_all()
+    assert later in [r.date for r in ev.shows] and {D1, D2} <= {r.date.isoformat() for r in ev.shows}

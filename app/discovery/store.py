@@ -251,6 +251,10 @@ def changes_against(event: Event, f: dict) -> dict:
     new_shows = _show_map(f.get("performances"), chicago_day(utcnow()))
     if new_shows and not event.show_run_exact:  # CC-302: dates found on a tickets or calendar page go to review, never straight in
         now_shows = _show_map([{"date": r.date.isoformat(), "time": r.time} for r in event.shows], chicago_day(utcnow()))
+        # CC-302: a source may list only part of a run (Ticketmaster's page carries its first 20 shows), so it speaks only
+        # for the days from its first to its last date; shows the catalog has outside that span aren't differences
+        first, last = min(new_shows), max(new_shows)
+        now_shows = {d: t for d, t in now_shows.items() if first <= d <= last}
         if new_shows != now_shows:
             out["performances"] = [now_shows, new_shows]
     if event.show_run_exact:  # CC-301: a person's Show Run owns the dates; its first and last show are the opening and closing
