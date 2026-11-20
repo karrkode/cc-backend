@@ -654,6 +654,15 @@ class EventIn(_EventFields):
         return self
 
 
+class FoundApproveIn(EventIn):
+    """CC-308: approving a found event from the sourcing page's calendar. show_run, when sent, is the event's whole Show Run
+    exactly as the admin left it (the opening and closing dates come from its first and last show); left out, approval works
+    as before (CC-96 run_dates, begin_date and end_date)."""
+    show_run: ShowRun | None = None
+
+    _show_run_once = field_validator("show_run")(lambda v: v if v is None else _shows_ok(v))
+
+
 class EventPatch(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=300)
     venue_id: int | None = None
@@ -1134,6 +1143,8 @@ class DiscoveredItemOut(ORM):
     dates_timed: bool = False  # CC-88: some of those dates have start times
     # CC-212: for one on for under a week, its listed dates and times in that run, to start the form's fixed run with
     short_dates: list[dict] = []
+    # CC-308: every date and time found, for the approve form's Show Run calendar (at most SHOW_RUN_MAX); [] when none
+    performances: list[dict] = []
     weekly: dict = {}  # CC-88: the show days and times the source gave
     weeks: dict = {}  # and which of those days are on some weeks of the month only
     venue_show_times: dict = {}  # the venue's usual show times, to start the form with

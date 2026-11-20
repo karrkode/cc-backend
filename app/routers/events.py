@@ -264,7 +264,7 @@ def new_event(db: DB, body: EventIn, user) -> Event:
     category, opera = category_for(body, venue, user)
     if status_ == EventStatus.approved:
         accept_venue(venue, category, opera)
-    return Event(**body.model_dump(exclude={"venue_id", "venue", "publish", "publish_at", "run_dates", "category", "opera"}),
+    return Event(**body.model_dump(exclude={"venue_id", "venue", "publish", "publish_at", "run_dates", "show_run", "category", "opera"}),
                  category=category, opera=opera, venue_id=venue.id, submitted_by=user.id, status=status_,
                  publish_at=publish_at, shows=_shows_of(body.run_dates, _origin_for(user)))
 

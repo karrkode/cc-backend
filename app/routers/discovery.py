@@ -15,13 +15,13 @@ from ..discovery.needs import needs
 from ..discovery.readers import cost_usd
 from ..discovery.recap import budget_note, found_by_week, gather, next_send
 from ..discovery.rules import norm_title
-from ..discovery.store import matching_rule, possible_duplicates, release_delayed, rule_reason, sync_found_shows, venue_for
+from ..discovery.store import _date, _hhmm, matching_rule, possible_duplicates, release_delayed, rule_reason, sync_found_shows, venue_for
 from ..discovery.venuesources import covers, grid_numbers, state_of
 from ..models import FOUND, DiscoveredItem, DiscoveryCheck, DiscoverySource, Event, EventRunDate, SkipRule, Venue
 from ..schemas import (BatchHeld, BatchIn, BatchOut, BudgetIn, DelayIn, DiscoveredItemOut, DiscoveredPage, DiscoveryOverview, DiscoverySourceOut, DiscoverySourcePatch,
-                       EventIn, EventRef, FoundChange, RUN_DATES_MAX, RejectIn, RejectOut, SkipRuleOut, SourcingCount, SourcingSummary,
+                       EventIn, EventRef, FoundApproveIn, FoundChange, RUN_DATES_MAX, SHOW_RUN_MAX, RejectIn, RejectOut, SkipRuleOut, SourcingCount, SourcingSummary,
                        SourcingUnreadable, SourcingWeek, UnreadableSource)
-from .events import new_event
+from .events import _no_past_shows, new_event
 
 router = APIRouter(prefix="/admin/discovery", tags=["discovery"])
 
@@ -199,6 +199,7 @@ def _item_out(db: DB, item: DiscoveredItem, dups: dict | None = None) -> Discove
     if item.begin_date and item.end_date and 0 <= (item.end_date - item.begin_date).days < SHORT_RUN_DAYS:
         first, last = item.begin_date.isoformat(), item.end_date.isoformat()
         out.short_dates = [p for p in item.performances or [] if first <= (p.get("date") or "") <= last][:RUN_DATES_MAX]
+    out.performances = [{"date": d.isoformat(), "time": t} for d, t in _found_shows(item)]
     out.venue_show_times = venue.show_times if venue is not None else {}
     if venue is not None:  # CC-125: the approve form starts with the venue's default category
         out.venue_category, out.venue_opera = venue.category, venue.opera
@@ -320,13 +321,24 @@ def as_found(db: DB, item: DiscoveredItem, venue: Venue | None, duplicate: bool)
     return (None, missing) if missing else (body, "")
 
 
-def _add_to_catalog(db: DB, item: DiscoveredItem, body: EventIn, user) -> None:
+def _found_shows(item: DiscoveredItem) -> list[tuple[date, str]]:
+    """CC-308: the item's dates and times as the event's found shows would be (sync_found_shows): an untimed one yields to
+    a timed one that day. Sorted, at most SHOW_RUN_MAX."""
+    found = {(day, _hhmm(p.get("time")) or "") for p in item.performances or [] if (day := _date(p.get("date")))}
+    return sorted((d, t) for d, t in found if t or not any(d == d2 and t2 for d2, t2 in found))[:SHOW_RUN_MAX]
+
+
+def _add_to_catalog(db: DB, item: DiscoveredItem, body: EventIn, user, shows: list | None = None) -> None:
     event = new_event(db, body, user)
     event.found_by_id = item.source_id
+    if shows is not None:  # CC-308: the calendar's shows are the Show Run. All "admin": an exact run (Event.show_run_exact) has
+        # a show that isn't from a source, and the event is then on those dates only, not on its venue's weekly pattern
+        event.shows = [EventRunDate(date=s.date, time=s.time, end_time=s.end_time, origin="admin") for s in shows]
     db.add(event)
     db.flush()
     item.status, item.event_id, item.skip_reason = "approved", event.id, ""
-    sync_found_shows(db, item)  # CC-79: its dates and times, for Find an outing
+    if shows is None:
+        sync_found_shows(db, item)  # CC-79: its dates and times, for Find an outing
 
 
 @router.post("/items/batch", response_model=BatchOut)
@@ -354,16 +366,23 @@ def batch(body: BatchIn, db: DB, user: AdminUser):
 
 
 @router.post("/items/{item_id}/approve", response_model=DiscoveredItemOut)
-def approve(item_id: int, body: EventIn, db: DB, user: AdminUser):
+def approve(item_id: int, body: FoundApproveIn, db: DB, user: AdminUser):
     """Add a found event to the catalog, as edited: live now, at a set time, or waiting for review."""
     item = _item(db, item_id)
     if item.status not in ("new", "rejected", "skipped", "hidden"):
         raise HTTPException(status.HTTP_409_CONFLICT, "This one is already in the catalog")
-    missing = still_needs(db, item, body)
-    if missing:  # CC-88: the approve form asks for these
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
-                            "Add the date it opens." if missing == "date" else "Choose the days it's on, with a start time for each.")
-    _add_to_catalog(db, item, body, user)
+    shows = body.show_run
+    if shows is not None:  # CC-308: the calendar is the dates; a day that has passed only where the source found a show
+        if not shows:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Add at least one show.")
+        _no_past_shows(shows, {d for d, _ in _found_shows(item)})
+        body.begin_date, body.end_date, body.open_run, body.weekly, body.weeks = shows[0].date, shows[-1].date, False, {}, {}
+    else:
+        missing = still_needs(db, item, body)
+        if missing:  # CC-88: the approve form asks for these
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
+                                "Add the date it opens." if missing == "date" else "Choose the days it's on, with a start time for each.")
+    _add_to_catalog(db, item, body, user, shows)
     db.commit()
     return _item_out(db, item)
 
