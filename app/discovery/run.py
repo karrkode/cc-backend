@@ -251,7 +251,7 @@ def _look_for_dates(db, client, item: DiscoveredItem, source: DiscoverySource, p
         item.dates_note = keep or f"Couldn't read {link}: {e}"[:MAX_REFUSED]
         out.notes.append(f"Couldn't read {link}: {e}"[:MAX_REFUSED])
         return
-    data = [e for e in events_in(tpage.text, tpage.url, source.kind.value) if norm_title(e.title) == norm_title(item.title)]
+    data = [e for e in events_in(tpage.text, tpage.url, source.kind.value) if _same_show(e.title, item.title)]
     found = data[0].performances if data else []
     if not found:
         text, _ = page_text(tpage.text, tpage.url)
@@ -263,7 +263,7 @@ def _look_for_dates(db, client, item: DiscoveredItem, source: DiscoverySource, p
             return
         out.pages_read += 1; out.tokens_in += tin; out.tokens_out += tout
         # a title that matches: a link to another show's page must not give this show its dates
-        match = [e for e in reading.events if norm_title(e.title) == norm_title(item.title)]
+        match = [e for e in reading.events if _same_show(e.title, item.title)]
         found = match[0].performances if match else []
     shows = fields_of(FoundEvent(title=item.title, kind="production", performances=found))["performances"]
     if not shows:
@@ -278,6 +278,13 @@ def _look_for_dates(db, client, item: DiscoveredItem, source: DiscoverySource, p
         if diff and diff.get("performances") != (item.changes or {}).get("performances"):  # new, not already proposed or dismissed
             item.changes = {**(item.changes or {}), **diff} if item.status == "update" else diff
             item.status = "update"  # a live event keeps its dates until an admin accepts
+
+
+def _same_show(a: str, b: str) -> bool:
+    """CC-302: a tickets page names a show a little differently ("Mrs. Doubtfire (Chicago)", "Hamlet - Tickets"): the same
+    words, or one's whole words inside the other's. A different show's page still doesn't match."""
+    na, nb = f" {norm_title(a)} ", f" {norm_title(b)} "
+    return len(na) > 5 and len(nb) > 5 and (na in nb or nb in na)
 
 
 def _refused_links(note: str) -> set[str]:

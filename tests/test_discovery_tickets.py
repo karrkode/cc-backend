@@ -329,3 +329,9 @@ def test_a_redirect_to_a_site_that_opts_out_of_ai_isnt_followed(monkeypatch):
         handler.redirect_request(req, None, 302, "Found", {}, "https://goodman.example/private/x")
     ok = handler.redirect_request(req, None, 302, "Found", {}, "https://goodman.example/tickets")
     assert ok.polite == (True, 5, False)  # the next hop is checked the same way
+
+
+def test_a_tickets_page_may_name_the_show_a_little_differently():
+    from app.discovery.run import _same_show
+    assert _same_show("Mrs. Doubtfire (Chicago)", "Mrs. Doubtfire") and _same_show("Hamlet", "Hamlet - Tickets")
+    assert not _same_show("Macbeth", "Hamlet") and not _same_show("Ham", "Hamlet") and not _same_show("", "Hamlet")
