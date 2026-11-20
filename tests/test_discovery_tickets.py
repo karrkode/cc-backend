@@ -308,3 +308,24 @@ def test_every_refusal_is_remembered_and_a_failed_link_question_keeps_the_page_r
     _, item2 = a_found_hamlet(db) if False else (None, item)
     _, out = read_event_page(db, BadChoice(1, bare), item2, TODAY, "x")
     assert out.status == "ok" and out.tokens_in >= 10
+
+
+# ---- CC-302: the polite rules hold on every redirect hop -----------------------------------------
+
+def test_a_redirect_to_a_site_that_opts_out_of_ai_isnt_followed(monkeypatch):
+    """A tracker or the theater's own site may send a ticket link on to a box office: that site's robots.txt counts too."""
+    import urllib.request
+    robots = {"https://box.example": "User-agent: ClaudeBot\nDisallow: /\n", "https://goodman.example": "User-agent: *\nDisallow:\n"}
+    monkeypatch.setattr(web, "robots_for", lambda url, timeout=1: web.parse_robots(robots["https://" + url.split("/")[2]]))
+    monkeypatch.setattr(web, "_check_form", lambda url: None)
+    monkeypatch.setitem(web._last_hit, "box.example", 0)
+    req = urllib.request.Request("https://goodman.example/go")
+    req.polite = (True, 5, False)
+    handler = web._CheckedRedirects()
+    with pytest.raises(web.Blocked, match="opts out of AI"):
+        handler.redirect_request(req, None, 302, "Found", {}, "https://box.example/hamlet")
+    with pytest.raises(web.Blocked, match="robots.txt asks"):  # and a same-site hop must still be a page robots.txt allows
+        monkeypatch.setitem(robots, "https://goodman.example", "User-agent: *\nDisallow: /private\n")
+        handler.redirect_request(req, None, 302, "Found", {}, "https://goodman.example/private/x")
+    ok = handler.redirect_request(req, None, 302, "Found", {}, "https://goodman.example/tickets")
+    assert ok.polite == (True, 5, False)  # the next hop is checked the same way
