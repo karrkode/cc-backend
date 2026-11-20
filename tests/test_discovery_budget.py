@@ -92,7 +92,8 @@ def test_event_pages_are_skipped_when_theres_nothing_to_learn(db, pages):  # noq
     s = make_source(db)
     today = today_in_chicago()  # discovery's "found today" is the Chicago day, not the machine's (UTC on CI)
     soon = FoundEvent(title="Soon", url="https://goodman.example/soon", kind="production", category="Theater",
-                      begin_date=(today + timedelta(days=5)).isoformat())
+                      begin_date=(today + timedelta(days=5)).isoformat(),  # CC-302: with exact dates; one without is read (test_discovery_tickets)
+                      performances=[Performance(date=(today + timedelta(days=5)).isoformat(), time="19:30")])
     known = FoundEvent(title="Known", url="https://goodman.example/known", kind="production", category="Theater",
                        begin_date=(today + timedelta(days=40)).isoformat(), cost_text="$30",
                        performances=[Performance(date=(today + timedelta(days=40)).isoformat(), time="19:30")])

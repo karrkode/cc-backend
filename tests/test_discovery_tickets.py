@@ -353,3 +353,36 @@ def test_a_source_that_lists_only_part_of_a_run_leaves_the_later_shows_alone(cli
     assert client.post(f"/admin/discovery/items/{item.id}/accept", headers=auth(admin_token)).status_code == 200
     db.expire_all()
     assert later in [r.date for r in ev.shows] and {D1, D2} <= {r.date.isoformat() for r in ev.shows}
+
+
+# ---- CC-302: found with the Blue Man Group page: a show opening within a week, or running, still lacked its dates ----
+
+def a_show_found_days_ago(db, begin, end):
+    from app.clock import utcnow
+    s = make_source(db)
+    record(db, s, FoundEvent(title="Hamlet", url=HAMLET, kind="production", category="Theater", begin_date=begin.isoformat(),
+                             end_date=end.isoformat()), "")
+    item = db.scalar(select(DiscoveredItem).where(DiscoveredItem.title == "Hamlet"))
+    item.first_seen_at = utcnow() - timedelta(days=3)
+    db.commit()
+    return item
+
+
+@pytest.mark.parametrize("opens", [5, -2])  # opens in 5 days (within a week), and is already running
+def test_a_show_without_exact_dates_is_read_even_when_it_opens_soon_or_is_running(db, pages, opens):
+    from app.discovery.run import check_details
+    served, calls = pages
+    served[HAMLET] = {"html": '<h1>Hamlet</h1><p>Tue Nov 24 7:00 PM</p>'}
+    item = a_show_found_days_ago(db, TODAY + timedelta(days=opens), TODAY + timedelta(days=opens + 20))
+    claude = SmartClaude(1, [hamlet_dates(D1, D2)])
+    done = check_details(db, claude, TODAY)
+    assert len(done) == 1 and [p["date"] for p in item.performances] == [D1, D2]
+
+
+def test_a_show_that_already_has_exact_dates_isnt_read_again_when_it_opens_soon(db, pages):
+    from app.discovery.run import check_details
+    served, calls = pages
+    served[HAMLET] = {"html": "<h1>Hamlet</h1>"}
+    item = a_show_found_days_ago(db, TODAY + timedelta(days=5), TODAY + timedelta(days=25))
+    item.performances = [{"date": D1, "time": "19:30"}]; db.commit()
+    assert check_details(db, SmartClaude(1, []), TODAY) == [] and calls == []

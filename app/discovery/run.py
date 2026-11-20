@@ -25,7 +25,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from ..clock import chicago_day, utcnow
 from ..models import DiscoveredItem, DiscoveryCheck, DiscoverySource, Event
@@ -318,7 +318,8 @@ def check_details(db, client, today: date, limit: int = DETAIL_LIMIT) -> list[tu
         return []
     items = db.scalars(select(DiscoveredItem).join(DiscoverySource)
                        .where(DiscoveredItem.status.in_(["new", "listed", "update", "approved"]), DiscoveredItem.url != "",
-                              DiscoveredItem.begin_date > today, DiscoverySource.active, DiscoverySource.reader == "claude")
+                              or_(DiscoveredItem.begin_date > today, DiscoveredItem.end_date >= today),  # CC-302: running now too
+                       DiscoverySource.active, DiscoverySource.reader == "claude")
                        .order_by(DiscoveredItem.begin_date)).all()
     done = []
     for item in items:
@@ -331,7 +332,10 @@ def check_details(db, client, today: date, limit: int = DETAIL_LIMIT) -> list[tu
         found_today = item.first_seen_at and _day(item.first_seen_at) >= today  # its list page was just read
         if found_today:
             continue  # the next run looks again
-        if days < DETAIL_SOON_DAYS or (item.cost_text and item.performances):  # too soon, or nothing left to learn
+        # too soon, or nothing left to learn. CC-302: a performance still without exact dates is read however soon it opens
+        # (or even while it runs): its own page or tickets page is where the dates are, and they matter most now
+        wants_dates = item.category in PERFORMING_CATEGORIES and not item.performances and item.kind != "permanent"
+        if (days < DETAIL_SOON_DAYS and not wants_dates) or (item.cost_text and item.performances):
             item.detail_checks = sorted({*(item.detail_checks or []), *DETAIL_DAYS})
             continue
         source, out = read_event_page(db, client, item, today, f"{mark} days before opening")
