@@ -17,7 +17,7 @@ from ..discovery.recap import budget_note, found_by_week, gather, next_send
 from ..discovery.rules import norm_title
 from ..discovery.store import matching_rule, possible_duplicates, release_delayed, rule_reason, sync_found_shows, venue_for
 from ..discovery.venuesources import covers, grid_numbers, state_of
-from ..models import DiscoveredItem, DiscoveryCheck, DiscoverySource, Event, SkipRule, Venue
+from ..models import FOUND, DiscoveredItem, DiscoveryCheck, DiscoverySource, Event, EventRunDate, SkipRule, Venue
 from ..schemas import (BatchHeld, BatchIn, BatchOut, BudgetIn, DelayIn, DiscoveredItemOut, DiscoveredPage, DiscoveryOverview, DiscoverySourceOut, DiscoverySourcePatch,
                        EventIn, EventRef, FoundChange, RUN_DATES_MAX, RejectIn, RejectOut, SkipRuleOut, SourcingCount, SourcingSummary,
                        SourcingUnreadable, SourcingWeek, UnreadableSource)
@@ -446,6 +446,16 @@ def _settled(item: DiscoveredItem, event: Event | None) -> str:
     return "approved" if event is not None and event.found_by_id == item.source_id else "listed"
 
 
+def _apply_shows(db: DB, event: Event, found: dict) -> None:
+    """CC-302: the shows from an accepted update. Shows already past stay as they are; the rest become found shows."""
+    today = chicago_day(utcnow())
+    keep = [r for r in event.shows if r.date < today]
+    event.shows.clear()
+    db.flush()
+    new = [EventRunDate(date=date.fromisoformat(d), time=t, origin=FOUND) for d, times in found.items() for t in times]
+    event.shows = [*keep, *new]
+
+
 @router.post("/items/{item_id}/accept", response_model=DiscoveredItemOut)
 def accept(item_id: int, db: DB, _: AdminUser):
     """Apply a proposed update (a price added, dates moved) to the catalog event."""
@@ -466,6 +476,8 @@ def accept(item_id: int, db: DB, _: AdminUser):
             event.weekly = found or {}
         elif field == "weeks":
             event.weeks = found or {}
+        elif field == "performances" and not event.show_run_exact:  # CC-302: found shows replace the found ones still to come
+            _apply_shows(db, event, found or {})
     if event.end_date:
         event.open_run = False
     if event.begin_date and event.end_date and event.end_date < event.begin_date:

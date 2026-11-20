@@ -857,6 +857,8 @@ class DiscoveredItem(Base):
     # again because a date or show days were missing (once after it's found, then weekly for 4 weeks)
     weekly: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
     looked_on: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
+    # CC-302: what the last look for exact dates on a tickets or calendar page found ("Refused: <address>: why", or why none)
+    dates_note: Mapped[str] = mapped_column(String(400), default="", server_default="")
     weeks: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")  # some weeks of the month only, as on events
     # CC-257: a hidden item an admin delayed; it goes back to "new" once this moment has passed (store.release_delayed)
     delayed_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)

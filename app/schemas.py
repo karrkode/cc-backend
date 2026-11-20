@@ -1092,7 +1092,7 @@ class RoundupIntroIn(BaseModel):
 
 
 class FoundChange(BaseModel):
-    field: str  # cost_text | min_price | begin_date | end_date | weekly
+    field: str  # cost_text | min_price | begin_date | end_date | weekly | performances (CC-302)
     listed: str | float | dict | None  # what the catalog says
     found: str | float | dict | None  # what the source says now (weekly: show days, {"thu": ["20:00"]})
 
@@ -1139,6 +1139,7 @@ class DiscoveredItemOut(ORM):
     venue_show_times: dict = {}  # the venue's usual show times, to start the form with
     needs: str = ""  # CC-88: "date" or "show_days" while it's missing them; "" when it can be approved as it is
     looked_on: list[str] = []  # the days its own page was read again for what's missing
+    dates_note: str = ""  # CC-302: how the look for exact dates on a tickets or calendar page went
     proposed: list[FoundChange] = []  # for "update": what would change
     event: EventRef | None = None  # the catalog event, once listed or approved
     possible_duplicate: EventRef | None = None
