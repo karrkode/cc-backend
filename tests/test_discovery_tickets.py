@@ -24,6 +24,7 @@ TODAY = today_in_chicago()
 HAMLET = "https://goodman.example/shows/hamlet"
 BOX = "https://tickets.example/hamlet"
 D1, D2 = (TODAY + timedelta(days=70)).isoformat(), (TODAY + timedelta(days=72)).isoformat()
+D3 = (TODAY + timedelta(days=74)).isoformat()
 EVENT_PAGE = f'<h1>Hamlet</h1><p>Opens in the new year.</p><nav><a href="{BOX}">Buy Tickets</a> <a href="/about">About</a></nav>'
 
 
@@ -78,7 +79,7 @@ def test_an_event_page_that_already_has_dates_reads_nothing_more(db, pages):
     served, calls = pages
     served[HAMLET], served[BOX] = {"html": EVENT_PAGE}, {"html": "<p>dates</p>"}
     _, item = a_found_hamlet(db)
-    read_event_page(db, SmartClaude(1, [FoundEvent(title="Hamlet", kind="production", category="Theater")], [hamlet_dates(D1)]), item, TODAY, "x")
+    read_event_page(db, SmartClaude(1, [FoundEvent(title="Hamlet", kind="production", category="Theater")], [hamlet_dates(D1, D2, D3)]), item, TODAY, "x")  # CC-312: three: one or two over a long run is partial
     claude = SmartClaude(1, [FoundEvent(title="Hamlet", kind="production", category="Theater")])
     read_event_page(db, claude, item, TODAY, "x")  # it has performances now
     assert [u for u, _ in calls].count(BOX) == 1 and len(claude.calls) == 1
@@ -390,7 +391,7 @@ def test_a_show_that_already_has_exact_dates_isnt_read_again_when_it_opens_soon(
     served, calls = pages
     served[HAMLET] = {"html": "<h1>Hamlet</h1>"}
     item = a_show_found_days_ago(db, TODAY + timedelta(days=5), TODAY + timedelta(days=25))
-    item.performances = [{"date": D1, "time": "19:30"}]; db.commit()
+    item.performances = [{"date": d, "time": "19:30"} for d in (D1, D2, D3)]; db.commit()  # CC-312: 1-2 over a long run is partial
     assert check_details(db, SmartClaude(1, []), TODAY) == [] and calls == []
 
 
@@ -458,3 +459,121 @@ def test_a_festivals_own_item_is_noted_and_not_read_again_for_what_it_misses(db,
     assert item.dates_note == FESTIVAL_NOTE
     item.looked_on = []; calls.clear()
     assert check_missing(db, SmartClaude(1, []), TODAY) == [] and calls == []
+
+
+# ---- CC-312: the first look for exact dates, for every performance still without them ----------------------------------
+
+def _timed_range_hamlet(db, days_ago=3, **extra):
+    """A range plus the show days the list gave: needs() calls that "nothing missing", so it was never read for exact dates."""
+    from app.clock import utcnow
+    s = make_source(db)
+    record(db, s, FoundEvent(title="Hamlet", url=HAMLET, kind="production", category="Theater", begin_date="2027-05-07",
+                             end_date="2027-05-23", **extra), "")
+    item = db.scalar(select(DiscoveredItem).where(DiscoveredItem.title == "Hamlet"))
+    item.weekly = {"fri": ["19:30"]}
+    item.first_seen_at = utcnow() - timedelta(days=days_ago)
+    db.commit()
+    return item
+
+
+def test_a_dated_and_timed_show_with_no_exact_dates_gets_its_first_look_and_the_dates_beat_the_weekly_pattern(db, pages):
+    from app.discovery.run import check_missing
+    served, calls = pages
+    served[HAMLET], served[BOX] = {"html": EVENT_PAGE}, {"html": "<p>Tickets: Jan 12, Jan 14</p>"}
+    item = _timed_range_hamlet(db)
+    done = check_missing(db, SmartClaude(1, [FoundEvent(title="Hamlet", kind="production", category="Theater")], [hamlet_dates(D1, D2)]), TODAY)
+    assert len(done) == 1 and [p["date"] for p in item.performances] == [D1, D2]
+    assert item.weekly == {} and item.weeks == {}  # exact dates win
+    assert item.dates_note.startswith("Exact dates read from")
+
+
+def test_the_first_look_happens_once_and_a_page_with_no_dates_says_why(db, pages):
+    from app.discovery.run import check_missing
+    served, calls = pages
+    served[HAMLET] = {"html": "<h1>Hamlet</h1><p>Opens in the spring.</p>"}
+    item = _timed_range_hamlet(db)
+    assert len(check_missing(db, SmartClaude(1, []), TODAY)) == 1
+    assert item.dates_note == "No tickets or calendar link on its page" and item.weekly == {"fri": ["19:30"]}
+    calls.clear()
+    assert check_missing(db, SmartClaude(1, []), TODAY) == [] and calls == []  # nothing new to learn: not again tomorrow
+
+
+def test_an_item_found_today_waits_for_the_next_run(db, pages):
+    from app.discovery.run import check_missing
+    served, calls = pages
+    served[HAMLET] = {"html": EVENT_PAGE}
+    _timed_range_hamlet(db, days_ago=0)
+    assert check_missing(db, SmartClaude(1, [hamlet_dates(D1)]), TODAY) == [] and calls == []
+
+
+def test_an_item_that_already_has_its_dates_is_left_alone(db, pages):
+    from app.discovery.run import check_missing
+    served, calls = pages
+    item = _timed_range_hamlet(db)
+    item.performances = [{"date": d, "time": "19:30"} for d in (D1, D2, D3)]; db.commit()
+    assert check_missing(db, SmartClaude(1, []), TODAY) == [] and calls == []
+
+
+def test_a_page_that_refuses_leaves_its_reason_and_isnt_asked_again(db, pages):
+    from app.discovery.run import check_missing
+    served, calls = pages
+    served[HAMLET] = web.Blocked("robots.txt asks not to fetch it")
+    item = _timed_range_hamlet(db)
+    assert len(check_missing(db, SmartClaude(1, []), TODAY)) == 1
+    assert item.dates_note.startswith("Its page was not read: robots.txt")
+    assert check_missing(db, SmartClaude(1, []), TODAY) == []
+
+
+def test_a_page_that_failed_for_now_is_tried_again_next_run(db, pages):
+    from app.discovery.run import check_missing
+    served, calls = pages
+    served[HAMLET] = web.FetchError("timed out")  # costs nothing, and may pass
+    item = _timed_range_hamlet(db)
+    assert len(check_missing(db, SmartClaude(1, []), TODAY)) == 1 and not item.dates_note
+    assert len(check_missing(db, SmartClaude(1, []), TODAY + timedelta(days=1))) == 1
+
+
+def test_a_partial_list_is_one_or_two_dates_over_a_run_of_a_week_or_more():
+    from datetime import date
+    from app.discovery.store import partial_dates
+    one, three = [{"date": D1}], [{"date": D1}, {"date": D2}, {"date": D3}]
+    assert partial_dates(one, date(2027, 5, 7), date(2027, 5, 23))
+    assert not partial_dates(three, date(2027, 5, 7), date(2027, 5, 23))  # enough dates
+    assert not partial_dates(one, date(2027, 5, 7), date(2027, 5, 9))  # a short run: one date is the run
+    assert not partial_dates([], date(2027, 5, 7), date(2027, 5, 23)) and not partial_dates(one, None, None)
+
+
+def test_exact_dates_in_a_later_read_clear_a_weekly_pattern_a_list_page_kept(db):
+    s = make_source(db)
+    record(db, s, FoundEvent(title="Hamlet", url=HAMLET, kind="production", category="Theater", begin_date="2027-05-07",
+                             end_date="2027-05-23", performances=[Performance(date=D1, time="19:30")]), "")
+    item = db.scalar(select(DiscoveredItem))
+    assert item.performances and item.weekly == {}
+
+
+def test_comedy_isnt_given_the_first_look(db, pages):
+    from app.discovery.run import check_missing
+    served, calls = pages
+    item = _timed_range_hamlet(db)
+    item.category = "Comedy"; db.commit()
+    assert check_missing(db, SmartClaude(1, []), TODAY) == [] and calls == []
+
+
+def test_one_date_listed_for_a_long_run_is_a_partial_list_and_a_fuller_one_replaces_it(db, pages):
+    from app.discovery.run import check_missing
+    served, calls = pages
+    served[HAMLET], served[BOX] = {"html": EVENT_PAGE}, {"html": "<p>Tickets</p>"}
+    item = _timed_range_hamlet(db)
+    item.performances = [{"date": D1, "time": "19:30"}]; db.commit()
+    done = check_missing(db, SmartClaude(1, [FoundEvent(title="Hamlet", kind="production", category="Theater")], [hamlet_dates(D1, D2, "2027-05-14")]), TODAY)
+    assert len(done) == 1 and len(item.performances) == 3
+
+
+def test_a_tickets_page_with_no_more_dates_leaves_a_partial_list_as_it_is(db, pages):
+    from app.discovery.run import check_missing
+    served, calls = pages
+    served[HAMLET], served[BOX] = {"html": EVENT_PAGE}, {"html": "<p>Tickets</p>"}
+    item = _timed_range_hamlet(db)
+    item.performances = [{"date": D1, "time": "19:30"}]; db.commit()
+    check_missing(db, SmartClaude(1, [FoundEvent(title="Hamlet", kind="production", category="Theater")], [hamlet_dates(D1)]), TODAY)
+    assert [p["date"] for p in item.performances] == [D1] and "no more dates" in item.dates_note

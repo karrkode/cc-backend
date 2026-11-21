@@ -112,6 +112,16 @@ def weeks_of(e: FoundEvent) -> dict:
     return {d: got[d] for d in DAYS if got.get(d)}
 
 
+PARTIAL_SHOWS = 2  # CC-312: at most this many listed dates over a run of PARTIAL_RUN_DAYS or more is a partial list
+PARTIAL_RUN_DAYS = 6
+
+
+def partial_dates(shows, begin, end) -> bool:
+    """CC-312: one or two dates for a run of a week or more is a list page's sample, not the calendar: its weekly pattern
+    (the rest of the run) is kept, and the item is still read for the full list."""
+    return bool(shows) and len(shows) <= PARTIAL_SHOWS and bool(begin and end) and (end - begin).days >= PARTIAL_RUN_DAYS
+
+
 KEEP_IF_MISSING = ("begin_date", "end_date", "cost_text", "min_price", "performances", "weekly")
 
 
@@ -124,6 +134,8 @@ def _refresh(item: DiscoveredItem, f: dict) -> None:
         if k == "weeks" and not f["weekly"] and item.weekly:  # the show days were kept, so their weeks are too
             continue
         setattr(item, k, v)
+    if item.performances and not partial_dates(item.performances, item.begin_date, item.end_date):
+        item.weekly, item.weeks = {}, {}  # CC-312: exact dates always win over a weekly pattern, whichever read gave which
 
 
 def find_listed(db, source: DiscoverySource, f: dict) -> Event | None:
@@ -364,6 +376,8 @@ def _record(db, source: DiscoverySource, found: FoundEvent, skip: str) -> str:
             skip = "out of town"
     if item is None:
         item = DiscoveredItem(source_id=source.id, key=key, first_seen_at=now, last_seen_at=now, changes={}, detail_checks=[], **f)
+        if item.performances and not partial_dates(item.performances, item.begin_date, item.end_date):  # CC-312: exact dates win
+            item.weekly, item.weeks = {}, {}
         db.add(item)
         if skip:
             item.status, item.skip_reason = "skipped", skip[:200]

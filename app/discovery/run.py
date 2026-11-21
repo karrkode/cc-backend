@@ -11,6 +11,7 @@ Reading as little as possible (agreed with the product owner):
 - CC-80: a monthly budget (budget.py): from 80% event pages wait; at 100% only Check now runs
 - CC-211: from 80%, admins get an email and the sources with the most approved events per dollar go first
 - CC-221: every venue with a website gets a source (venuesources.py), a few first reads a day
+- CC-312: a found performance with no exact dates and no dates note yet is read once for them (first look or catch-up)
 - CC-88: a found event missing a date or show days has its own page read the day after it's found,
   then weekly for 4 weeks (needs.py); these come first within the 10 event pages per run
 - CC-246: newly approved events get their picture from their own page (pictures.py). That costs no tokens, so it runs
@@ -38,7 +39,7 @@ from .pictures import add_pictures
 from .pagetext import page_text, text_hash
 from .readers import OWN_PAGE_NOTE, TICKETS_PAGE_NOTE, FoundEvent, ReadFailed, cost_usd, read_aic, read_link_choice, read_page, read_strong_step, strong_cost_usd
 from .rules import PERFORMING_CATEGORIES, apply_rules, norm_title
-from .store import (changes_against, drop_passed_hidden, fields_of, release_delayed, note_addresses, on_source_site, record,
+from .store import (partial_dates, changes_against, drop_passed_hidden, fields_of, release_delayed, note_addresses, on_source_site, record,
                     venue_for)
 from .tickets import MAX_REFUSED, links_of
 from .venuesources import add_missing, use_calendar_link
@@ -53,6 +54,8 @@ STRONG_READS = 3  # pages the stronger model may fetch for one show
 STRONG_PER_DAY = 3  # shows it looks at in a day, at most, whatever the budget says
 STRONG_WITHIN_DAYS = 60  # the stronger look waits until a show opens within this many days
 STRONG_LINKS = 40  # links it's shown on a page
+FIRST_LOOK_CATEGORIES = {"Theater", "Music"}  # CC-312: the product owner's call: comedy isn't read for exact dates by the catch-up
+FIRST_LOOKS_PER_RUN = 5  # CC-312: first looks per run, so the catch-up never takes every page slot
 MIN_LISTED = 3  # a list page's structured data is trusted when it has at least this many complete events
 
 
@@ -180,6 +183,7 @@ def check_source(db, source: DiscoverySource, client, today: date) -> Outcome:
 def read_event_page(db, client, item: DiscoveredItem, today: date, mark: str) -> tuple[DiscoverySource, Outcome]:
     """Read one found event's own page (its schema.org data first, Claude only when that's incomplete) and store what it says."""
     source, out, festival = db.get(DiscoverySource, item.source_id), Outcome(status="ok"), False
+    wants = wants_dates(item)
     try:
         if not on_source_site(item.url, source):  # CC-189: a link stored before these were limited to the source's site
             raise web.Blocked("this event's link isn't on the source's site")
@@ -203,19 +207,40 @@ def read_event_page(db, client, item: DiscoveredItem, today: date, mark: str) ->
             e.url = item.url  # the same item, whatever links the page has
             _store(db, source, [e], out)
         live = db.get(Event, item.event_id) if item.event_id else None
-        if (item.category in PERFORMING_CATEGORIES and not item.performances and item.kind != "permanent" and not festival
-                and not (live is not None and live.show_run_exact)):  # a person's Show Run is theirs: nothing would be proposed
+        wants_now = wants_dates(item)  # CC-312: after the own page's reading was stored: it may have given the dates
+        if wants_now and not festival and not (live is not None and live.show_run_exact):  # a person's Show Run is theirs: nothing would be proposed
             _read_tickets(db, client, item, source, page, today, out)  # CC-302: still no exact dates
+        elif wants_now and not festival and not getattr(item, "dates_note", ""):
+            item.dates_note = "Its Show Run was set by a person, so dates found are not proposed"
     except web.Blocked as e:
         out.status, out.notes = "blocked", [str(e)]
+        _say_why(item, wants, f"Its page was not read: {e}")
     except ReadFailed as e:  # each event page is only tried on its own schedule, so there's nothing to back off
         out.pages_read += 1; out.tokens_in += e.tokens_in; out.tokens_out += e.tokens_out  # CC-302: on top of any read before it
         out.status, out.notes = "error", [str(e)]
+        _say_why(item, wants, f"Its page could not be read: {e}")
     except Exception as e:  # noqa: BLE001 - one event page must not stop the rest
-        out.status, out.notes = "error", [f"{type(e).__name__}: {e}"[:500]]
+        out.status, out.notes = "error", [f"{type(e).__name__}: {e}"[:500]]  # CC-312: no note: a timeout or an overloaded API may pass, so it's tried again
     out.notes.insert(0, f"{item.title}: {mark}")
     return source, out
 
+
+
+def wants_dates(item: DiscoveredItem) -> bool:
+    """CC-312: a performance whose page hasn't given exact dates yet (a festival's own item is never one: its dates are its works')."""
+    g = lambda k, d=None: getattr(item, k, d)  # noqa: E731 - a few tests hand it a bare namespace
+    shows = g("performances") or []
+    # a list page's one or two dates for a run of a week or more is not the calendar: the product owner counts it as missing
+    partial = partial_dates(shows, g("begin_date"), g("end_date"))
+    return (g("category") in PERFORMING_CATEGORIES and (not shows or partial) and g("kind") != "permanent"
+            and g("dates_note") != FESTIVAL_NOTE)
+
+
+def _say_why(item: DiscoveredItem, wants: bool, why: str) -> None:
+    """CC-312: a read that failed before the dates look leaves its reason on the item (an admin sees a re-read won't help) and,
+    with a note on it, the first read isn't tried again every day. The regular weekly and 60/45-day looks still are."""
+    if wants and not getattr(item, "dates_note", ""):
+        item.dates_note = why[:MAX_REFUSED]
 
 
 FESTIVAL_NOTE = "A festival or series: its works are separate events"
@@ -250,7 +275,7 @@ def _read_tickets(db, client, item: DiscoveredItem, source: DiscoverySource, pag
     before = (out.tokens_in, out.tokens_out)
     try:
         decided = _look_for_dates(db, client, item, source, page, today, out)
-        if decided is not False and not item.performances:  # CC-304: the Haiku look couldn't settle it
+        if decided is not False and wants_dates(item):  # CC-304: the Haiku look couldn't settle it
             _stronger_look(db, client, item, source, page, today, out)
     finally:
         tin, tout = out.tokens_in - before[0], out.tokens_out - before[1]
@@ -312,11 +337,15 @@ def _settle(db, item: DiscoveredItem, found: list, link: str, keep: str, how: st
     """CC-302: what a read's dates do to the item, whichever model found them. True when it had dates. Dates for a live
     event go to review as an update, and never replace its own."""
     shows = fields_of(FoundEvent(title=item.title, kind="production", performances=found))["performances"]
+    if shows and item.performances and len(shows) <= len(item.performances):  # CC-312: a partial list is only replaced by a fuller one
+        item.dates_note = "\n".join([f"Read {link}: it lists no more dates than the item has", *keep.splitlines()])[:1000]
+        return False
     if not shows:
         item.dates_note = "\n".join([f"Read {link}: it lists no dates for this show", *keep.splitlines()])[:1000]
         return False
     item.dates_note = "\n".join([f"Exact dates read from {link}{how}", *keep.splitlines()])[:1000]  # the column's size (CC-304)
     item.performances = shows
+    item.weekly, item.weeks = {}, {}  # CC-312: exact dates win: a weekly pattern is only for an event with none
     listed = db.get(Event, item.event_id) if item.event_id else None
     if listed is not None and item.status in ("listed", "update", "approved"):
         diff = changes_against(listed, {"cost_text": "", "min_price": None, "begin_date": None, "end_date": None,
@@ -398,7 +427,8 @@ def _stronger_look(db, client, item: DiscoveredItem, source: DiscoverySource, pa
     if stopped:
         item.strong_looked_at = None  # the budget or the API stopped it, not the show: it may try again
         return
-    if found and _settle(db, item, found, link, keep, " (stronger look)"):
+    if found:
+        _settle(db, item, found, link, keep, " (stronger look)")  # it leaves its own note, whichever way it goes
         return
     item.dates_note = "\n".join(["The stronger look found no dates", *(keep or item.dates_note).splitlines()])[:1000]
 
@@ -432,15 +462,28 @@ def check_missing(db, client, today: date) -> list[tuple[DiscoverySource, Outcom
     items = db.scalars(select(DiscoveredItem).join(DiscoverySource)
                        .where(DiscoveredItem.status == "new", DiscoveredItem.url != "", DiscoverySource.active,
                               DiscoverySource.reader == "claude").order_by(DiscoveredItem.first_seen_at)).all()
-    done = []
+    done, firsts = [], 0
     for item in items:
         if len(done) >= DETAIL_LIMIT:
             break
+        if item.dates_note == FESTIVAL_NOTE:
+            continue
         missing = needs(item, venue_for(db, item.source, item))
-        if item.dates_note == FESTIVAL_NOTE or not missing or not look_again(item, _day(item.first_seen_at), today):
+        if (wants_dates(item) and item.category in FIRST_LOOK_CATEGORIES and not item.dates_note and firsts < FIRST_LOOKS_PER_RUN
+                and _day(item.first_seen_at) < today):  # found today: the next run (as always)
+            # CC-312: its first look for exact dates, whatever else it has (a range and the venue's usual times used to
+            # count as "nothing missing", so it was never read): items found before the dates look shipped get it too. Any
+            # outcome leaves a note on the item, so this happens once
+            mark = "first look for exact dates"
+            firsts += 1
+            if item.begin_date:  # its 60 and 45-day reads that are due are this one: not a second read tomorrow
+                item.detail_checks = sorted({*(item.detail_checks or []), *[d for d in DETAIL_DAYS if (item.begin_date - today).days <= d]})
+        elif missing and look_again(item, _day(item.first_seen_at), today):
+            mark = "missing " + ("a date" if missing == "date" else "show days")
+        else:
             continue
         item.looked_on = [*(item.looked_on or []), today.isoformat()]
-        done.append(_read_and_log(db, client, item, today, "missing " + ("a date" if missing == "date" else "show days")))
+        done.append(_read_and_log(db, client, item, today, mark))
     return done
 
 
@@ -457,6 +500,8 @@ def check_details(db, client, today: date, limit: int = DETAIL_LIMIT) -> list[tu
     for item in items:
         if len(done) >= limit:
             break
+        if today.isoformat() in (item.looked_on or []):
+            continue  # CC-312: check_missing read it a moment ago in this run
         days = (item.begin_date - today).days
         mark = next((d for d in DETAIL_DAYS if days <= d and d not in (item.detail_checks or [])), None)
         if mark is None:
@@ -466,8 +511,8 @@ def check_details(db, client, today: date, limit: int = DETAIL_LIMIT) -> list[tu
             continue  # the next run looks again
         # too soon, or nothing left to learn. CC-302: a performance still without exact dates is read however soon it opens
         # (or even while it runs): its own page or tickets page is where the dates are, and they matter most now
-        wants_dates = item.category in PERFORMING_CATEGORIES and not item.performances and item.kind != "permanent"
-        if (days < DETAIL_SOON_DAYS and not wants_dates) or (item.cost_text and item.performances):
+        needs_dates = wants_dates(item)  # CC-312: the shared rule, partial lists included
+        if (days < DETAIL_SOON_DAYS and not needs_dates) or (item.cost_text and item.performances and not needs_dates):
             item.detail_checks = sorted({*(item.detail_checks or []), *DETAIL_DAYS})
             continue
         item.detail_checks = sorted({*(item.detail_checks or []), *[d for d in DETAIL_DAYS if days <= d]})
