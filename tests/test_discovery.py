@@ -212,7 +212,7 @@ def test_pre_opening_checks_read_just_the_event_page(db, pages):
         runner.run(db, FakeClaude(SEASON[:1]), opening - timedelta(days=days_before))
         db.refresh(item)
         assert item.detail_checks == expect, days_before
-        assert (("https://goodman.example/shows/hamlet", "") in calls) == (days_before in (59, 44))
+        assert (("https://goodman.example/shows/hamlet", "") in calls) == (days_before in (70, 59, 44))  # CC-312: 70: the first look for exact dates, whatever the day
 
 
 def test_admin_sources_endpoints(client, admin_token, user_token, db, pages):

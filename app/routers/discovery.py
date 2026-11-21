@@ -15,7 +15,7 @@ from ..discovery.needs import needs
 from ..discovery.readers import cost_usd
 from ..discovery.recap import budget_note, found_by_week, gather, next_send
 from ..discovery.rules import norm_title
-from ..discovery.store import _date, _hhmm, matching_rule, possible_duplicates, release_delayed, rule_reason, sync_found_shows, venue_for
+from ..discovery.store import _date, _hhmm, matching_rule, partial_dates, possible_duplicates, release_delayed, rule_reason, sync_found_shows, venue_for
 from ..discovery.venuesources import covers, grid_numbers, state_of
 from ..models import FOUND, DiscoveredItem, DiscoveryCheck, DiscoverySource, Event, EventRunDate, SkipRule, Venue
 from ..schemas import (BatchHeld, BatchIn, BatchOut, BudgetIn, DelayIn, DiscoveredItemOut, DiscoveredPage, DiscoveryOverview, DiscoverySourceOut, DiscoverySourcePatch,
@@ -308,7 +308,7 @@ def as_found(db: DB, item: DiscoveredItem, venue: Venue | None, duplicate: bool)
     run = _run_as_listed(item)
     if run is None:
         return None, "short_run"
-    weekly = item.weekly or {}
+    weekly = {} if item.performances and not partial_dates(item.performances, item.begin_date, item.end_date) else item.weekly or {}  # CC-312: exact dates win over a weekly pattern
     own_times = weekly != (venue.show_times or {}) or bool(item.weeks)  # the venue's times stay the venue's
     try:
         body = EventIn(title=item.title, category=category, opera=opera, begin_date=item.begin_date, end_date=item.end_date,

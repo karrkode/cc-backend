@@ -18,7 +18,7 @@ from app.models import DiscoveredItem, DiscoveryCheck
 from app.stats import today_in_chicago
 
 from .test_discovery import make_source, pages  # noqa: F401 - pages is a fixture
-from .test_discovery_tickets import BOX, D1, D2, HAMLET, a_found_hamlet, a_live_hamlet
+from .test_discovery_tickets import BOX, D1, D2, D3, HAMLET, a_found_hamlet, a_live_hamlet
 
 TODAY = today_in_chicago()
 OTHER = "https://seller.example/hamlet-dates"
@@ -78,7 +78,7 @@ def test_a_show_the_haiku_look_settled_never_reaches_the_stronger_model(db, page
                                        content=[SimpleNamespace(type="text", text=LinkChoice(choice=1).model_dump_json())])
             self.n = getattr(self, "n", 0) + 1
             ev = [OWN] if self.n == 1 else [FoundEvent(title="Hamlet", kind="production", category="Theater",
-                                                       performances=[Performance(date=D1, time="19:30")])]
+                                                       performances=[Performance(date=d, time="19:30") for d in (D1, D2, D3)])]  # CC-312: 3: one or two over a long run is partial
             self.calls.append(kw)
             return SimpleNamespace(stop_reason="end_turn", usage=SimpleNamespace(input_tokens=10, output_tokens=5),
                                    content=[SimpleNamespace(type="text", text=PageReading(events=ev).model_dump_json())])
