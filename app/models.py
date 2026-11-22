@@ -594,11 +594,13 @@ class DatePoll(Base):
     crew_id: Mapped[int] = mapped_column(ForeignKey("crews.id", ondelete="CASCADE"), index=True)
     event_id: Mapped[int] = mapped_column(ForeignKey("events.id", ondelete="CASCADE"), index=True)
     started_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
-    kind: Mapped[str] = mapped_column(String(10), default="shows", server_default="shows")  # CC-298 adds "hours"
+    kind: Mapped[str] = mapped_column(String(10), default="shows", server_default="shows")  # "shows" (CC-297) or "hours" (CC-298: an exhibition's days)
     status: Mapped[str] = mapped_column(String(10), default="open", server_default="open")  # open / locked / cancelled
     window_from: Mapped[date] = mapped_column(Date)
     window_to: Mapped[date] = mapped_column(Date)
     locked_option_id: Mapped[int | None] = mapped_column(Integer)  # no FK: options cascade with the poll
+    locked_start: Mapped[str | None] = mapped_column(String(5))  # CC-298: an hours poll locks a range of the day, "13:00" to "15:30"
+    locked_end: Mapped[str | None] = mapped_column(String(5))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -614,7 +616,10 @@ class DatePollOption(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     poll_id: Mapped[int] = mapped_column(ForeignKey("date_polls.id", ondelete="CASCADE"), index=True)
     date: Mapped[date] = mapped_column(Date)
-    time: Mapped[str] = mapped_column(String(5), default="", server_default="")  # HH:MM; "" is reserved for CC-298's days
+    time: Mapped[str] = mapped_column(String(5), default="", server_default="")  # HH:MM; "" for a day of an hours poll (CC-298) or a show with no time
+    # CC-298: an hours poll keeps the venue's hours for the day as they were when it started, so a later change can't strand answers
+    opens: Mapped[str | None] = mapped_column(String(5))
+    closes: Mapped[str | None] = mapped_column(String(5))
 
 
 class DatePollAnswer(Base):
@@ -632,6 +637,15 @@ class DatePollPick(Base):
 
     option_id: Mapped[int] = mapped_column(ForeignKey("date_poll_options.id", ondelete="CASCADE"), primary_key=True)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True, index=True)
+
+
+class DatePollBlock(Base):
+    """CC-298: a half-hour of an hours poll's day that works for a member (start "13:30" means 1:30 to 2:00 PM)."""
+    __tablename__ = "date_poll_blocks"
+
+    option_id: Mapped[int] = mapped_column(ForeignKey("date_poll_options.id", ondelete="CASCADE"), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True, index=True)
+    start: Mapped[str] = mapped_column(String(5), primary_key=True)
 
 
 class CrewRemoval(Base):

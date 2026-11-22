@@ -304,7 +304,7 @@ def test_poll_needs_more_than_half_of_the_crew_interested(client, make_event):
 
 def test_poll_ready_lists_majority_events_without_a_poll(client, make_event):
     p, crew, ev = setup(client, make_event)  # Ana and Ben shared Hamlet: 2 of 3
-    assert client.get("/crews/poll-ready", headers=p["Cy"]).json() == [{"crew_id": crew["id"], "event_id": ev.id}]
+    assert client.get("/crews/poll-ready", headers=p["Cy"]).json() == [{"crew_id": crew["id"], "event_id": ev.id, "kind": "shows", "event_title": "Hamlet", "crew_name": "Thursday Theater"}]
     assert client.get("/crews/poll-ready", headers=p["Dee"]).json() == []  # in no crew
     solo = make_event("Solo")
     ready(client, crew, solo, p["Ana"])  # 1 of 3: not a majority

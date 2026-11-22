@@ -1,4 +1,4 @@
-"""CC-297: crew date polls. Every route is for the crew's members only; to anyone else a crew or poll doesn't exist.
+"""CC-297, CC-298: crew date polls. Every route is for the crew's members only; to anyone else a crew or poll doesn't exist.
 The browser works out the options from the event's schedule (as "Commit to" does). The server checks that they are
 possible (inside the window and the event's dates, today or later, a valid time), not that each is a real showtime."""
 from datetime import UTC, datetime, time
@@ -9,8 +9,8 @@ from sqlalchemy.exc import IntegrityError
 
 from ..clock import today_in_chicago, utcnow
 from ..deps import DB, CurrentUser
-from ..models import Crew, CrewMember, DatePoll, DatePollAnswer, DatePollOption, DatePollPick, Event, PlanShare
-from ..polls import MAX_WINDOW_DAYS, can_manage, ended, interest, poll_out, recent_since
+from ..models import Crew, CrewMember, DatePoll, DatePollAnswer, DatePollBlock, DatePollOption, DatePollPick, Event, PlanShare
+from ..polls import (HOURS_AHEAD_DAYS, MAX_WINDOW_DAYS, can_manage, ended, hours_for, interest, open_days, poll_out, recent_since, slots, valid_range)
 from ..ratelimit import SlidingWindowLimiter
 from ..schemas import PollAnswerIn, PollIn, PollLockIn, PollOut
 from ..visibility import is_live
@@ -31,6 +31,11 @@ def _poll(db: DB, crew: Crew, poll_id: int, write: bool = False) -> DatePoll:
     if poll is None or poll.crew_id != crew.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, NOT_FOUND)
     return poll
+
+
+def is_exhibition(event: Event) -> bool:
+    """CC-298: Visual Art with no listed showtimes gets an hours poll (the site's isExhibit); anything else gets a showtime poll."""
+    return event.category == "Visual Art" and not event.schedule["dates"]
 
 
 def _open(poll: DatePoll) -> None:
@@ -88,6 +93,7 @@ def poll_ready(db: DB, user: CurrentUser):
     itself: the site starts it (it knows the event's showtimes) the first time a member's page sees one of these."""
     today = today_in_chicago()
     out = []
+    crews = {c.id: c.name for c in db.scalars(select(Crew).join(CrewMember).where(CrewMember.user_id == user.id))}
     for crew_id in db.scalars(select(CrewMember.crew_id).where(CrewMember.user_id == user.id)).all():
         total = db.scalar(select(func.count()).select_from(CrewMember).where(CrewMember.crew_id == crew_id)) or 0
         for event_id, n in db.execute(select(PlanShare.event_id, func.count()).where(PlanShare.crew_id == crew_id).group_by(PlanShare.event_id)).all():
@@ -96,9 +102,30 @@ def poll_ready(db: DB, user: CurrentUser):
             event = db.get(Event, event_id)
             if event is None or not is_live(event) or (event.end_date and event.end_date < today):
                 continue
+            if is_exhibition(event) and not open_days(event, today):
+                continue  # nothing to pick a day from yet (it opens later, or the venue is closed), so nothing to wait on
             if db.scalar(select(DatePoll.id).where(DatePoll.crew_id == crew_id, DatePoll.event_id == event_id).limit(1)) is None:
-                out.append({"crew_id": crew_id, "event_id": event_id})
+                out.append({"crew_id": crew_id, "event_id": event_id, "kind": "hours" if is_exhibition(event) else "shows",
+                            "event_title": event.title, "crew_name": crews[crew_id]})
     return out
+
+
+def _hours_options(event: Event, body: PollIn, today) -> tuple:
+    """CC-298: 1 to 5 distinct days, from today to the 29 after, while the event runs and the venue is open; each keeps that day's hours."""
+    days = body.days
+    if body.options or not days or len(set(days)) != len(days):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Choose between one and five different days.")
+    venue_hours = event.schedule["hours"]
+    running = set(open_days(event, today)) | {x for x in days if hours_for(venue_hours, x) is None}  # a closed day gets its own message below
+    options = []
+    for day in sorted(days):
+        if day not in running:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"Choose days in the next {HOURS_AHEAD_DAYS} days while the exhibition runs.")
+        got = hours_for(venue_hours, day)
+        if got is None:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "The venue is closed on one of those days.")
+        options.append(DatePollOption(date=day, time="", opens=got[0], closes=got[1]))
+    return options[0].date, options[-1].date, options
 
 
 @router.post("/{crew_id}/polls", response_model=PollOut, status_code=status.HTTP_201_CREATED)
@@ -107,21 +134,28 @@ def start_poll(crew_id: int, body: PollIn, db: DB, user: CurrentUser):
     event = db.get(Event, body.event_id)
     if event is None or not is_live(event):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Event not found")
-    if event.category == "Visual Art" and not event.schedule["dates"]:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Date polls are for performances, not exhibitions.")
+    hours = is_exhibition(event)
+    if hours != (body.kind == "hours"):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Pick days for an exhibition, and showtimes for a performance." if hours else "Pick showtimes for a performance.")
     if not interest(db, event.id, crew.id)["ready"]:
         raise HTTPException(status.HTTP_409_CONFLICT, "A poll opens once more than half of the crew has shared interest in this event.")
     today = today_in_chicago()
-    lo, hi = body.window_from, body.window_to
-    if hi < lo or (hi - lo).days >= MAX_WINDOW_DAYS or hi < today:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"Choose a window of at most {MAX_WINDOW_DAYS} days that hasn't passed.")
-    seen = set()
-    for o in body.options:
-        if not lo <= o.date <= hi or o.date < today or (event.begin_date and o.date < event.begin_date) or (event.end_date and o.date > event.end_date):
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Every option must be an upcoming date in the window, while the event runs.")
-        if (o.date, o.time) in seen:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "The same showtime is listed twice.")
-        seen.add((o.date, o.time))
+    if hours:
+        lo, hi, options = _hours_options(event, body, today)
+    else:
+        lo, hi = body.window_from, body.window_to
+        if lo is None or hi is None or not body.options or body.days:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Send a window and at least one showtime.")
+        if hi < lo or (hi - lo).days >= MAX_WINDOW_DAYS or hi < today:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"Choose a window of at most {MAX_WINDOW_DAYS} days that hasn't passed.")
+        seen = set()
+        for o in body.options:
+            if not lo <= o.date <= hi or o.date < today or (event.begin_date and o.date < event.begin_date) or (event.end_date and o.date > event.end_date):
+                raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Every option must be an upcoming date in the window, while the event runs.")
+            if (o.date, o.time) in seen:
+                raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "The same showtime is listed twice.")
+            seen.add((o.date, o.time))
+        options = [DatePollOption(date=o.date, time=o.time) for o in sorted(body.options, key=lambda o: (o.date, o.time))]
     # CC-297: a crew gets one poll for an event. A locked or cancelled one isn't reopened by the next page that sees the majority.
     for old in db.scalars(select(DatePoll).where(DatePoll.crew_id == crew.id, DatePoll.event_id == event.id, DatePoll.status.in_(("open", "locked", "cancelled")))):
         if old.status != "open" or not ended(old, today):
@@ -130,8 +164,7 @@ def start_poll(crew_id: int, body: PollIn, db: DB, user: CurrentUser):
         old.closed_at = datetime.combine(max(o.date for o in old.options), time.min, tzinfo=UTC)
     if not poll_limiter.hit(str(user.id), POLLS_PER_DAY):
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "That's a lot of polls for one day. Try again tomorrow.")
-    poll = DatePoll(crew_id=crew.id, event_id=event.id, started_by=user.id, window_from=lo, window_to=hi,
-                    options=[DatePollOption(date=o.date, time=o.time) for o in sorted(body.options, key=lambda o: (o.date, o.time))])
+    poll = DatePoll(crew_id=crew.id, event_id=event.id, started_by=user.id, window_from=lo, window_to=hi, kind=body.kind, options=options)
     db.add(poll)
     try:
         db.commit()  # the partial unique index settles two starts at once
@@ -149,14 +182,29 @@ def answer(crew_id: int, poll_id: int, body: PollAnswerIn, db: DB, user: Current
     poll = _poll(db, crew, poll_id, write=True)
     _open(poll)
     mine = {o.id for o in poll.options}
-    ids = set(body.option_ids)
-    if not ids <= mine:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Choose from this poll's options.")
-    for pick in db.scalars(select(DatePollPick).where(DatePollPick.user_id == user.id, DatePollPick.option_id.in_(mine))):
-        db.delete(pick)
-    db.flush()
-    for option_id in ids:
-        db.add(DatePollPick(option_id=option_id, user_id=user.id))
+    if poll.kind == "hours":
+        if body.option_ids:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Mark half-hours for this poll, not showtimes.")
+        grids = {o.id: set(slots(o.opens, o.closes)) for o in poll.options}
+        chosen = {(b.option_id, b.start) for b in body.blocks}
+        if any(oid not in grids or start not in grids[oid] for oid, start in chosen):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Choose half-hours inside the venue's hours on this poll's days.")
+        for block in db.scalars(select(DatePollBlock).where(DatePollBlock.user_id == user.id, DatePollBlock.option_id.in_(mine))):
+            db.delete(block)
+        db.flush()
+        for oid, start in chosen:
+            db.add(DatePollBlock(option_id=oid, user_id=user.id, start=start))
+    else:
+        if body.blocks:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Choose showtimes for this poll, not half-hours.")
+        ids = set(body.option_ids)
+        if not ids <= mine:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Choose from this poll's options.")
+        for pick in db.scalars(select(DatePollPick).where(DatePollPick.user_id == user.id, DatePollPick.option_id.in_(mine))):
+            db.delete(pick)
+        db.flush()
+        for option_id in ids:
+            db.add(DatePollPick(option_id=option_id, user_id=user.id))
     existing = db.get(DatePollAnswer, (poll.id, user.id))
     if existing is None:
         db.add(DatePollAnswer(poll_id=poll.id, user_id=user.id))
@@ -186,6 +234,12 @@ def lock(crew_id: int, poll_id: int, body: PollLockIn, db: DB, user: CurrentUser
     chosen = next((o for o in poll.options if o.id == body.option_id), None)
     if chosen is None or chosen.date < today_in_chicago():
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Choose one of this poll's upcoming times.")
+    if poll.kind == "hours":
+        if not body.start or not body.end or not valid_range(chosen.opens, chosen.closes, body.start, body.end):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Choose a range of at least an hour, on the half-hour, inside the venue's hours.")
+        poll.locked_start, poll.locked_end = body.start, body.end
+    elif body.start or body.end:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "A showtime poll locks one of its showtimes.")
     poll.status, poll.locked_option_id, poll.closed_at = "locked", body.option_id, utcnow()
     db.commit()
     db.refresh(poll)
