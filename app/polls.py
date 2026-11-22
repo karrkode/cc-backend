@@ -17,7 +17,6 @@ from .clock import today_in_chicago
 from .models import Crew, CrewMember, DatePoll, DatePollAnswer, DatePollBlock, DatePollOption, DatePollPick, PlanShare, User
 
 MAX_WINDOW_DAYS = 60
-MAX_HOURS_DAYS = 5  # CC-298: days in an exhibition poll
 HOURS_AHEAD_DAYS = 30  # ...chosen from today and the 29 days after
 USUAL_HOURS = ("10:00", "17:00")  # when the venue's hours aren't known (as the site's USUAL)
 MIN_RANGE = 2  # blocks: a range is at least an hour
@@ -53,19 +52,21 @@ def _hhmm(minutes: int) -> str:
 
 
 def valid_hhmm(value) -> bool:
-    return isinstance(value, str) and len(value) == 5 and value[2] == ":" and value[:2].isdigit() and value[3:].isdigit() and int(value[:2]) < 24 and int(value[3:]) < 60
+    return (isinstance(value, str) and value.isascii() and len(value) == 5 and value[2] == ":" and value[:2].isdigit() and value[3:].isdigit()
+            and int(value[:2]) < 24 and int(value[3:]) < 60)
 
 
 def hours_for(hours: dict, day: date) -> tuple[str, str] | None:
     """CC-298: the venue's (opens, closes) on a day, or None when it's marked Closed. A day that's missing, or hours that don't
     make sense (close at or before open, not a time), count as not known: 10 AM to 5 PM, as the site does."""
     key = _DOW[day.weekday()]
-    if key not in (hours or {}):
+    if not isinstance(hours, dict) or key not in hours:
         return USUAL_HOURS
     got = hours[key]
     if got is None:
         return None
-    if isinstance(got, (list, tuple)) and len(got) == 2 and valid_hhmm(got[0]) and valid_hhmm(got[1]) and _minutes(got[1]) > _minutes(got[0]):
+    if (isinstance(got, (list, tuple)) and len(got) == 2 and valid_hhmm(got[0]) and valid_hhmm(got[1]) and _minutes(got[1]) > _minutes(got[0])
+            and len(slots(got[0], got[1])) >= MIN_RANGE):  # too short for even one range: not usable, so not known
         return got[0], got[1]
     return USUAL_HOURS
 
@@ -81,9 +82,18 @@ def slots(opens: str | None, closes: str | None) -> list[str]:
 def valid_range(opens: str | None, closes: str | None, start: str, end: str) -> bool:
     """A locked range: on the half-hour grid, inside the day's hours, at least an hour."""
     grid = slots(opens, closes)
-    if start not in grid or not valid_hhmm(end) or _minutes(end) - _minutes(start) < MIN_RANGE * 30:
-        return False
-    return _hhmm(_minutes(end) - 30) in grid
+    ends = {_hhmm(_minutes(t) + 30) for t in grid}
+    return start in grid and end in ends and _minutes(end) - _minutes(start) >= MIN_RANGE * 30
+
+
+def open_days(event, today: date) -> list[date]:
+    """CC-298: the days an exhibition poll can offer: today to 29 days after, while it runs, on which the venue isn't closed."""
+    lo = max(today, event.begin_date) if event.begin_date else today
+    hi = today + timedelta(days=HOURS_AHEAD_DAYS - 1)
+    if event.end_date:
+        hi = min(hi, event.end_date)
+    hours = event.schedule["hours"]
+    return [lo + timedelta(days=i) for i in range((hi - lo).days + 1) if hours_for(hours, lo + timedelta(days=i)) is not None]
 
 
 def best_ranges(options: list[DatePollOption], free: dict[int, dict[str, set]], names: dict, members_total: int, limit: int = 3,

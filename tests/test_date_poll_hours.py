@@ -244,3 +244,55 @@ def test_outsiders_cascades_and_ending(client, make_event, db):
     db.delete(db.get(Event, ev.id))
     db.commit()
     assert db.scalars(select(DatePollBlock)).all() == [] and db.scalars(select(DatePoll)).all() == []
+
+
+def test_ready_only_when_a_day_can_be_picked(client, make_event, db):
+    """An exhibition that opens in 45 days (or a venue closed every day) isn't 'ready': there'd be nothing to pick, and nothing to wait on."""
+    p, crew, ev = setup(client, make_event, db, hours={})
+    assert [r["kind"] for r in client.get("/crews/poll-ready", headers=p["Cy"]).json()] == ["hours"]
+    ev = db.get(Event, ev.id)
+    ev.begin_date, ev.end_date = T + timedelta(days=45), T + timedelta(days=80)
+    db.commit()
+    assert client.get("/crews/poll-ready", headers=p["Cy"]).json() == []
+    ev.begin_date, ev.end_date = T - timedelta(days=5), T + timedelta(days=40)
+    ev.venue.open_hours = {k: None for k in ("mon", "tue", "wed", "thu", "fri", "sat", "sun")}
+    db.commit()
+    assert client.get("/crews/poll-ready", headers=p["Cy"]).json() == []
+    start(client, p["Ben"], crew, ev, days=(2,), expect=422)
+
+
+def test_days_outside_the_run(client, make_event, db):
+    p, crew, ev = setup(client, make_event, db, hours={})
+    ev = db.get(Event, ev.id)
+    ev.begin_date, ev.end_date = T + timedelta(days=5), T + timedelta(days=10)
+    db.commit()
+    start(client, p["Ben"], crew, ev, days=(2,), expect=422)  # before it opens
+    start(client, p["Ben"], crew, ev, days=(15,), expect=422)  # after it closes
+    start(client, p["Ben"], crew, ev, days=(5, 10))
+
+
+def test_short_hours_count_as_unknown_and_odd_data_is_safe():
+    wed = T + timedelta(days=(2 - T.weekday()) % 7)
+    assert hours_for({"wed": ["10:00", "10:20"]}, wed) == ("10:00", "17:00")  # no block fits
+    assert hours_for({"wed": ["10:15", "10:45"]}, wed) == ("10:00", "17:00")  # one block: no range
+    assert hours_for(["not", "a dict"], wed) == ("10:00", "17:00")
+    assert hours_for({"wed": ["10:00", 5]}, wed) == ("10:00", "17:00")
+    assert not valid_range("10:00", "17:00", "13:00", "1٤:00")  # a non-ASCII digit is not a time
+
+
+def test_lock_and_answer_use_this_polls_options_only(client, make_event, db):
+    p, crew, ev = setup(client, make_event, db, hours={})
+    mine = start(client, p["Ben"], crew, ev)
+    other = auth(register(client, email="eve@example.com", name="Eve Jones"))
+    crew2 = client.post("/crews", json={"name": "Elsewhere"}, headers=other).json()
+    for n in ("Fay", "Gus"):
+        h = auth(register(client, email=f"{n.lower()}@example.com", name=f"{n} Jones"))
+        token = client.post(f"/crews/{crew2['id']}/invites", headers=other).json()["token"]
+        assert client.post("/crews/join", json={"token": token}, headers=h).status_code in (200, 201)
+    ready(client, crew2, ev, other, h)
+    theirs = start(client, other, crew2, ev)
+    foreign = theirs["options"][0]["id"]
+    assert client.put(f"/crews/{crew['id']}/polls/{mine['id']}/answer", json={"blocks": [{"option_id": foreign, "start": "10:00"}]}, headers=p["Cy"]).status_code == 422
+    assert client.post(f"/crews/{crew['id']}/polls/{mine['id']}/lock", json={"option_id": foreign, "start": "10:00", "end": "11:00"}, headers=p["Ana"]).status_code == 422
+    assert client.put(f"/crews/{crew2['id']}/polls/{mine['id']}/answer", json={"blocks": []}, headers=other).status_code == 404  # another crew's poll id
+    assert client.put(f"/crews/{crew['id']}/polls/{mine['id']}/answer", json={"blocks": [{"option_id": foreign, "start": "10:00"}] * 241}, headers=p["Cy"]).status_code == 422  # over the cap

@@ -10,8 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from ..clock import today_in_chicago, utcnow
 from ..deps import DB, CurrentUser
 from ..models import Crew, CrewMember, DatePoll, DatePollAnswer, DatePollBlock, DatePollOption, DatePollPick, Event, PlanShare
-from ..polls import (HOURS_AHEAD_DAYS, MAX_WINDOW_DAYS, can_manage, ended, hours_for, interest, poll_out, recent_since, slots,
-                     valid_range)
+from ..polls import (HOURS_AHEAD_DAYS, MAX_WINDOW_DAYS, can_manage, ended, hours_for, interest, open_days, poll_out, recent_since, slots, valid_range)
 from ..ratelimit import SlidingWindowLimiter
 from ..schemas import PollAnswerIn, PollIn, PollLockIn, PollOut
 from ..visibility import is_live
@@ -103,6 +102,8 @@ def poll_ready(db: DB, user: CurrentUser):
             event = db.get(Event, event_id)
             if event is None or not is_live(event) or (event.end_date and event.end_date < today):
                 continue
+            if is_exhibition(event) and not open_days(event, today):
+                continue  # nothing to pick a day from yet (it opens later, or the venue is closed), so nothing to wait on
             if db.scalar(select(DatePoll.id).where(DatePoll.crew_id == crew_id, DatePoll.event_id == event_id).limit(1)) is None:
                 out.append({"crew_id": crew_id, "event_id": event_id, "kind": "hours" if is_exhibition(event) else "shows",
                             "event_title": event.title, "crew_name": crews[crew_id]})
@@ -115,10 +116,10 @@ def _hours_options(event: Event, body: PollIn, today) -> tuple:
     if body.options or not days or len(set(days)) != len(days):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Choose between one and five different days.")
     venue_hours = event.schedule["hours"]
+    running = set(open_days(event, today)) | {x for x in days if hours_for(venue_hours, x) is None}  # a closed day gets its own message below
     options = []
     for day in sorted(days):
-        if (day < today or (day - today).days >= HOURS_AHEAD_DAYS or (event.begin_date and day < event.begin_date)
-                or (event.end_date and day > event.end_date)):
+        if day not in running:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"Choose days in the next {HOURS_AHEAD_DAYS} days while the exhibition runs.")
         got = hours_for(venue_hours, day)
         if got is None:

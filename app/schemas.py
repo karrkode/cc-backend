@@ -1663,7 +1663,7 @@ class PollIn(BaseModel):
 
 class PollBlockIn(BaseModel):
     option_id: int
-    start: str = Field(pattern=r"^(?:[01]\d|2[0-3]):[03]0$")  # a half-hour: HH:00 or HH:30
+    start: str = Field(pattern=r"^(?:[01][0-9]|2[0-3]):[03]0$")  # a half-hour: HH:00 or HH:30
 
 
 class PollAnswerIn(BaseModel):
@@ -1673,8 +1673,8 @@ class PollAnswerIn(BaseModel):
 
 class PollLockIn(BaseModel):
     option_id: int
-    start: str | None = Field(default=None, pattern=r"^(?:[01]\d|2[0-3]):[03]0$")  # an exhibition poll locks a range: start and end
-    end: str | None = Field(default=None, pattern=r"^(?:(?:[01]\d|2[0-3]):[03]0|24:00)$")
+    start: str | None = Field(default=None, pattern=r"^(?:[01][0-9]|2[0-3]):[03]0$")  # an exhibition poll locks a range: start and end
+    end: str | None = Field(default=None, pattern=r"^(?:[01][0-9]|2[0-3]):[03]0$")
 
 
 class PollBlockOut(BaseModel):
