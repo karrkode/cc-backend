@@ -9,7 +9,7 @@ __pycache__/
 *.tfstate
 *.tfstate.*
 *.tfplan
-# CC-299: the apply runbook saves `plan -out=tfplan` (no extension) and its JSON export
+# CC-299: a plan saved with `terraform plan -out=tfplan` (no extension), and its JSON export
 tfplan
 tfplan.*
 terraform.tfvars
