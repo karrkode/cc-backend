@@ -81,7 +81,7 @@ login_failures = FailureCounter(get_settings().login_failure_window_minutes * 60
 
 
 def limit_auth_attempts(request: Request):
-    # nginx sets X-Forwarded-For; uvicorn's --proxy-headers turns it into request.client.host
+    # Caddy sets X-Forwarded-For; uvicorn's --proxy-headers turns it into request.client.host
     client = request.client.host if request.client else "unknown"
     if not auth_limiter.hit(f"{request.url.path}|{client}", get_settings().login_attempts_per_minute):
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Too many attempts. Try again in a minute.")
