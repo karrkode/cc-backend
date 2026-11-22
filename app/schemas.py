@@ -1652,18 +1652,36 @@ class PollOptionIn(BaseModel):
 
 
 class PollIn(BaseModel):
+    """A showtime poll sends window + options (CC-297). An exhibition poll sends kind "hours" and 1 to 5 days (CC-298)."""
     event_id: int
-    window_from: date_
-    window_to: date_
-    options: list[PollOptionIn] = Field(min_length=1, max_length=40)
+    kind: Literal["shows", "hours"] = "shows"
+    window_from: date_ | None = None
+    window_to: date_ | None = None
+    options: list[PollOptionIn] = Field(default_factory=list, max_length=40)
+    days: list[date_] = Field(default_factory=list, max_length=5)
+
+
+class PollBlockIn(BaseModel):
+    option_id: int
+    start: str = Field(pattern=r"^(?:[01]\d|2[0-3]):[03]0$")  # a half-hour: HH:00 or HH:30
 
 
 class PollAnswerIn(BaseModel):
-    option_ids: list[int] = Field(max_length=40)  # [] = "none of these work"
+    option_ids: list[int] = Field(default_factory=list, max_length=40)  # a showtime poll; [] = "none of these work"
+    blocks: list[PollBlockIn] = Field(default_factory=list, max_length=240)  # an exhibition poll's half-hours
 
 
 class PollLockIn(BaseModel):
     option_id: int
+    start: str | None = Field(default=None, pattern=r"^(?:[01]\d|2[0-3]):[03]0$")  # an exhibition poll locks a range: start and end
+    end: str | None = Field(default=None, pattern=r"^(?:(?:[01]\d|2[0-3]):[03]0|24:00)$")
+
+
+class PollBlockOut(BaseModel):
+    start: str
+    count: int
+    names: list[str]
+    yours: bool
 
 
 class PollOptionOut(BaseModel):
@@ -1673,12 +1691,16 @@ class PollOptionOut(BaseModel):
     count: int
     names: list[str]
     yours: bool
+    opens: str | None = None  # an exhibition poll's day: the hours it was started with, and each half-hour's answers
+    closes: str | None = None
+    blocks: list[PollBlockOut] = Field(default_factory=list)
 
 
 class PollBestOut(BaseModel):
     option_id: int
     date: date_
-    time: str
+    time: str  # an exhibition poll's range starts here...
+    end: str = ""  # ...and ends here
     count: int
     names: list[str]
     everyone: bool
@@ -1688,6 +1710,7 @@ class PollLockedOut(BaseModel):
     id: int
     date: date_
     time: str
+    end: str = ""
     count: int
     names: list[str]
     yours: bool
@@ -1699,6 +1722,7 @@ class PollOut(BaseModel):
     crew_name: str
     event_id: int
     event_title: str
+    kind: Literal["shows", "hours"] = "shows"
     status: Literal["open", "locked", "cancelled", "ended"]
     window_from: date_
     window_to: date_
