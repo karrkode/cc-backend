@@ -22,7 +22,7 @@ MAX_INPUT_BYTES = 25_000_000  # the largest of the first batch is under 6 MB
 # CC-246: a picture is read before its pixels are, so a small file that unpacks into a huge image is refused (CC-197)
 MAX_PIXELS = 50_000_000
 # CC-319: a JPEG is shrunk while it is decoded (draft mode), so its size in memory is the small one. Other formats are decoded
-# whole, so they get a lower limit, measured as the memory their WebP costs (the story's CC-319 comment): WebP and AVIF 8 million, others 12
+# whole, so they get a lower limit, measured as the memory their WebP costs (the story's CC-319 comment): WebP and AVIF 8 million, others 12. Measured on Linux with a colour profile (peak memory added): JPEG 5220x3414 39 MB (137 before), WebP 8 million 128 MB, PNG 12 million 89 MB
 MAX_PIXELS_WHOLE = {"WEBP": 8_000_000, "AVIF": 8_000_000}
 MAX_PIXELS_WHOLE_OTHER = 12_000_000
 PREFIX = "event-images"  # the CloudFront path, and the bucket's served prefix
