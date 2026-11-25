@@ -141,7 +141,21 @@ def _view_link(event: Event) -> str:
 
 # CC-151: Lakefront, as in the site (site.css, CC-136): the same tokens and type, the compact masthead (CC-137) and square
 # corners. The 404 page (cc-site public/404.html, CC-149) is the model for a standalone page.
-PAGE_STYLE = """
+# CC-268: the same @font-face rules as cc-site public/css/fonts.css (minus Newsreader, which these pages don't use). The font files
+# live on the site's own origin at /fonts/, which CloudFront serves from S3 beside these pages. Change both together.
+FONT_FACE = """
+@font-face { font-family: "Big Shoulders Text"; font-style: normal; font-weight: 600 800; font-display: swap;
+  src: url("/fonts/big-shoulders-text-normal-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "Instrument Sans"; font-style: italic; font-weight: 400; font-display: swap;
+  src: url("/fonts/instrument-sans-italic-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "Instrument Sans"; font-style: normal; font-weight: 400 600; font-display: swap;
+  src: url("/fonts/instrument-sans-normal-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+"""
+
+PAGE_STYLE = FONT_FACE + """
 :root, :root[data-theme="light"] {
   --page: #FFFFFF; --surface: #F2F7F9; --line: #D3E3EA; --rule: #0E2A40; --text: #0E2A40; --muted: #4A6275;
   --lake: #0E3A5B; --on-lake: #FFFFFF; --stripe: #9CD3EF; --lead: #0E3A5B; --on-lead: #FFFFFF; --star: #C8102E; --focus: #0F5E8C;
@@ -226,8 +240,6 @@ THEME_SCRIPT = """(function () {
 
 STAR = ('<svg class="star" aria-hidden="true" viewBox="0 0 24 24"><polygon points="12,1 14.5,7.67 21.53,6.5 17,12 21.53,17.5 '
         '14.5,16.33 12,23 9.5,16.33 2.47,17.5 7,12 2.47,6.5 9.5,7.67"></polygon></svg>')
-FONTS = ("https://fonts.googleapis.com/css2?family=Big+Shoulders+Text:wght@600..800"
-         "&family=Instrument+Sans:ital,wght@0,400..600;1,400&display=swap")
 
 _CAT_CLASS = {"Theater": "cat-theater", "Music": "cat-music", "Visual Art": "cat-art"}
 
@@ -264,9 +276,6 @@ def _page(title: str, desc: str, canonical: str | None, body: str, extra_head: s
             '<meta name="twitter:card" content="summary_large_image">',
         ]
     head += [
-        '<link rel="preconnect" href="https://fonts.googleapis.com">',
-        '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>',
-        f'<link rel="stylesheet" href="{e(FONTS)}">',
         f"<style>{PAGE_STYLE}</style>",
         extra_head,
     ]

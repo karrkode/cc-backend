@@ -109,9 +109,9 @@ locals {
   csp_site = join("; ", [
     "default-src 'self'",
     "script-src 'self' '${local.csp_theme_hash}'",
-    "style-src 'self' https://fonts.googleapis.com",
+    "style-src 'self'",
     "style-src-attr 'unsafe-inline'",
-    "font-src https://fonts.gstatic.com",
+    "font-src 'self'",
     "img-src 'self' data: blob: https:",
     "connect-src 'self' https://api.chiculturecrew.com https://api.github.com",
     "frame-ancestors 'none'",
@@ -124,8 +124,8 @@ locals {
     "default-src 'none'",
     "script-src '${local.csp_theme_hash}'",
     # 'self': CloudFront may serve the site's 404 page (and its /css/404.css) on these paths
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-    "font-src https://fonts.gstatic.com",
+    "style-src 'self' 'unsafe-inline'",
+    "font-src 'self'",
     "img-src 'self' data:",
     "frame-ancestors 'none'",
     "base-uri 'self'",
