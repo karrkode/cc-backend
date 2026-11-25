@@ -148,3 +148,82 @@ def test_only_pages_on_the_sources_site_are_read(db, site, stored, item):
     it = item(); it.url = "http://elsewhere.example/seagull"; db.commit()
     [(_, status, note)] = _run(db); db.refresh(it)
     assert status == "none" and "source's site" in it.image_note
+
+
+def test_an_upload_over_one_megabyte_gets_through_the_body_limit(client, admin_token, db, site, stored, item):  # review: Blocking 1
+    import io
+    import os
+    from PIL import Image
+    it = item()
+    out = io.BytesIO()
+    Image.frombytes("RGB", (900, 900), os.urandom(900 * 900 * 3)).save(out, "PNG")  # noise: about 2.4 MB, over the 1 MB JSON cap
+    assert 1_000_000 < len(out.getvalue()) < 3_800_000
+    r = client.put(f"/admin/discovery/items/{it.id}/image", content=out.getvalue(), headers={**auth(admin_token), "Content-Type": "image/png"})
+    assert r.status_code == 200 and r.json()["image_override"]
+
+
+def test_an_admins_upload_is_kept_even_when_another_event_has_the_same_file(client, admin_token, db, site, stored, item, make_event):  # Blocking 2
+    it = item()
+    h = auth(admin_token)
+    png = _image("PNG")
+    client.put(f"/admin/discovery/items/{it.id}/image", content=png, headers={**h, "Content-Type": "image/png"})
+    db.refresh(it)
+    ev = make_event(title="Last season")
+    ev.image_key = f"event-images/{ev.id}/{it.image_key.rsplit('/', 1)[1]}"; db.commit()  # the same file, on another event
+    body = {"title": "The Seagull", "category": "Theater", "venue": {"name": "Venue", "neighborhood": "Loop"},
+            "begin_date": "2027-02-01", "end_date": "2027-03-01", "url": it.url, "publish": "now", "weekly": {"thu": ["19:30"]}}
+    new = db.get(Event, client.post(f"/admin/discovery/items/{it.id}/approve", json=body, headers=h).json()["event"]["id"])
+    assert new.image_key == it.image_key and new.image_override is True
+
+
+def test_a_picture_found_since_by_sourcing_is_dropped_when_another_event_took_it(client, admin_token, db, site, stored, item, make_event):
+    it = item(); _run(db); db.refresh(it)
+    ev = make_event(title="Elsewhere")
+    ev.image_key = f"event-images/{ev.id}/{it.image_key.rsplit('/', 1)[1]}"; db.commit()
+    body = {"title": "The Seagull", "category": "Theater", "venue": {"name": "Venue", "neighborhood": "Loop"},
+            "begin_date": "2027-02-01", "end_date": "2027-03-01", "url": it.url, "publish": "now", "weekly": {"thu": ["19:30"]}}
+    new = db.get(Event, client.post(f"/admin/discovery/items/{it.id}/approve", json=body, headers=auth(admin_token)).json()["event"]["id"])
+    assert new.image_key is None  # the CC-251 rule holds for what sourcing found
+
+
+def test_an_upload_made_while_the_step_is_fetching_is_not_overwritten(db, Session, site, stored, item, monkeypatch):  # Blocking 3
+    it = item()
+    real = pictures.picture_from
+
+    def slow(image_url):  # the admin removes the picture in another session while this one is still fetching
+        got = real(image_url)
+        with Session() as other:
+            row = other.get(DiscoveredItem, it.id)
+            row.image_key, row.image_override = None, True
+            other.commit()
+        return got
+    monkeypatch.setattr(pictures, "picture_from", slow)
+    [(_, status, _)] = _run(db)
+    db.expire_all()
+    fresh = db.get(DiscoveredItem, it.id)
+    assert fresh.image_key is None and fresh.image_override is True and fresh.image_note == ""
+    assert not (stored / "event-images").exists() or not list((stored / "event-images").rglob("*.webp"))
+
+
+def test_the_last_failed_try_says_it_gave_up(db, site, stored, item, monkeypatch):
+    it = item()
+    monkeypatch.setattr(web, "fetch", lambda *a, **k: (_ for _ in ()).throw(web.FetchError("couldn't reach venue.example")))
+    for hours in (0, 2, 4):
+        pictures.add_item_pictures(db, datetime(2027, 1, 5, 12 + hours, tzinfo=UTC))
+    db.refresh(it)
+    assert it.image_tries == pictures.MAX_TRIES and it.image_note.startswith("Gave up after 3 tries")
+
+
+def test_an_ai_opt_out_does_not_stop_a_picture(db, site, stored, item):  # the agreed rule (CC-246): nothing here goes to Claude
+    _Site.ROUTES["/robots.txt"] = (200, "text/plain", b"User-agent: ClaudeBot\nDisallow: /\n")
+    it = item(); _run(db); db.refresh(it)
+    assert it.image_key
+
+
+def test_the_hourly_run_looks_for_found_items_pictures(db, monkeypatch):
+    from app.discovery import run as runner
+    called = []
+    monkeypatch.setattr(runner, "add_item_pictures", lambda d: called.append(1) or [])
+    monkeypatch.setattr(runner, "add_pictures", lambda d: [])
+    runner.run(db, None, datetime(2027, 1, 5, tzinfo=UTC).date())
+    assert called

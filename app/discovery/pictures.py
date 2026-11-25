@@ -244,6 +244,11 @@ def _try_pictures(db, item: DiscoveredItem, page, to) -> tuple[str | None, str, 
         if _item_dup(db, item, webp):
             why = "The picture is the same as another event's (a logo or the site's default)"
             continue
+        # the fetches above can take minutes: an admin may have uploaded or removed a picture meanwhile (the session
+        # keeps what it loaded), so what the database says now decides
+        db.refresh(item, ["image_override", "status"])
+        if item.image_override or item.status != "new":
+            raise NoPicture("picture chosen by admin")
         item.image_key = event_images.save(item_owner(item), data, ext, to, webp)
         item.image_source_url = page.url
         return f"picture stored from {urlsplit(image_url).hostname}", "", None
@@ -310,13 +315,16 @@ def add_item_pictures(db, now: datetime | None = None, limit: int = ITEM_PER_RUN
         except (NoPicture, web.Blocked) as e:
             status, note = "none", str(e)
             item.image_tries = MAX_TRIES
-            item.image_note = note[:NOTE_MAX]
+            if not item.image_override:  # an admin's choice has no reason to give
+                item.image_note = note[:NOTE_MAX]
         except web.FetchError as e:
             status, note = "error", f"{e} (try {item.image_tries} of {MAX_TRIES})"
-            item.image_note = f"Still trying: {e} (try {item.image_tries} of {MAX_TRIES})"[:NOTE_MAX]
+            item.image_note = (f"Still trying: {e} (try {item.image_tries} of {MAX_TRIES})" if item.image_tries < MAX_TRIES
+                               else f"Gave up after {MAX_TRIES} tries: {e}")[:NOTE_MAX]
         except Exception as e:  # noqa: BLE001 - one item's picture must not stop the rest, or discovery
             status, note = "error", f"{type(e).__name__}: {e}"[:300]
-            item.image_note = f"Still trying (try {item.image_tries} of {MAX_TRIES})"
+            item.image_note = (f"Still trying (try {item.image_tries} of {MAX_TRIES})" if item.image_tries < MAX_TRIES
+                               else f"Gave up after {MAX_TRIES} tries")
         db.commit()
         done.append((source.name if source else "A deleted source", status, f"{item.title}: {note}"))
     return done

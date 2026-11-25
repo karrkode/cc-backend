@@ -342,7 +342,8 @@ def _add_to_catalog(db: DB, item: DiscoveredItem, body: EventIn, user, shows: li
     # CC-310: the picture the admin saw comes with it (no wait for the hourly run); an admin's choice, even to have none,
     # is kept for good. One another event took since is not used (CC-251).
     event.image_override = item.image_override
-    if item.image_key and not item_dup_for_event(db, event, item.image_key):
+    # the duplicate check is for pictures sourcing found: an admin's own upload is kept even if another event has the same file
+    if item.image_key and (item.image_override or not item_dup_for_event(db, event, item.image_key)):
         event.image_key, event.image_source_url = item.image_key, item.image_source_url
     item.status, item.event_id, item.skip_reason = "approved", event.id, ""
     if shows is None:
