@@ -20,7 +20,7 @@
 """
 import io
 import re
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from html import unescape
 from urllib.parse import urljoin, urlsplit
 
@@ -336,33 +336,49 @@ def add_item_pictures(db, now: datetime | None = None, limit: int = ITEM_PER_RUN
 
 def backlog(db, retry_missing: bool = False) -> dict[str, list[DiscoveredItem]]:
     """The review list (status new) sorted for the backfill, oldest first:
-    todo (to look at now), has_picture, admin_choice (never touched), reason (a recorded reason, skipped unless
-    retry_missing), no_page (no address to read: skipped, and not worth a reason of its own)."""
-    out: dict[str, list[DiscoveredItem]] = {"todo": [], "has_picture": [], "admin_choice": [], "reason": [], "no_page": []}
+    todo (to look at now), has_picture, admin_choice (never touched), reason (a note is recorded, a reason or a try
+    still going: skipped unless retry_missing, and the hourly run finishes the tries). An item with no page address is
+    todo too: its look fetches nothing and records why there's no picture."""
+    out: dict[str, list[DiscoveredItem]] = {"todo": [], "has_picture": [], "admin_choice": [], "reason": []}
     for item in db.scalars(select(DiscoveredItem).where(DiscoveredItem.status == "new").order_by(DiscoveredItem.id)):
         if item.image_override:
             out["admin_choice"].append(item)
         elif item.image_key:
             out["has_picture"].append(item)
-        elif not item.url:
-            out["no_page"].append(item)
-        elif item.image_tries >= MAX_TRIES and item.image_note:
-            out["reason" if not retry_missing else "todo"].append(item)
+        elif item.image_note and not retry_missing:  # CC-318: a re-run changes nothing
+            out["reason"].append(item)
         else:
             out["todo"].append(item)
     return out
 
 
+def _still_todo(item: DiscoveredItem, retry_missing: bool, started: datetime) -> bool:
+    """The item as the database has it now: the list was made a while ago, and an admin or the hourly run (a separate
+    process, with its own spacing between requests) may have got there first."""
+    checked = item.image_checked_at
+    if checked is not None and checked.tzinfo is None:  # SQLite hands back naive times; the column is UTC
+        checked = checked.replace(tzinfo=UTC)
+    return (item.status == "new" and not item.image_override and not item.image_key
+            and (retry_missing or not item.image_note) and (checked is None or checked <= started))
+
+
 def backfill_items(db, retry_missing: bool = False, limit: int | None = None, now: datetime | None = None,
-                   to=None) -> list[tuple[str, str, str]]:
-    """Look for a picture for each review-list item that has none and no recorded reason. Never touches an item with a
-    picture or an admin's choice, so running it again finds nothing new. Uses look_for_item: the same fetch rules,
-    spacing and robots.txt as the hourly run, and no Claude call. With retry_missing, an item whose last look gave a
-    reason gets a fresh set of tries."""
-    now = now or utcnow()
+                   to=None, on_result=None) -> list[tuple[str, str, str]]:
+    """Look for a picture for each review-list item that has none and no note. Never touches an item with a picture,
+    an admin's choice or a note, so running it again finds nothing. Each item is read afresh just before its look and
+    skipped if it changed since the list was made. Uses look_for_item: the same fetch rules, spacing and robots.txt as
+    the hourly run, and no Claude call. With retry_missing, an item whose last look gave a reason gets a fresh set of
+    tries. on_result(row) is called after each item, so a long run shows its progress."""
+    started = now = now or utcnow()
     done = []
     for item in backlog(db, retry_missing)["todo"][:limit]:
+        db.refresh(item)
+        if not _still_todo(item, retry_missing, started):
+            continue
         if retry_missing and item.image_tries >= MAX_TRIES:
             item.image_tries = 0
-        done.append(look_for_item(db, item, now, to))
+        row = look_for_item(db, item, now, to)
+        done.append(row)
+        if on_result:
+            on_result(row)
     return done

@@ -3,8 +3,11 @@ test_event_pictures); no live pages."""
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import select
+from datetime import timedelta
 
+from sqlalchemy import select, update
+
+from app.discovery import fetch as web
 from app.discovery import pictures
 from app.discovery.readers import FoundEvent
 from app.discovery.store import record
@@ -104,9 +107,41 @@ def test_live_events_and_other_statuses_are_left_alone(db, site, stored, item, m
     assert ev.image_key is None and rejected.image_key is None and rejected.image_tries == 0
 
 
-def test_an_item_with_no_page_address_is_skipped(db, site, stored, item):
+def test_an_item_with_no_page_address_gets_a_reason_and_nothing_is_fetched(db, site, stored, item):  # 1
     it = item(); it.url = ""; db.commit()
-    assert job.report(db)["no_page"] == 1 and pictures.backfill_items(db, now=NOW) == []
+    asked = _Site.asked[:]
+    [(_, status, _)] = pictures.backfill_items(db, now=NOW); db.refresh(it)
+    assert status == "none" and "no page of its own" in it.image_note and _Site.asked == asked
+
+
+def test_a_try_still_going_is_left_to_the_hourly_run(db, site, stored, item, monkeypatch):
+    it = item()
+    monkeypatch.setattr(web, "fetch", lambda *a, **k: (_ for _ in ()).throw(web.FetchError("couldn't reach venue.example")))
+    [(_, status, _)] = pictures.backfill_items(db, now=NOW); db.refresh(it)
+    assert status == "error" and it.image_note.startswith("Still trying") and it.image_tries == 1
+    assert pictures.backfill_items(db, now=NOW) == [] and it.image_tries == 1  # a re-run changes nothing
+
+
+def test_an_item_changed_during_the_run_is_not_looked_at_from_the_old_list(db, site, stored, item):  # races
+    first, second, third, fourth = item(), item("Hamlet", SITE + "/hamlet"), item("Macbeth", SITE + "/macbeth"), item("Lear", SITE + "/lear")
+    for t in ("hamlet", "macbeth", "lear"):
+        _Site.ROUTES["/" + t] = _Site.ROUTES["/seagull"]
+    seen = []
+
+    def meanwhile(row):  # after the first look: an admin rejects one, uploads for another; the hourly run finishes the last
+        if seen:
+            return
+        seen.append(row)
+        db.execute(update(DiscoveredItem).where(DiscoveredItem.id == second.id).values(status="rejected"))
+        db.execute(update(DiscoveredItem).where(DiscoveredItem.id == third.id).values(image_override=True))
+        db.execute(update(DiscoveredItem).where(DiscoveredItem.id == fourth.id).values(
+            image_checked_at=NOW + timedelta(minutes=5), image_note="The page names no picture", image_tries=3))
+        db.commit()
+    rows = pictures.backfill_items(db, now=NOW, on_result=meanwhile)
+    db.expire_all()
+    assert len(rows) == 1
+    assert second.image_tries == 0 and third.image_key is None and fourth.image_note == "The page names no picture"
+    assert fourth.image_tries == 3 and fourth.image_checked_at is not None
 
 
 def test_the_summary_names_the_outcome_counts(db, site, stored, item):  # 6
