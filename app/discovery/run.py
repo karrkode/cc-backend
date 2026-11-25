@@ -542,7 +542,9 @@ def _step(db, name: str, results: list, say, fn) -> None:
         db.rollback()
         results.append((name, Outcome(status="failed", notes=[f"{type(e).__name__}: {e}"[:300]])))
     if say:
-        for row in results[before:]:
+        rows = results[before:]
+        # a step with nothing to report still says so, so the output shows every step ran (and a run killed part-way shows where)
+        for row in rows or [(name, Outcome(status="ok", notes=["nothing to do"]))]:
             say(row)
 
 

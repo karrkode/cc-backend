@@ -48,7 +48,7 @@ def normalise(data: bytes) -> bytes:
         im = Image.open(io.BytesIO(data))
         pixels = im.width * im.height
         if pixels > MAX_PIXELS:
-            raise TooBig(f"too many pixels ({pixels / 1e6:.0f} million; the limit is {MAX_PIXELS // 1_000_000} million)")
+            raise TooBig(f"too many pixels ({pixels:,}; the limit is {MAX_PIXELS:,})")
         if isinstance(im, JpegImageFile):  # also an MPO: a JPEG that carries a second picture, as many phone photos do
             # CC-319: decode at 1/2, 1/4 or 1/8 size, never below what MAX_SIDE needs. A very wide one can't shrink far, so
             # what it is after drafting meets the whole-decode limit
@@ -56,7 +56,8 @@ def normalise(data: bytes) -> bytes:
             pixels = im.width * im.height
         limit = MAX_PIXELS_WHOLE.get(im.format or "", MAX_PIXELS_WHOLE_OTHER)
         if pixels > limit:
-            raise TooBig(f"too many pixels for a {im.format or 'this'} picture (over {limit // 1_000_000} million)")
+            kind = im.format or "this"
+            raise TooBig(f"too many pixels for {'an' if kind[0] in 'AEIOU' else 'a'} {kind} picture (over {limit // 1_000_000} million)")
         im.load()
     except BadImage:
         raise

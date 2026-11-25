@@ -180,3 +180,35 @@ def test_an_admin_is_told_when_a_picture_is_too_big(client, admin_token, make_ev
     assert r.status_code == 422 and "too big" in r.json()["detail"] and "12 million" in r.json()["detail"]
     r = client.put(f"/events/{ev.id}/image", content=b"not a png", headers={**auth(admin_token), "Content-Type": "image/png"})
     assert r.status_code == 422 and "too big" not in r.json()["detail"]
+
+
+def test_a_run_with_nothing_due_still_says_every_step_in_order(db):
+    said = []
+    run(db, None, TODAY, say=said.append)
+    names = [n for n, _ in said]
+    steps = ["Sources", "Event pages", "Found pictures", "Live-event pictures", "Photo sweep", "Budget alert"]
+    assert [n for n in names if n in steps] == steps  # a step with no rows of its own says "nothing to do"
+    assert dict(said)["Budget alert"].notes == ["nothing to do"]
+
+
+def test_too_big_messages_read_plainly():
+    with pytest.raises(event_images.TooBig) as e:
+        event_images.normalise(_img("PNG", (3600, 3400)))
+    assert "a PNG picture" in str(e.value)
+    from PIL import Image as _I
+    out = io.BytesIO(); _I.new("RGB", (8100, 6200)).save(out, "JPEG", quality=1)  # 50.2 million pixels: over the hard limit
+    with pytest.raises(event_images.TooBig) as e:
+        event_images.normalise(out.getvalue())
+    assert "50,220,000" in str(e.value) and "50,000,000" in str(e.value)
+
+
+def test_an_admin_is_told_when_a_found_items_picture_is_too_big(client, admin_token, db):
+    from .conftest import auth
+    s = make_source(db)
+    record(db, s, FoundEvent(title="Hamlet", url="https://goodman.example/shows/hamlet", kind="production", category="Theater",
+                             begin_date="2027-02-01", end_date="2027-03-01"), "")
+    db.commit()
+    item = db.scalar(select(DiscoveredItem))
+    r = client.put(f"/admin/discovery/items/{item.id}/image", content=_img("PNG", (3600, 3400)),
+                   headers={**auth(admin_token), "Content-Type": "image/png"})
+    assert r.status_code == 422 and "too big" in r.json()["detail"] and "12 million" in r.json()["detail"]
