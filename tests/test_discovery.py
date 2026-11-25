@@ -93,6 +93,8 @@ def pages(monkeypatch):
             return Page(url=url, status=304, etag=etag)
         return Page(url=url, status=200, text=got["html"], etag="v1")
     monkeypatch.setattr(web, "fetch", fake_fetch)
+    # CC-310: found items' pictures are fetched in the same run, and these tests count the page reads (tests/test_found_pictures.py has theirs)
+    monkeypatch.setattr("app.discovery.run.add_item_pictures", lambda db: [])
     return served, calls
 
 

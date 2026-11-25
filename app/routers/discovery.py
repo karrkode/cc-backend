@@ -3,15 +3,17 @@ from decimal import Decimal
 from types import SimpleNamespace
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, HTTPException, Query, Response, status
+from fastapi import APIRouter, HTTPException, Query, Request, Response, status
+from starlette.concurrency import run_in_threadpool
 from pydantic import ValidationError
 from sqlalchemy import delete, func, select, update
 
 from ..clock import CHICAGO, chicago_day, today_in_chicago, utcnow
-from .. import csvsafe
+from .. import csvsafe, event_images
 from ..deps import DB, AdminUser
 from ..discovery.budget import budget_state, set_monthly_budget
 from ..discovery.needs import needs
+from ..discovery.pictures import TYPES, item_dup_for_event, kind_of
 from ..discovery.readers import cost_usd
 from ..discovery.recap import budget_note, found_by_week, gather, next_send
 from ..discovery.rules import norm_title
@@ -21,7 +23,7 @@ from ..models import FOUND, DiscoveredItem, DiscoveryCheck, DiscoverySource, Eve
 from ..schemas import (BatchHeld, BatchIn, BatchOut, BudgetIn, DelayIn, DiscoveredItemOut, DiscoveredPage, DiscoveryOverview, DiscoverySourceOut, DiscoverySourcePatch,
                        EventIn, EventRef, FoundApproveIn, FoundChange, RUN_DATES_MAX, SHOW_RUN_MAX, RejectIn, RejectOut, SkipRuleOut, SourcingCount, SourcingSummary,
                        SourcingUnreadable, SourcingWeek, UnreadableSource)
-from .events import _no_past_shows, new_event
+from .events import MAX_ADMIN_IMAGE_BYTES, _no_past_shows, new_event
 
 router = APIRouter(prefix="/admin/discovery", tags=["discovery"])
 
@@ -194,6 +196,7 @@ def _item_out(db: DB, item: DiscoveredItem, dups: dict | None = None) -> Discove
         out.venue_name = item.venue_name or item.source.venue_name
         if not item.venue_name or norm_title(item.venue_name) == norm_title(item.source.venue_name):
             out.neighborhood = item.source.neighborhood
+    out.image_url = event_images.url_for(item.image_key)
     out.dates_listed = len(item.performances or [])
     out.dates_timed = any(p.get("time") for p in item.performances or [])
     if item.begin_date and item.end_date and 0 <= (item.end_date - item.begin_date).days < SHORT_RUN_DAYS:
@@ -336,6 +339,12 @@ def _add_to_catalog(db: DB, item: DiscoveredItem, body: EventIn, user, shows: li
         event.shows = [EventRunDate(date=s.date, time=s.time, end_time=s.end_time, origin="admin") for s in shows]
     db.add(event)
     db.flush()
+    # CC-310: the picture the admin saw comes with it (no wait for the hourly run); an admin's choice, even to have none,
+    # is kept for good. One another event took since is not used (CC-251).
+    event.image_override = item.image_override
+    # the duplicate check is for pictures sourcing found: an admin's own upload is kept even if another event has the same file
+    if item.image_key and (item.image_override or not item_dup_for_event(db, event, item.image_key)):
+        event.image_key, event.image_source_url = item.image_key, item.image_source_url
     item.status, item.event_id, item.skip_reason = "approved", event.id, ""
     if shows is None:
         sync_found_shows(db, item)  # CC-79: its dates and times, for Find an outing
@@ -383,6 +392,52 @@ def approve(item_id: int, body: FoundApproveIn, db: DB, user: AdminUser):
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
                                 "Add the date it opens." if missing == "date" else "Choose the days it's on, with a start time for each.")
     _add_to_catalog(db, item, body, user, shows)
+    db.commit()
+    return _item_out(db, item)
+
+
+def _open_item(db: DB, item_id: int) -> DiscoveredItem:
+    item = _item(db, item_id)
+    if item.status not in ("new", "hidden", "skipped", "rejected"):
+        raise HTTPException(status.HTTP_409_CONFLICT, "This one is already in the catalog: change the event's picture instead")
+    return item
+
+
+@router.put("/items/{item_id}/image", response_model=DiscoveredItemOut)
+async def replace_item_image(item_id: int, request: Request, db: DB, _: AdminUser):
+    """CC-310: the admin's own picture for a found event, kept when it's approved and never replaced by sourcing."""
+    item = _open_item(db, item_id)
+    image_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
+    if image_type not in TYPES:
+        raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "Use a JPEG, PNG, WebP, GIF or AVIF image")
+    if request.headers.get("content-length", "").isdigit() and int(request.headers["content-length"]) > MAX_ADMIN_IMAGE_BYTES:
+        raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, "Picture must be smaller than 3.8 MB")
+    data = bytearray()
+    async for chunk in request.stream():
+        if len(data) + len(chunk) > MAX_ADMIN_IMAGE_BYTES:
+            raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, "Picture must be smaller than 3.8 MB")
+        data.extend(chunk)
+    if not kind_of(data, image_type):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "The file doesn't match its image type")
+    return await run_in_threadpool(_store_item_image, db, item, bytes(data), TYPES[image_type])
+
+
+def _store_item_image(db, item: DiscoveredItem, data: bytes, ext: str) -> DiscoveredItemOut:
+    try:
+        webp = event_images.normalise(data)
+    except event_images.BadImage as err:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "That picture couldn't be read") from err
+    item.image_key = event_images.save(f"found-{item.id}", data, ext, webp=webp)  # stored before the item changes
+    item.image_source_url, item.image_note, item.image_override = "", "", True
+    db.commit()
+    return _item_out(db, item)
+
+
+@router.delete("/items/{item_id}/image", response_model=DiscoveredItemOut)
+def remove_item_image(item_id: int, db: DB, _: AdminUser):
+    """CC-310: no picture for this found event: sourcing must not put one back."""
+    item = _open_item(db, item_id)
+    item.image_key, item.image_source_url, item.image_note, item.image_override = None, "", "", True
     db.commit()
     return _item_out(db, item)
 

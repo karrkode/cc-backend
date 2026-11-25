@@ -13,6 +13,9 @@
   image_source_url keeps the page it came from, which the event page credits.
 - A failure never holds anything up: the event stays live with its water. A page or picture that can't be fetched
   this time is tried again the next day, at most MAX_TRIES times; a page with no usable picture isn't tried again.
+- CC-310: a found item gets its candidate picture the same way, before anyone approves it (add_item_picture): from its
+  own page, else from up to two tickets or calendar links on it (no model: the links are the page's own, picked by their
+  words). The admin sees the picture, or why there isn't one, and their upload or removal is never replaced.
 - A tiny picture (an icon), or one another event already has (a site's logo or default share image), isn't used.
 """
 import io
@@ -25,9 +28,11 @@ from sqlalchemy import or_, select
 
 from ..clock import utcnow
 from .. import event_images
-from ..models import DiscoverySource, Event, EventStatus
+from ..models import DiscoveredItem, DiscoverySource, Event, EventStatus
 from . import fetch as web
 from .jsonld import _blocks, _is_event, _objects, _tags
+from .store import on_source_site
+from .tickets import links_of
 
 MAX_TRIES = 3
 RETRY_AFTER = timedelta(hours=20)  # about a day: the hourly run looks again tomorrow, not next hour
@@ -188,4 +193,138 @@ def add_pictures(db, now: datetime | None = None, limit: int = PER_RUN, to=None)
         db.commit()
         source = db.get(DiscoverySource, event.found_by_id) if event.found_by_id else None
         done.append((source.name if source else "A deleted source", status, f"{event.title}: {note}"))
+    return done
+
+
+# --- CC-310: a found item's candidate picture ---------------------------------------------------------------------
+
+TICKET_PAGES = 2  # tickets or calendar links tried when the event's own page has no usable picture
+ITEM_PER_RUN = 10
+NOTE_MAX = 300
+
+
+def item_owner(item: DiscoveredItem) -> str:
+    """The folder a candidate's files go in until it has an event (its key is kept when the event is made)."""
+    return f"found-{item.id}"
+
+
+def _item_dup(db, item: DiscoveredItem, webp: bytes) -> bool:
+    """Another event, or another found item still waiting, already has this exact picture (a logo or a default share image)."""
+    name = event_images.key_for(item_owner(item), webp).rsplit("/", 1)[1]
+    if db.scalar(select(Event.id).where(Event.image_key.like(f"%/{name}")).limit(1)) is not None:
+        return True
+    return db.scalar(select(DiscoveredItem.id).where(DiscoveredItem.id != item.id, DiscoveredItem.status == "new",
+                                                     DiscoveredItem.image_key.like(f"%/{name}")).limit(1)) is not None
+
+
+def item_dup_for_event(db, event: Event, key: str) -> bool:
+    """On approval: the item's picture was taken by another event since it was found."""
+    name = key.rsplit("/", 1)[1]
+    return db.scalar(select(Event.id).where(Event.id != event.id, Event.image_key.like(f"%/{name}")).limit(1)) is not None
+
+
+def _try_pictures(db, item: DiscoveredItem, page, to) -> tuple[str | None, str, web.FetchError | None]:
+    """The first usable picture of one page: (note when stored, else None; why not; a fetch error worth retrying)."""
+    candidates = preview_images(page.text, page.url)
+    if not candidates:
+        return None, "The page names no picture", None
+    why, failed = "The page names no picture", None
+    for image_url in candidates[:3]:
+        try:
+            data, ext, webp = picture_from(image_url)
+        except web.Blocked as e:
+            why = f"Refused: {e}"
+            continue
+        except NoPicture as e:
+            why = str(e)[:1].upper() + str(e)[1:]
+            continue
+        except web.FetchError as e:
+            failed = e
+            continue
+        if _item_dup(db, item, webp):
+            why = "The picture is the same as another event's (a logo or the site's default)"
+            continue
+        # the fetches above can take minutes: an admin may have uploaded or removed a picture meanwhile (the session
+        # keeps what it loaded), so what the database says now decides
+        db.refresh(item, ["image_override", "status"])
+        if item.image_override or item.status != "new":
+            raise NoPicture("picture chosen by admin")
+        item.image_key = event_images.save(item_owner(item), data, ext, to, webp)
+        item.image_source_url = page.url
+        return f"picture stored from {urlsplit(image_url).hostname}", "", None
+    return None, why, failed
+
+
+def add_item_picture(db, item: DiscoveredItem, source: DiscoverySource, to=None) -> str:
+    """Look for a found item's picture: its own page first, then the tickets or calendar pages it links to. Returns a
+    note for the run's log and sets item.image_key. Raises web.FetchError when it's worth trying again later, and
+    NoPicture (with the reason for the admin) when it isn't. Every fetch is web.fetch's: public hosts, robots.txt, spacing."""
+    if item.image_override:
+        raise NoPicture("picture chosen by admin")
+    if not item.url or not on_source_site(item.url, source):
+        raise NoPicture("The event has no page of its own on the source's site")
+    try:
+        page = web.fetch(item.url, ai=False)  # nothing here goes to Claude
+    except web.Blocked as e:
+        raise NoPicture(f"Refused: {e}") from e
+    done, why, failed = _try_pictures(db, item, page, to)
+    if done:
+        return done
+    for link, _ in links_of(page.text, page.url)[:TICKET_PAGES]:
+        try:
+            tpage = web.fetch(link, ai=False)
+        except web.Blocked as e:
+            why = f"Refused: {link}: {e}"
+            continue
+        except web.FetchError as e:
+            failed = e
+            continue
+        done, more, err = _try_pictures(db, item, tpage, to)
+        if done:
+            return done
+        why, failed = (more if more != "The page names no picture" else why), failed or err
+    if failed is not None:
+        raise failed
+    raise NoPicture(why)
+
+
+def due_items(db, now: datetime, limit: int = ITEM_PER_RUN) -> list[DiscoveredItem]:
+    return db.scalars(select(DiscoveredItem).where(
+        DiscoveredItem.status == "new", DiscoveredItem.image_key.is_(None), DiscoveredItem.url != "",
+        DiscoveredItem.image_override.is_(False), DiscoveredItem.image_tries < MAX_TRIES,
+        or_(DiscoveredItem.image_checked_at.is_(None), DiscoveredItem.image_checked_at < now - RETRY_AFTER_ITEM),
+    ).order_by(DiscoveredItem.id).limit(limit)).all()
+
+
+RETRY_AFTER_ITEM = timedelta(hours=1)  # the hourly run: a found item's picture is wanted before its review, not tomorrow
+
+
+def add_item_pictures(db, now: datetime | None = None, limit: int = ITEM_PER_RUN, to=None) -> list[tuple[str, str, str]]:
+    """Look for the pictures of found items waiting for review, committing after each. Same results as add_pictures."""
+    now = now or utcnow()
+    done = []
+    for item in due_items(db, now, limit):
+        source = db.get(DiscoverySource, item.source_id) if item.source_id else None
+        item.image_tries += 1
+        item.image_checked_at = now
+        try:
+            if source is None:
+                raise NoPicture("The source was deleted")
+            status, note = "ok", add_item_picture(db, item, source, to)
+            item.image_note = ""
+        except (NoPicture, web.Blocked) as e:
+            status, note = "none", str(e)
+            item.image_tries = MAX_TRIES
+            if not item.image_override:  # an admin's choice has no reason to give
+                item.image_note = note[:NOTE_MAX]
+        except web.FetchError as e:
+            status, note = "error", f"{e} (try {item.image_tries} of {MAX_TRIES})"
+            item.image_note = (f"Still trying: {e} (try {item.image_tries} of {MAX_TRIES})" if item.image_tries < MAX_TRIES
+                               else f"Gave up after {MAX_TRIES} tries: {e}")[:NOTE_MAX]
+        except Exception as e:  # noqa: BLE001 - one item's picture must not stop the rest, or discovery
+            status, note = "error", f"{type(e).__name__}: {e}"[:300]
+            item.image_note = (f"Still trying (try {item.image_tries} of {MAX_TRIES})" if item.image_tries < MAX_TRIES
+                               else f"Gave up after {MAX_TRIES} tries")
+        db.commit()
+        done.append((source.name if source else "A deleted source", status, f"{item.title}: {note}"))
     return done

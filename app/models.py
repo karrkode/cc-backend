@@ -876,6 +876,14 @@ class DiscoveredItem(Base):
     # CC-304: when the stronger model last looked for this show's dates. One look per show: it's the costly one
     strong_looked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     weeks: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")  # some weeks of the month only, as on events
+    # CC-310: the candidate picture the admin sees before approving (copied to our storage, never hotlinked), why there
+    # isn't one, and whether the admin chose (uploaded or removed): then sourcing never touches it
+    image_key: Mapped[str | None] = mapped_column(String(200))
+    image_source_url: Mapped[str] = mapped_column(Text, default="", server_default="")
+    image_note: Mapped[str] = mapped_column(String(300), default="", server_default="")
+    image_override: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    image_tries: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    image_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # CC-257: a hidden item an admin delayed; it goes back to "new" once this moment has passed (store.release_delayed)
     delayed_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
