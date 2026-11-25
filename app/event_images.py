@@ -33,9 +33,14 @@ class BadImage(ValueError):
     """The bytes aren't an image Pillow can read."""
 
 
+class TooBig(BadImage):
+    """CC-319: a readable picture with too many pixels. Its message is plain enough to show the admin who uploaded it."""
+
+
 def normalise(data: bytes) -> bytes:
     """Any supported image -> the WebP we serve."""
     from PIL import Image, ImageOps  # Pillow only loads where photos are made, not on every API request
+    from PIL.JpegImagePlugin import JpegImageFile
 
     if len(data) > MAX_INPUT_BYTES:
         raise BadImage("too large")
@@ -43,13 +48,15 @@ def normalise(data: bytes) -> bytes:
         im = Image.open(io.BytesIO(data))
         pixels = im.width * im.height
         if pixels > MAX_PIXELS:
-            raise BadImage("too many pixels")
-        if im.format == "JPEG":
-            # CC-319: decode at 1/2, 1/4 or 1/8 size, never below what MAX_SIDE needs: the full picture is never in memory
+            raise TooBig(f"too many pixels ({pixels / 1e6:.0f} million; the limit is {MAX_PIXELS // 1_000_000} million)")
+        if isinstance(im, JpegImageFile):  # also an MPO: a JPEG that carries a second picture, as many phone photos do
+            # CC-319: decode at 1/2, 1/4 or 1/8 size, never below what MAX_SIDE needs. A very wide one can't shrink far, so
+            # what it is after drafting meets the whole-decode limit
             im.draft(im.mode, (MAX_SIDE, MAX_SIDE))
-        elif pixels > MAX_PIXELS_WHOLE.get(im.format or "", MAX_PIXELS_WHOLE_OTHER):
-            limit = MAX_PIXELS_WHOLE.get(im.format or "", MAX_PIXELS_WHOLE_OTHER)
-            raise BadImage(f"too many pixels for a {im.format or 'this'} picture ({pixels / 1e6:.0f} million; the limit is {limit // 1_000_000} million)")
+            pixels = im.width * im.height
+        limit = MAX_PIXELS_WHOLE.get(im.format or "", MAX_PIXELS_WHOLE_OTHER)
+        if pixels > limit:
+            raise TooBig(f"too many pixels for a {im.format or 'this'} picture (over {limit // 1_000_000} million)")
         im.load()
     except BadImage:
         raise

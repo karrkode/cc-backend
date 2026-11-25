@@ -149,3 +149,34 @@ def test_a_small_orientated_jpeg_still_comes_out_upright():
     out = io.BytesIO()
     Image.new("RGB", (1600, 800), (1, 2, 3)).save(out, "JPEG", exif=ex)
     assert Image.open(io.BytesIO(event_images.normalise(out.getvalue()))).size == (600, 1200)  # turned upright, then shrunk to 1200 as before
+
+
+def test_a_jpeg_with_a_second_picture_inside_is_still_a_jpeg():  # review: Pillow opens these as MPO, which main accepted up to 50 million
+    out = io.BytesIO()
+    a = Image.new("RGB", (4032, 3024), (9, 9, 9))
+    a.save(out, "MPO", save_all=True, append_images=[Image.new("RGB", (400, 300))])
+    data = out.getvalue()
+    assert Image.open(io.BytesIO(data)).format == "MPO"
+    assert Image.open(io.BytesIO(event_images.normalise(data))).size == (1200, 900)
+
+
+def test_a_very_wide_jpeg_that_cannot_shrink_far_meets_the_whole_decode_limit():
+    with pytest.raises(event_images.TooBig, match="too many pixels"):
+        event_images.normalise(_img("JPEG", (30000, 1000)))  # draft can't go below the 1200-pixel side: still 30 million after it
+
+
+def test_a_sideways_big_jpeg_is_turned_upright_after_shrinking():
+    ex = Image.Exif(); ex[0x0112] = 6
+    out = io.BytesIO()
+    Image.new("RGB", (5220, 3414), (1, 2, 3)).save(out, "JPEG", exif=ex)
+    assert Image.open(io.BytesIO(event_images.normalise(out.getvalue()))).size == (785, 1200)
+
+
+def test_an_admin_is_told_when_a_picture_is_too_big(client, admin_token, make_event):
+    from .conftest import auth
+    ev = make_event("Hamlet")
+    r = client.put(f"/events/{ev.id}/image", content=_img("PNG", (3600, 3400)),
+                   headers={**auth(admin_token), "Content-Type": "image/png"})
+    assert r.status_code == 422 and "too big" in r.json()["detail"] and "12 million" in r.json()["detail"]
+    r = client.put(f"/events/{ev.id}/image", content=b"not a png", headers={**auth(admin_token), "Content-Type": "image/png"})
+    assert r.status_code == 422 and "too big" not in r.json()["detail"]

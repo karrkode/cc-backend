@@ -425,6 +425,8 @@ async def replace_item_image(item_id: int, request: Request, db: DB, _: AdminUse
 def _store_item_image(db, item: DiscoveredItem, data: bytes, ext: str) -> DiscoveredItemOut:
     try:
         webp = event_images.normalise(data)
+    except event_images.TooBig as err:  # CC-319: say why, so the admin knows to shrink it rather than look for a corrupt file
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"That picture is too big: {err}") from err
     except event_images.BadImage as err:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "That picture couldn't be read") from err
     item.image_key = event_images.save(f"found-{item.id}", data, ext, webp=webp)  # stored before the item changes

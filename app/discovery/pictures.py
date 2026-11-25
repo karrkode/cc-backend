@@ -305,6 +305,7 @@ def look_for_item(db, item: DiscoveredItem, now: datetime, to=None) -> tuple[str
     source = db.get(DiscoverySource, item.source_id) if item.source_id else None
     item.image_tries += 1
     item.image_checked_at = now
+    db.refresh(item, ["image_override"])  # an admin may have chosen since the list was made (the session keeps what it loaded)
     if not item.image_override:  # CC-319: counted and committed before the fetch. If the look is killed, this is the reason left
         item.image_note = (f"The last look didn't finish (try {item.image_tries} of {MAX_TRIES})" if item.image_tries < MAX_TRIES
                            else f"Gave up after {MAX_TRIES} tries: the look didn't finish (a very large picture?)")
