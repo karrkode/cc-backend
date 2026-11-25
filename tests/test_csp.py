@@ -65,12 +65,17 @@ def test_the_api_sends_the_same_page_policy_as_cloudfront():
     assert pageheaders.THEME_HASH == _hash()
 
 
-def test_fonts_may_come_from_self():
-    """CC-268: the pages load their fonts from 'self'. Google stays listed only until the site has shipped /fonts/ and a
-    follow-up removes it (the CSP is enforced and the backend ships first); then this asserts there is no Google at all."""
-    for policy in (_tf_policy("csp_site"), _tf_policy("csp_api_pages")):
-        assert re.search(r"font-src 'self'[ ;]", policy + ";")
-    assert NGINX.count("font-src 'self' ") == 2
+def test_fonts_come_from_self_and_nothing_names_google():
+    """CC-268: styles and fonts come from 'self' in every policy, and no app code or terraform file names Google Fonts."""
+    for name, style in (("csp_site", "style-src 'self'"), ("csp_api_pages", "style-src 'self' 'unsafe-inline'")):
+        policy = _tf_policy(name)
+        assert re.search(rf"{style}(;|$)", policy + ";"), name  # exactly this list, so no outside host can slip in
+        assert re.search(r"font-src 'self'(;|$)", policy + ";"), name
+        assert not re.search(r"google|gstatic", policy)
+    assert NGINX.count("font-src 'self';") == 2 and not re.search(r"google|gstatic", NGINX)
+    assert NGINX.count("style-src 'self';") == 1 and NGINX.count("style-src 'self' 'unsafe-inline';") == 1
+    for path in [*(ROOT / "app").rglob("*.py"), *(ROOT / "infra/aws").glob("*.tf")]:
+        assert not re.search(r"fonts\.(googleapis|gstatic)", path.read_text()), path
 
 
 def test_rendered_pages_load_no_outside_fonts(client, make_event):
