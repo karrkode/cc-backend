@@ -362,6 +362,8 @@ async def replace_event_image(event_id: int, request: Request, db: DB, _: AdminU
 def _store_event_image(db, event: Event, data: bytes, ext: str) -> Event:
     try:
         webp = event_images.normalise(data)
+    except event_images.TooBig as err:  # CC-319: say why, so the admin knows to shrink it rather than look for a corrupt file
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"That picture is too big: {err}") from err
     except event_images.BadImage as err:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "That picture couldn't be read") from err
     # Validate and store before touching the event: a failed upload keeps the previous picture.

@@ -30,6 +30,7 @@ from sqlalchemy import func, or_, select
 
 from ..clock import chicago_day, utcnow
 from ..models import DiscoveredItem, DiscoveryCheck, DiscoverySource, Event
+from ..photos import sweep
 from . import fetch as web
 from .budget import alert_if_short, best_first, budget_state, strong_room
 from .hours import apply_open_hours, apply_show_times, link_venue
@@ -502,7 +503,8 @@ def check_details(db, client, today: date, limit: int = DETAIL_LIMIT) -> list[tu
             break
         if today.isoformat() in (item.looked_on or []):
             continue  # CC-312: check_missing read it a moment ago in this run
-        days = (item.begin_date - today).days
+        # CC-319: an item with an end date and no start date is already open (CC-302 lets it in), so 0 days to go
+        days = (item.begin_date - today).days if item.begin_date else 0
         mark = next((d for d in DETAIL_DAYS if days <= d and d not in (item.detail_checks or [])), None)
         if mark is None:
             continue
@@ -530,10 +532,23 @@ def _day(ts: datetime) -> date:
     return chicago_day(ts if ts.tzinfo else ts.replace(tzinfo=UTC))  # SQLite hands back naive UTC
 
 
-def run(db, client, today: date, only: int | None = None, force: bool = False) -> list[tuple[str, Outcome]]:
-    """Check what's due, within the monthly budget (CC-80). force (the command line's --now) and
-    Check now (source.check_requested) still run when the budget is used up."""
-    results = []
+def _step(db, name: str, results: list, say, fn) -> None:
+    """CC-319: one step of the run on its own. fn(results) adds its rows as it goes. If it raises, its uncommitted database work is
+    rolled back, a 'failed' row says why, and the steps after it still run. say(row) shows each row as its step ends."""
+    before = len(results)
+    try:
+        fn(results)
+    except Exception as e:  # noqa: BLE001 - the whole point: one step's crash must not take the others with it
+        db.rollback()
+        results.append((name, Outcome(status="failed", notes=[f"{type(e).__name__}: {e}"[:300]])))
+    if say:
+        rows = results[before:]
+        # a step with nothing to report still says so, so the output shows every step ran (and a run killed part-way shows where)
+        for row in rows or [(name, Outcome(status="ok", notes=["nothing to do"]))]:
+            say(row)
+
+
+def _sources(db, client, today: date, only, force: bool, results: list) -> None:
     release_delayed(db, utcnow())  # CC-257
     drop_passed_hidden(db, today)  # CC-207: costs nothing, so it runs whatever the budget says
     if only is None and add_missing(db, today):  # CC-221: adding one costs nothing either: only its reads do
@@ -552,18 +567,49 @@ def run(db, client, today: date, only: int | None = None, force: bool = False) -
         log(db, source, out)
         db.commit()
         results.append((source.name, out))
-    if only is None:
-        state, spent, budget = budget_state(db)
-        if state != "ok":
-            results.append(("Event pages", Outcome(status="waiting", notes=[
-                f"${spent:.2f} of the ${budget:.2f} monthly budget is spent, so event pages wait for next month"])))
-        else:
-            missing = check_missing(db, client, today)
-            for source, out in missing + check_details(db, client, today, DETAIL_LIMIT - len(missing)):  # already logged
-                results.append((source.name + " (event page)", out))
-        for name, status, note in add_item_pictures(db):  # CC-310: found items, before anyone reviews them
-            results.append((name + " (found picture)", Outcome(status=status, notes=[note])))
-        for name, status, note in add_pictures(db):  # CC-246
-            results.append((name + " (picture)", Outcome(status=status, notes=[note])))
+
+
+def _event_pages(db, client, today: date, results: list) -> None:
+    state, spent, budget = budget_state(db)
+    if state != "ok":
+        results.append(("Event pages", Outcome(status="waiting", notes=[
+            f"${spent:.2f} of the ${budget:.2f} monthly budget is spent, so event pages wait for next month"])))
+        return
+    missing = check_missing(db, client, today)
+    for source, out in missing + check_details(db, client, today, DETAIL_LIMIT - len(missing)):  # already logged
+        results.append((source.name + " (event page)", out))
+
+
+def _found_pictures(db, results: list) -> None:
+    for name, status, note in add_item_pictures(db):  # CC-310: found items, before anyone reviews them
+        results.append((name + " (found picture)", Outcome(status=status, notes=[note])))
+
+
+def _live_pictures(db, results: list) -> None:
+    for name, status, note in add_pictures(db):  # CC-246
+        results.append((name + " (picture)", Outcome(status=status, notes=[note])))
+
+
+def _photo_sweep(db, results: list) -> None:
+    swept = sweep(db)  # CC-76: tidy away photos whose mark, event or account is gone
+    if swept:
+        results.append(("Photo sweep", Outcome(status="ok", notes=[f"removed {swept} photos left behind"])))
+
+
+def _budget_alert(db, results: list) -> None:
     alert_if_short(db)
+
+
+def run(db, client, today: date, only: int | None = None, force: bool = False, say=None) -> list[tuple[str, Outcome]]:
+    """Check what's due, within the monthly budget (CC-80). force (the command line's --now) and
+    Check now (source.check_requested) still run when the budget is used up.
+    CC-319: each step runs on its own (see _step), so a crash in one leaves the others running; its row has status 'failed'."""
+    results: list[tuple[str, Outcome]] = []
+    _step(db, "Sources", results, say, lambda r: _sources(db, client, today, only, force, r))
+    if only is None:
+        _step(db, "Event pages", results, say, lambda r: _event_pages(db, client, today, r))
+        _step(db, "Found pictures", results, say, lambda r: _found_pictures(db, r))
+        _step(db, "Live-event pictures", results, say, lambda r: _live_pictures(db, r))
+        _step(db, "Photo sweep", results, say, lambda r: _photo_sweep(db, r))
+    _step(db, "Budget alert", results, say, lambda r: _budget_alert(db, r))
     return results

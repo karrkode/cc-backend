@@ -21,6 +21,10 @@ QUALITY = 80
 MAX_INPUT_BYTES = 25_000_000  # the largest of the first batch is under 6 MB
 # CC-246: a picture is read before its pixels are, so a small file that unpacks into a huge image is refused (CC-197)
 MAX_PIXELS = 50_000_000
+# CC-319: a JPEG is shrunk while it is decoded (draft mode), so its size in memory is the small one. Other formats are decoded
+# whole, so they get a lower limit, measured as the memory their WebP costs (the story's CC-319 comment): WebP and AVIF 8 million, others 12. Measured on Linux with a colour profile (peak memory added): JPEG 5220x3414 39 MB (137 before), WebP 8 million 128 MB, PNG 12 million 89 MB
+MAX_PIXELS_WHOLE = {"WEBP": 8_000_000, "AVIF": 8_000_000}
+MAX_PIXELS_WHOLE_OTHER = 12_000_000
 PREFIX = "event-images"  # the CloudFront path, and the bucket's served prefix
 ORIGINALS = "originals"  # never routed by CloudFront
 
@@ -29,16 +33,31 @@ class BadImage(ValueError):
     """The bytes aren't an image Pillow can read."""
 
 
+class TooBig(BadImage):
+    """CC-319: a readable picture with too many pixels. Its message is plain enough to show the admin who uploaded it."""
+
+
 def normalise(data: bytes) -> bytes:
     """Any supported image -> the WebP we serve."""
     from PIL import Image, ImageOps  # Pillow only loads where photos are made, not on every API request
+    from PIL.JpegImagePlugin import JpegImageFile
 
     if len(data) > MAX_INPUT_BYTES:
         raise BadImage("too large")
     try:
         im = Image.open(io.BytesIO(data))
-        if im.width * im.height > MAX_PIXELS:
-            raise BadImage("too many pixels")
+        pixels = im.width * im.height
+        if pixels > MAX_PIXELS:
+            raise TooBig(f"too many pixels ({pixels:,}; the limit is {MAX_PIXELS:,})")
+        if isinstance(im, JpegImageFile):  # also an MPO: a JPEG that carries a second picture, as many phone photos do
+            # CC-319: decode at 1/2, 1/4 or 1/8 size, never below what MAX_SIDE needs. A very wide one can't shrink far, so
+            # what it is after drafting meets the whole-decode limit
+            im.draft(im.mode, (MAX_SIDE, MAX_SIDE))
+            pixels = im.width * im.height
+        limit = MAX_PIXELS_WHOLE.get(im.format or "", MAX_PIXELS_WHOLE_OTHER)
+        if pixels > limit:
+            kind = im.format or "this"
+            raise TooBig(f"too many pixels for {'an' if kind[0] in 'AEIOU' else 'a'} {kind} picture (over {limit // 1_000_000} million)")
         im.load()
     except BadImage:
         raise

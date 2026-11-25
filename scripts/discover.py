@@ -2,7 +2,8 @@
 reaches the live catalog by itself.
 
     python -m scripts.discover                 every source that's due, then pre-opening event pages, then
-                                               tidies away photos left behind (CC-76)
+                                               pictures, then tidies away photos left behind (CC-76).
+                                               Each step runs on its own; the exit code is 1 if any failed (CC-319)
     python -m scripts.discover --source 3      just that source, if due
     python -m scripts.discover --source 3 --now   that source, now
     ... --key-stdin                            read the Anthropic API key from standard input
@@ -16,7 +17,6 @@ import sys
 
 from app.db import SessionLocal
 from app.discovery.run import run
-from app.photos import sweep
 from app.stats import today_in_chicago
 
 
@@ -33,20 +33,20 @@ def main():
         import anthropic
         client = anthropic.Anthropic(api_key=key, timeout=120.0, max_retries=2)
 
+    def say(row):  # CC-319: each row as its step ends, so a run that stops early still shows what it did
+        name, out = row
+        print(f"{name}: {out.status}, {out.new} new, {out.updates} updates, {out.skipped} left out, "
+              f"{out.pages_read} pages read ({out.tokens_in}+{out.tokens_out} tokens)" + (f" - {'; '.join(out.notes)}" if out.notes else ""),
+              flush=True)
+
     with SessionLocal() as db:
-        results = run(db, client, today_in_chicago(), only=args.source, force=args.now)
-        if args.source is None:  # CC-76: tidy away photos whose mark, event or account is gone
-            try:
-                swept = sweep(db)
-                if swept:
-                    print(f"Removed {swept} photos left behind.")
-            except Exception as e:  # noqa: BLE001 - the photos must never stop discovery
-                print(f"Couldn't tidy photos: {type(e).__name__}: {e}")
+        results = run(db, client, today_in_chicago(), only=args.source, force=args.now, say=say)
     if not results:
         print("Nothing due.")
-    for name, out in results:
-        print(f"{name}: {out.status}, {out.new} new, {out.updates} updates, {out.skipped} left out, "
-              f"{out.pages_read} pages read ({out.tokens_in}+{out.tokens_out} tokens)" + (f" - {'; '.join(out.notes)}" if out.notes else ""))
+    failed = [name for name, out in results if out.status == "failed"]
+    if failed:  # CC-319: a failed step makes the run fail, so the hourly alert fires
+        print(f"FAILED steps: {', '.join(failed)}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
