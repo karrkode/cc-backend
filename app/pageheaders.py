@@ -17,8 +17,8 @@ THEME_HASH = "sha256-" + base64.b64encode(hashlib.sha256(THEME_SCRIPT.encode()).
 PAGE_CSP = "; ".join([
     "default-src 'none'",
     f"script-src '{THEME_HASH}'",
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-    "font-src 'self' https://fonts.gstatic.com",
+    "style-src 'self' 'unsafe-inline'",
+    "font-src 'self'",
     "img-src 'self' data:",
     "frame-ancestors 'none'",
     "base-uri 'self'",
