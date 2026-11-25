@@ -299,32 +299,70 @@ def due_items(db, now: datetime, limit: int = ITEM_PER_RUN) -> list[DiscoveredIt
 RETRY_AFTER_ITEM = timedelta(hours=1)  # the hourly run: a found item's picture is wanted before its review, not tomorrow
 
 
+def look_for_item(db, item: DiscoveredItem, now: datetime, to=None) -> tuple[str, str, str]:
+    """One found item's picture look, committed: (source's name, status, note), as add_pictures gives them."""
+    source = db.get(DiscoverySource, item.source_id) if item.source_id else None
+    item.image_tries += 1
+    item.image_checked_at = now
+    try:
+        if source is None:
+            raise NoPicture("The source was deleted")
+        status, note = "ok", add_item_picture(db, item, source, to)
+        item.image_note = ""
+    except (NoPicture, web.Blocked) as e:
+        status, note = "none", str(e)
+        item.image_tries = MAX_TRIES
+        if not item.image_override:  # an admin's choice has no reason to give
+            item.image_note = note[:NOTE_MAX]
+    except web.FetchError as e:
+        status, note = "error", f"{e} (try {item.image_tries} of {MAX_TRIES})"
+        item.image_note = (f"Still trying: {e} (try {item.image_tries} of {MAX_TRIES})" if item.image_tries < MAX_TRIES
+                           else f"Gave up after {MAX_TRIES} tries: {e}")[:NOTE_MAX]
+    except Exception as e:  # noqa: BLE001 - one item's picture must not stop the rest, or discovery
+        status, note = "error", f"{type(e).__name__}: {e}"[:300]
+        item.image_note = (f"Still trying (try {item.image_tries} of {MAX_TRIES})" if item.image_tries < MAX_TRIES
+                           else f"Gave up after {MAX_TRIES} tries")
+    db.commit()
+    return (source.name if source else "A deleted source", status, f"{item.title}: {note}")
+
+
 def add_item_pictures(db, now: datetime | None = None, limit: int = ITEM_PER_RUN, to=None) -> list[tuple[str, str, str]]:
     """Look for the pictures of found items waiting for review, committing after each. Same results as add_pictures."""
     now = now or utcnow()
+    return [look_for_item(db, item, now, to) for item in due_items(db, now, limit)]
+
+
+# --- CC-318: the one-off catch-up for items already on the review list ---------------------------------------------
+
+def backlog(db, retry_missing: bool = False) -> dict[str, list[DiscoveredItem]]:
+    """The review list (status new) sorted for the backfill, oldest first:
+    todo (to look at now), has_picture, admin_choice (never touched), reason (a recorded reason, skipped unless
+    retry_missing), no_page (no address to read: skipped, and not worth a reason of its own)."""
+    out: dict[str, list[DiscoveredItem]] = {"todo": [], "has_picture": [], "admin_choice": [], "reason": [], "no_page": []}
+    for item in db.scalars(select(DiscoveredItem).where(DiscoveredItem.status == "new").order_by(DiscoveredItem.id)):
+        if item.image_override:
+            out["admin_choice"].append(item)
+        elif item.image_key:
+            out["has_picture"].append(item)
+        elif not item.url:
+            out["no_page"].append(item)
+        elif item.image_tries >= MAX_TRIES and item.image_note:
+            out["reason" if not retry_missing else "todo"].append(item)
+        else:
+            out["todo"].append(item)
+    return out
+
+
+def backfill_items(db, retry_missing: bool = False, limit: int | None = None, now: datetime | None = None,
+                   to=None) -> list[tuple[str, str, str]]:
+    """Look for a picture for each review-list item that has none and no recorded reason. Never touches an item with a
+    picture or an admin's choice, so running it again finds nothing new. Uses look_for_item: the same fetch rules,
+    spacing and robots.txt as the hourly run, and no Claude call. With retry_missing, an item whose last look gave a
+    reason gets a fresh set of tries."""
+    now = now or utcnow()
     done = []
-    for item in due_items(db, now, limit):
-        source = db.get(DiscoverySource, item.source_id) if item.source_id else None
-        item.image_tries += 1
-        item.image_checked_at = now
-        try:
-            if source is None:
-                raise NoPicture("The source was deleted")
-            status, note = "ok", add_item_picture(db, item, source, to)
-            item.image_note = ""
-        except (NoPicture, web.Blocked) as e:
-            status, note = "none", str(e)
-            item.image_tries = MAX_TRIES
-            if not item.image_override:  # an admin's choice has no reason to give
-                item.image_note = note[:NOTE_MAX]
-        except web.FetchError as e:
-            status, note = "error", f"{e} (try {item.image_tries} of {MAX_TRIES})"
-            item.image_note = (f"Still trying: {e} (try {item.image_tries} of {MAX_TRIES})" if item.image_tries < MAX_TRIES
-                               else f"Gave up after {MAX_TRIES} tries: {e}")[:NOTE_MAX]
-        except Exception as e:  # noqa: BLE001 - one item's picture must not stop the rest, or discovery
-            status, note = "error", f"{type(e).__name__}: {e}"[:300]
-            item.image_note = (f"Still trying (try {item.image_tries} of {MAX_TRIES})" if item.image_tries < MAX_TRIES
-                               else f"Gave up after {MAX_TRIES} tries")
-        db.commit()
-        done.append((source.name if source else "A deleted source", status, f"{item.title}: {note}"))
+    for item in backlog(db, retry_missing)["todo"][:limit]:
+        if retry_missing and item.image_tries >= MAX_TRIES:
+            item.image_tries = 0
+        done.append(look_for_item(db, item, now, to))
     return done
