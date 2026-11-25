@@ -78,6 +78,7 @@ def test_a_quiet_week_still_sends(db):
     assert email.subject == "Event discovery: nothing new this week"
     assert "Nothing new this week" in email.text and "Waiting for review: 0" in email.text
     assert "None. Every source could be read." in email.text
+    assert "googleapis" not in email.html and "<link" not in email.html  # CC-268: opening the email asks no outside server for a font
 
 
 def test_the_script_sends_and_fails_loudly(db, Session, monkeypatch, capsys):

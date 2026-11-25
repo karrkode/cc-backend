@@ -18,7 +18,7 @@ PAGE_CSP = "; ".join([
     "default-src 'none'",
     f"script-src '{THEME_HASH}'",
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-    "font-src https://fonts.gstatic.com",
+    "font-src 'self' https://fonts.gstatic.com",
     "img-src 'self' data:",
     "frame-ancestors 'none'",
     "base-uri 'self'",

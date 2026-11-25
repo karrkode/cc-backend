@@ -63,3 +63,19 @@ def test_the_api_sends_the_same_page_policy_as_cloudfront():
     from app import pageheaders
     assert pageheaders.PAGE_CSP == _tf_policy("csp_api_pages")
     assert pageheaders.THEME_HASH == _hash()
+
+
+def test_fonts_may_come_from_self():
+    """CC-268: the pages load their fonts from 'self'. Google stays listed only until the site has shipped /fonts/ and a
+    follow-up removes it (the CSP is enforced and the backend ships first); then this asserts there is no Google at all."""
+    for policy in (_tf_policy("csp_site"), _tf_policy("csp_api_pages")):
+        assert re.search(r"font-src 'self'[ ;]", policy + ";")
+    assert NGINX.count("font-src 'self' ") == 2
+
+
+def test_rendered_pages_load_no_outside_fonts(client, make_event):
+    ev = make_event(title="Hamlet")
+    for path in (f"/e/{ev.id}-hamlet", "/e/999999-nothing", "/chicago/"):
+        html = client.get(path).text
+        assert "googleapis" not in html and "gstatic" not in html and "preconnect" not in html, path
+        assert '@font-face { font-family: "Instrument Sans"' in html and 'url("/fonts/big-shoulders-text-normal-latin.woff2")' in html, path

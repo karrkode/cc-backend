@@ -419,7 +419,7 @@ def as_html(w: Week) -> str:
             f'<meta name="viewport" content="width=device-width, initial-scale=1">'
             f'<meta name="color-scheme" content="light"><meta name="supported-color-schemes" content="light">'
             f'<title>{escape(subject_of(w))}</title>'
-            f'<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;600&amp;family=Outfit:wght@600&amp;display=swap" rel="stylesheet">'
+            # CC-268: no Google Fonts link (it told Google who opened the email); the inline font stack falls back to system fonts
             f'</head><body style="margin:0;padding:0;background:{PAGE}">'
             f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:{PAGE}"><tr><td style="padding:20px 12px">'
             f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;'
