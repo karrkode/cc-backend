@@ -21,6 +21,10 @@ QUALITY = 80
 MAX_INPUT_BYTES = 25_000_000  # the largest of the first batch is under 6 MB
 # CC-246: a picture is read before its pixels are, so a small file that unpacks into a huge image is refused (CC-197)
 MAX_PIXELS = 50_000_000
+# CC-319: a JPEG is shrunk while it is decoded (draft mode), so its size in memory is the small one. Other formats are decoded
+# whole, so they get a lower limit, measured as the memory their WebP costs (the story's CC-319 comment): WebP and AVIF 8 million, others 12
+MAX_PIXELS_WHOLE = {"WEBP": 8_000_000, "AVIF": 8_000_000}
+MAX_PIXELS_WHOLE_OTHER = 12_000_000
 PREFIX = "event-images"  # the CloudFront path, and the bucket's served prefix
 ORIGINALS = "originals"  # never routed by CloudFront
 
@@ -37,8 +41,15 @@ def normalise(data: bytes) -> bytes:
         raise BadImage("too large")
     try:
         im = Image.open(io.BytesIO(data))
-        if im.width * im.height > MAX_PIXELS:
+        pixels = im.width * im.height
+        if pixels > MAX_PIXELS:
             raise BadImage("too many pixels")
+        if im.format == "JPEG":
+            # CC-319: decode at 1/2, 1/4 or 1/8 size, never below what MAX_SIDE needs: the full picture is never in memory
+            im.draft(im.mode, (MAX_SIDE, MAX_SIDE))
+        elif pixels > MAX_PIXELS_WHOLE.get(im.format or "", MAX_PIXELS_WHOLE_OTHER):
+            limit = MAX_PIXELS_WHOLE.get(im.format or "", MAX_PIXELS_WHOLE_OTHER)
+            raise BadImage(f"too many pixels for a {im.format or 'this'} picture ({pixels / 1e6:.0f} million; the limit is {limit // 1_000_000} million)")
         im.load()
     except BadImage:
         raise

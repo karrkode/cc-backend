@@ -181,6 +181,7 @@ def add_pictures(db, now: datetime | None = None, limit: int = PER_RUN, to=None)
     for event in due(db, now, limit):
         event.picture_tries += 1
         event.picture_checked_at = now
+        db.commit()  # CC-319: the try is counted before the page is fetched, so a look that is killed part-way still used one up
         try:
             status, note = "ok", add_picture(db, event, to)
         except (NoPicture, web.Blocked) as e:
@@ -304,6 +305,10 @@ def look_for_item(db, item: DiscoveredItem, now: datetime, to=None) -> tuple[str
     source = db.get(DiscoverySource, item.source_id) if item.source_id else None
     item.image_tries += 1
     item.image_checked_at = now
+    if not item.image_override:  # CC-319: counted and committed before the fetch. If the look is killed, this is the reason left
+        item.image_note = (f"The last look didn't finish (try {item.image_tries} of {MAX_TRIES})" if item.image_tries < MAX_TRIES
+                           else f"Gave up after {MAX_TRIES} tries: the look didn't finish (a very large picture?)")
+    db.commit()
     try:
         if source is None:
             raise NoPicture("The source was deleted")
@@ -322,6 +327,8 @@ def look_for_item(db, item: DiscoveredItem, now: datetime, to=None) -> tuple[str
         status, note = "error", f"{type(e).__name__}: {e}"[:300]
         item.image_note = (f"Still trying (try {item.image_tries} of {MAX_TRIES})" if item.image_tries < MAX_TRIES
                            else f"Gave up after {MAX_TRIES} tries")
+    if item.image_override:  # an admin's choice has no reason to give: not even the one set before the fetch (CC-319)
+        item.image_note = ""
     db.commit()
     return (source.name if source else "A deleted source", status, f"{item.title}: {note}")
 
