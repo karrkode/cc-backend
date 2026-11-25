@@ -3,14 +3,14 @@ from datetime import date, timedelta
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import String, and_, cast, exists, func, not_, or_, select
 
 from ..areas import OUT_OF_TOWN
 from ..categories import CATEGORIES, REMOVED
 from ..deps import DB, AdminUser
 from ..discovery.rules import norm_title
 from .. import health, roundups
-from ..models import Attended, DiscoveredItem, DiscoverySource, Event, EventStatus, SubmissionRule, Venue
+from ..models import Attended, DiscoveredItem, DiscoverySource, Event, EventRunDate, EventStatus, SubmissionRule, Venue
 from ..schemas import (EventAdminOut, EventAdminPage, EventInterestOut, HealthOut, OutOfTownOut, RoundupIntroIn, RoundupOut, StatsOut, SubmissionRuleIn, SubmissionRuleOut,
                        TakeHideIn, TrafficOut)
 from ..photos import CHECK_USD, checks_this_month
@@ -18,6 +18,7 @@ from ..clock import today_in_chicago
 from ..stats import event_interest, weekly_stats
 from ..traffic import summary as traffic_summary
 from ..venuereview import accept_venue
+from ..visibility import live_condition
 from ..clock import utcnow
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -33,16 +34,33 @@ def site_health(db: DB, _: AdminUser, hours: Annotated[int, Query(description="1
     return health.summary(db, hours)
 
 
+def needs_show_times_condition(now=None):
+    """CC-311: live events (not hidden, approved, published) that are not Visual Art (hours, not show times), have not
+    ended, and have no upcoming show with a start time. An open run with its own weekly pattern is allowed to be open,
+    so it is left out. Mirrors the CC-306 audit's groups 2 and 4 (the recount in the tests is written apart from this)."""
+    today = today_in_chicago()
+    has_own_weekly = cast(Event.weekly, String).not_in(["", "{}", "null"])
+    is_open = or_(Event.open_run.is_(True), Event.end_date.is_(None))
+    timed_upcoming = exists().where(EventRunDate.event_id == Event.id, EventRunDate.date >= today,
+                                    EventRunDate.time.is_not(None), EventRunDate.time != "")
+    return and_(live_condition(now), Event.category != "Visual Art",
+                or_(Event.end_date.is_(None), Event.end_date >= today),
+                not_(and_(is_open, has_own_weekly)), not_(timed_upcoming))
+
+
 @router.get("/events", response_model=EventAdminPage)
 def review_queue(db: DB, _: AdminUser,
                  status_: Annotated[EventStatus, Query(alias="status")] = EventStatus.pending,
                  limit: Annotated[int, Query(ge=1, le=500)] = 100,
                  offset: Annotated[int, Query(ge=0)] = 0,
-                 caught: Annotated[bool, Query(description="Only those an auto-reject rule caught, newest first")] = False):
+                 caught: Annotated[bool, Query(description="Only those an auto-reject rule caught, newest first")] = False,
+                 needs_show_times: Annotated[bool, Query(description="CC-311: live events with no upcoming show that has a start time, closing soonest first (status is ignored)")] = False):
     """Submissions to review, oldest first."""
     cond = Event.status == status_
     order = (Event.created_at, Event.id)
-    if caught:  # CC-100
+    if needs_show_times:  # CC-311
+        cond, order = needs_show_times_condition(), (Event.end_date.asc().nulls_last(), Event.sort_title, Event.id)
+    elif caught:  # CC-100
         cond, order = cond & (Event.reject_reason != ""), (Event.created_at.desc(), Event.id.desc())
     total = db.scalar(select(func.count(Event.id)).where(cond))
     rows = db.scalars(select(Event).where(cond).order_by(*order)
