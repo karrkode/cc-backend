@@ -1151,6 +1151,10 @@ class DiscoveredItemOut(ORM):
     needs: str = ""  # CC-88: "date" or "show_days" while it's missing them; "" when it can be approved as it is
     looked_on: list[str] = []  # the days its own page was read again for what's missing
     dates_note: str = ""  # CC-302: how the look for exact dates on a tickets or calendar page went
+    # CC-310: the candidate picture (ours, never hotlinked), why there isn't one, and that the admin chose (uploaded or removed)
+    image_url: str | None = None
+    image_note: str = ""
+    image_override: bool = False
     proposed: list[FoundChange] = []  # for "update": what would change
     event: EventRef | None = None  # the catalog event, once listed or approved
     possible_duplicate: EventRef | None = None

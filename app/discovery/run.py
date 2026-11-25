@@ -35,7 +35,7 @@ from .budget import alert_if_short, best_first, budget_state, strong_room
 from .hours import apply_open_hours, apply_show_times, link_venue
 from .jsonld import complete, events_in
 from .needs import look_again, needs
-from .pictures import add_pictures
+from .pictures import add_item_pictures, add_pictures
 from .pagetext import page_text, text_hash
 from .readers import OWN_PAGE_NOTE, TICKETS_PAGE_NOTE, FoundEvent, ReadFailed, cost_usd, read_aic, read_link_choice, read_page, read_strong_step, strong_cost_usd
 from .rules import PERFORMING_CATEGORIES, apply_rules, norm_title
@@ -561,6 +561,8 @@ def run(db, client, today: date, only: int | None = None, force: bool = False) -
             missing = check_missing(db, client, today)
             for source, out in missing + check_details(db, client, today, DETAIL_LIMIT - len(missing)):  # already logged
                 results.append((source.name + " (event page)", out))
+        for name, status, note in add_item_pictures(db):  # CC-310: found items, before anyone reviews them
+            results.append((name + " (found picture)", Outcome(status=status, notes=[note])))
         for name, status, note in add_pictures(db):  # CC-246
             results.append((name + " (picture)", Outcome(status=status, notes=[note])))
     alert_if_short(db)
