@@ -81,3 +81,14 @@ def test_admin_only_and_the_public_list_is_unchanged(client, user_token, make_ev
     assert client.get(URL).status_code == 401
     assert client.get(URL, headers=auth(user_token)).status_code == 403
     assert [e["title"] for e in client.get("/events").json()["items"]] == ["Hamlet"]
+
+
+def test_the_filter_ignores_status_and_orders_by_closing_date(client, admin_token, make_event):
+    make_event("Later", end=T + timedelta(days=20))
+    make_event("Sooner", end=T + timedelta(days=3))
+    make_event("Open", end=None)
+    make_event("Pending one", status=EventStatus.pending)
+    r = client.get("/admin/events?needs_show_times=true&status=rejected&caught=true", headers=auth(admin_token)).json()
+    assert [e["title"] for e in r["items"]] == ["Sooner", "Later", "Open"]  # soonest first, open runs last
+    page = client.get("/admin/events?needs_show_times=true&limit=1&offset=1", headers=auth(admin_token)).json()
+    assert (page["total"], [e["title"] for e in page["items"]]) == (3, ["Later"])
