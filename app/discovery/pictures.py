@@ -334,11 +334,11 @@ def _has_own_page(item: DiscoveredItem, source: DiscoverySource) -> bool:
     return not any(p.split("#")[0].rstrip("/") == here for p in source.pages or [])
 
 
-def _card_picture(db, item: DiscoveredItem, listing: _Listing | None, to) -> tuple[str | None, str, web.FetchError | None]:
+def _card_picture(db, item: DiscoveredItem, listing: _Listing | None, to, own: bool) -> tuple[str | None, str, web.FetchError | None]:
     """CC-321: the picture on the event's card on the listing page, when the card is the event's (its link or its heading)."""
     if listing is None:
         return None, GENERIC, None
-    card = htmlpics.card_for(listing.cards, item.title, item.url if item.url else "")
+    card = htmlpics.card_for(listing.cards, item.title, item.url if own else "")  # no page of its own: the title only, a link would be the listing's
     if card is None:
         return None, GENERIC, None
     if card.image in listing.shared:
@@ -381,10 +381,12 @@ def add_item_picture(db, item: DiscoveredItem, source: DiscoverySource, to=None,
         return done
     failed = failed or err
     listing = _listing_of(source, cache) if source.pages else None
-    done, more, err = _card_picture(db, item, listing, to)
-    if done:
-        return done
-    failed, why = failed or err, (more if why == GENERIC else why)
+    gone = failed is not None and "not found (HTTP" in str(failed)  # a 404 or 410 page gives no picture, nor does its card
+    if not gone:
+        done, more, err = _card_picture(db, item, listing, to, own)
+        if done:
+            return done
+        failed, why = failed or err, (more if why == GENERIC else why)
     if page is not None:
         done, more, err = _main_picture(db, item, page, listing, to)
         if done:

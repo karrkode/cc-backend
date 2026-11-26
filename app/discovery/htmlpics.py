@@ -24,12 +24,17 @@ LAZY_SET = ("data-srcset", "data-lazy-srcset", "srcset")
 # class or id words of a block that is page furniture, not the event
 FURNITURE = re.compile(r"(?:^|[\s_-])(?:nav|navbar|navigation|menu|footer|sponsors?|partners?|breadcrumbs?|cookies?|"
                        r"sidebar|related|recommended|newsletter|social)(?:$|[\s_-])", re.I)
-# words in a picture's own address, class or alt that mark it as not the event's
-NOT_A_PICTURE = re.compile(r"logo|icon|sprite|pixel|spacer|tracking|favicon|badge|1x1|blank\.|placeholder|avatar|"
-                           r"sponsor|\.svg(?:\s|$|\?)", re.I)
+# words in a picture's own address (as whole words of its path), or in its class, id or alt, that mark it as not the event's
+_BAD = r"(?:logo|icon|sprite|pixel|spacer|tracking|favicon|badge|placeholder|avatar|sponsor|blank)s?"
+BAD_ADDRESS = re.compile(rf"(?<![a-z0-9]){_BAD}(?![a-z0-9])|(?<![a-z0-9])1x1(?![a-z0-9])|\.svg$", re.I)
+BAD_WORDS = re.compile(rf"(?<![a-z0-9]){_BAD}(?![a-z0-9])", re.I)
 MIN_DECLARED = 200  # a width or height attribute under this is an icon (the fetched picture is checked again by size)
-MISSING = re.compile(r"\b404\b|not found|page (?:does ?n[o']?t|does not) exist|can[’']?t be found|cannot be found|"
-                     r"no longer available|no longer exists", re.I)
+# a page's own "not found": at the start of its title or heading (a site name comes after, and a show called "Room 404" doesn't start so)
+MISSING = re.compile(
+    r"^\W*(?:(?:error\s*)?(?:404|410)\s*(?:$|[-–—|:.!]?\s*(?:page\s*)?(?:not found|error|missing)|[-–—|:.!]\s*$)"
+    r"|(?:oops\W+|sorry\W+)?(?:the\s+|this\s+)?page\s+(?:you\W+\w+\W+looking for\s+)?(?:was\s+|is\s+|could\s+)?"
+    r"(?:not found|n[o']t found|does ?n[o']?t exist|does not exist|can[’']?t be found|cannot be found|no longer (?:available|exists))"
+    r"|not found\s*$)", re.I)
 
 
 class _Node:
@@ -74,6 +79,8 @@ class _Tree(HTMLParser):
             self.cur, self.depth = node, self.depth + 1
 
     def handle_startendtag(self, tag, attrs):
+        if tag in SKIPPED:  # <svg/> has no content and no end tag to wait for
+            return
         self.handle_starttag(tag, attrs)
         if tag not in VOID and tag not in SKIPPED:
             self.handle_endtag(tag)
@@ -146,7 +153,7 @@ def _within(node: _Node) -> bool:
     <main> belongs to that article, so only the site's own count."""
     inside_main = False
     n = node.parent
-    while n is not None:
+    while n is not None and n.tag not in ("body", "html"):  # a body class such as "no-sidebar" describes the page, not a block
         if n.tag in ("main", "article"):
             inside_main = True
         if n.tag in SITE_PARTS and not (inside_main and n.tag in ("header", "footer", "aside")):
@@ -186,7 +193,8 @@ def _images(root: _Node, base: str) -> list[_Img]:
             full = _absolute(u, base)
             if full and full not in urls:
                 urls.append(full)
-        if not urls or NOT_A_PICTURE.search(f"{urls[0]} {a.get('class', '')} {a.get('id', '')} {a.get('alt', '')}"):
+        path = urlsplit(urls[0]).path if urls else ""
+        if not urls or BAD_ADDRESS.search(path) or BAD_WORDS.search(f"{a.get('class', '')} {a.get('id', '')} {a.get('alt', '')}"):
             continue
         if _within(n):
             continue

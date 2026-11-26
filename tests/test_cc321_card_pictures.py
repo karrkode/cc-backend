@@ -202,6 +202,44 @@ def test_noscript_copies_do_not_split_a_card():
 
 # --- 8, 9: the existing rules, and one listing fetch per run ------------------------------------------------------------------
 
+def test_a_hash_link_card_is_not_the_listing_pages_event(db, hosts, stored):
+    it = _item(db, _on_venue(db), title="Mine", url=LISTING)
+    _jpeg(hosts, path="/other.jpg")
+    _routes(hosts, _ul(_card("#", "Other", f"http://{CDN_HOST}/other.jpg")))  # a modal card: its link is the listing itself
+    status, _ = _look(db, it)
+    assert status == "none" and it.image_key is None
+
+
+def test_body_classes_and_self_closed_tags_do_not_hide_the_page():
+    big = '<main><img src="/p.jpg" width="1200" height="800"></main>'
+    for page in (f'<body class="page no-sidebar menu-fixed">{big}</body>', f'<svg class="i"/>{big}', f'<script src="/a.js"/>{big}'):
+        assert htmlpics.main_picture(page, "http://venue.example/x") == ["http://venue.example/p.jpg"]
+
+
+def test_only_real_logos_and_icons_are_skipped():
+    ok = ('<main><img src="/poster-11x14.jpg" width="600" height="800" alt="Iconic Chicago show"></main>')
+    assert htmlpics.main_picture(ok, "http://venue.example/x") == ["http://venue.example/poster-11x14.jpg"]
+    for bad in ('<img src="/site-logo.png" width="900" height="900">', '<img src="/a.jpg" class="logo" width="900" height="900">',
+                '<img src="/1x1.gif">', '<img src="/img/sponsors/a.jpg" width="900" height="900">'):
+        assert htmlpics.main_picture(f"<main>{bad}</main>", "http://venue.example/x") == []
+
+
+def test_only_a_pages_own_not_found_counts():
+    for html in ("<title>Page not found | Venue</title>", "<h1>404</h1>", "<h1>404 - Page Not Found</h1>",
+                 "<title>Sorry, this page can't be found</title>", "<h1>Not Found</h1>"):
+        assert htmlpics.looks_missing(html), html
+    for html in ("<h1>Room 404: A Comedy</h1>", "<title>Lost &amp; Not Found Improv | Venue</title>", "<h1>The Seagull</h1>"):
+        assert not htmlpics.looks_missing(html), html
+
+
+def test_a_404_page_does_not_borrow_its_cards_picture(db, hosts, stored):
+    it = _item(db, _on_venue(db))
+    _jpeg(hosts, path="/seagull.jpg")
+    _routes(hosts, _ul(_card("/seagull", "The Seagull", f"http://{CDN_HOST}/seagull.jpg")))  # /seagull itself is a 404
+    status, _ = _look(db, it)
+    assert status == "error" and it.image_key is None and "not found" in it.image_note
+
+
 def test_the_listing_is_fetched_once_for_all_its_events(db, hosts, stored):
     src = _on_venue(db)
     its = [_item(db, src, title=t, url=f"http://{PAGE_HOST}/{t.lower()}") for t in ("Hamlet", "Macbeth", "Othello")]
