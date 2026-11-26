@@ -252,6 +252,8 @@ scripts/event_images.py  the first event photos (CC-250): upload (make and store
 seed/event_images_cc250.json  that manifest: event ids, photo keys and where each came from
 app/discovery/       event discovery: polite fetching, page text, readers (Art Institute API, Claude Haiku 5.5), rules, holding list and skip rules,
                      what a found event still needs (needs.py: a date, show days; CC-88)
+                     CC-320: robots.txt on a separate picture server answering 4xx (not 429) means "no rules"; a 429, 5xx or timeout
+                     means "not now"; a picture on the page's own server keeps the page rule (fetch.py, pictures.py)
 scripts/dev_users.py the local test accounts (ENV=local only)
 scripts/show_run_report.py  read-only report on the Show Run migration (CC-301): what 0060 copies, and after it the events whose opening or closing differs from their first or last show
 scripts/seed_show_run_qa.py  the local "Show Run QA" event, 37 shows, for trying the editor by hand (CC-301; ENV=local only)

@@ -190,8 +190,8 @@ def test_an_upload_made_while_the_step_is_fetching_is_not_overwritten(db, Sessio
     it = item()
     real = pictures.picture_from
 
-    def slow(image_url):  # the admin removes the picture in another session while this one is still fetching
-        got = real(image_url)
+    def slow(image_url, page_url=""):  # the admin removes the picture in another session while this one is still fetching
+        got = real(image_url, page_url)
         with Session() as other:
             row = other.get(DiscoveredItem, it.id)
             row.image_key, row.image_override = None, True
