@@ -309,6 +309,22 @@ def _aic(path: str, body: dict) -> dict:
         return json.loads(r.read())
 
 
+AIC_PAGE = re.compile(r"^https://www\.artic\.edu/(exhibitions|events)/(\d+)(?:[/?#]|$)")
+
+
+def aic_image_url(page_url: str) -> str | None:
+    """CC-320: the picture the Art Institute's own API gives an exhibition or event (its pages time out). None when the
+    address isn't one of theirs or the API has no picture; an error from the network is raised (urllib's, for the caller)."""
+    m = AIC_PAGE.match(page_url or "")
+    if not m:
+        return None
+    req = urllib.request.Request(f"{AIC}/{m[1]}/{m[2]}?fields=id,image_url", headers=AIC_HEADERS, method="GET")
+    with urllib.request.urlopen(req, timeout=TIMEOUT) as r:  # noqa: S310 - fixed https address, the id is digits
+        data = json.loads(r.read()).get("data") or {}
+    url = data.get("image_url")
+    return url if isinstance(url, str) and url.startswith("https://") else None
+
+
 def read_aic(today: date) -> PageReading:
     """Exhibitions still open or upcoming, and upcoming events, flagged the way the rules expect."""
     ex = _aic("/exhibitions/search", {"query": {"range": {"aic_end_at": {"gte": "now"}}}, "limit": 100,

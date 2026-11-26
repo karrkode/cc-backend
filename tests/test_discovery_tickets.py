@@ -324,7 +324,7 @@ def test_a_redirect_to_a_site_that_opts_out_of_ai_isnt_followed(monkeypatch):
     """A tracker or the theater's own site may send a ticket link on to a box office: that site's robots.txt counts too."""
     import urllib.request
     robots = {"https://box.example": "User-agent: ClaudeBot\nDisallow: /\n", "https://goodman.example": "User-agent: *\nDisallow:\n"}
-    monkeypatch.setattr(web, "robots_for", lambda url, timeout=1: web.parse_robots(robots["https://" + url.split("/")[2]]))
+    monkeypatch.setattr(web, "robots_for", lambda url, timeout=1, picture_server=False: web.parse_robots(robots["https://" + url.split("/")[2]]))
     monkeypatch.setattr(web, "_check_form", lambda url: None)
     monkeypatch.setitem(web._last_hit, "box.example", 0)
     req = urllib.request.Request("https://goodman.example/go")

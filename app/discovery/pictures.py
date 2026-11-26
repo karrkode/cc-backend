@@ -20,6 +20,7 @@
 """
 import io
 import re
+import urllib.error
 from datetime import UTC, datetime, timedelta
 from html import unescape
 from urllib.parse import urljoin, urlsplit
@@ -31,12 +32,14 @@ from .. import event_images
 from ..models import DiscoveredItem, DiscoverySource, Event, EventStatus
 from . import fetch as web
 from .jsonld import _blocks, _is_event, _objects, _tags
+from .readers import aic_image_url
 from .store import on_source_site
 from .tickets import links_of
 
 MAX_TRIES = 3
 RETRY_AFTER = timedelta(hours=20)  # about a day: the hourly run looks again tomorrow, not next hour
 PER_RUN = 10
+FINDER_VERSION = 1  # CC-320: bump when the finder learns to fix a kind of miss; items looked at by an older one get one more look
 MAX_BYTES = 10_000_000  # a share image is usually well under 1 MB
 MIN_SIDE = 200  # smaller than this on its short side is an icon, not an event's picture
 ACCEPT = "image/webp,image/avif,image/jpeg,image/png,image/gif;q=0.8"
@@ -112,9 +115,10 @@ def kind_of(data: bytes, content_type: str) -> str | None:
     return ct if agrees.get(ct) else None
 
 
-def picture_from(image_url: str) -> tuple[bytes, str, bytes]:
-    """Fetch one picture and make our WebP of it: (original, extension, webp). NoPicture if it isn't usable."""
-    got = web.fetch_file(image_url, ACCEPT, MAX_BYTES)
+def picture_from(image_url: str, page_url: str = "") -> tuple[bytes, str, bytes]:
+    """Fetch one picture and make our WebP of it: (original, extension, webp). NoPicture if it isn't usable. page_url is
+    the page that named it (CC-320: a picture on another server than the page has that server's own robots.txt rule)."""
+    got = web.fetch_file(image_url, ACCEPT, MAX_BYTES, page_url=page_url)
     kind = kind_of(got.data, got.content_type)
     if kind is None:
         raise NoPicture(f"not a picture we take ({(got.content_type or 'no type').split(';')[0][:60]})")
@@ -147,7 +151,7 @@ def add_picture(db, event: Event, to=None) -> str:
     why, failed = "the page names no picture", None
     for image_url in candidates[:3]:  # the first is nearly always it; a broken one may have a working fallback
         try:
-            data, ext, webp = picture_from(image_url)
+            data, ext, webp = picture_from(image_url, page.url)
         except (NoPicture, web.Blocked) as e:
             why = str(e)
             continue
@@ -232,7 +236,7 @@ def _try_pictures(db, item: DiscoveredItem, page, to) -> tuple[str | None, str, 
     why, failed = "The page names no picture", None
     for image_url in candidates[:3]:
         try:
-            data, ext, webp = picture_from(image_url)
+            data, ext, webp = picture_from(image_url, page.url)
         except web.Blocked as e:
             why = f"Refused: {e}"
             continue
@@ -245,15 +249,40 @@ def _try_pictures(db, item: DiscoveredItem, page, to) -> tuple[str | None, str, 
         if _item_dup(db, item, webp):
             why = "The picture is the same as another event's (a logo or the site's default)"
             continue
-        # the fetches above can take minutes: an admin may have uploaded or removed a picture meanwhile (the session
-        # keeps what it loaded), so what the database says now decides
-        db.refresh(item, ["image_override", "status"])
-        if item.image_override or item.status != "new":
-            raise NoPicture("picture chosen by admin")
-        item.image_key = event_images.save(item_owner(item), data, ext, to, webp)
-        item.image_source_url = page.url
+        _keep_picture(db, item, data, ext, webp, page.url, to)
         return f"picture stored from {urlsplit(image_url).hostname}", "", None
     return None, why, failed
+
+
+def _keep_picture(db, item: DiscoveredItem, data: bytes, ext: str, webp: bytes, source_url: str, to) -> None:
+    # the fetches before this can take minutes: an admin may have uploaded or removed a picture meanwhile (the session
+    # keeps what it loaded), so what the database says now decides
+    db.refresh(item, ["image_override", "status"])
+    if item.image_override or item.status != "new":
+        raise NoPicture("picture chosen by admin")
+    item.image_key = event_images.save(item_owner(item), data, ext, to, webp)
+    item.image_source_url = source_url
+
+
+def _aic_picture(db, item: DiscoveredItem, to) -> str:
+    """CC-320: the Art Institute's pages time out, but its own API (already read for its events) gives the picture. It goes
+    through the same picture rules as any other: fetch_file, size and type, our own WebP, no duplicates."""
+    try:
+        image_url = aic_image_url(item.url)
+    except (urllib.error.URLError, OSError, ValueError) as e:  # ValueError: an answer that isn't JSON
+        raise web.FetchError(f"the Art Institute's API didn't answer ({type(e).__name__})") from e
+    if not image_url:
+        raise NoPicture("The Art Institute's API has no picture for this one")
+    try:
+        data, ext, webp = picture_from(image_url, item.url)
+    except web.Blocked as e:
+        raise NoPicture(f"Refused: {e}") from e
+    except NoPicture as e:
+        raise NoPicture(str(e)[:1].upper() + str(e)[1:]) from e
+    if _item_dup(db, item, webp):
+        raise NoPicture("The picture is the same as another event's (a logo or the site's default)")
+    _keep_picture(db, item, data, ext, webp, item.url, to)
+    return f"picture stored from {urlsplit(image_url).hostname} (the Art Institute's API)"
 
 
 def add_item_picture(db, item: DiscoveredItem, source: DiscoverySource, to=None) -> str:
@@ -264,6 +293,8 @@ def add_item_picture(db, item: DiscoveredItem, source: DiscoverySource, to=None)
         raise NoPicture("picture chosen by admin")
     if not item.url or not on_source_site(item.url, source):
         raise NoPicture("The event has no page of its own on the source's site")
+    if source.reader == "aic_api":  # CC-320
+        return _aic_picture(db, item, to)
     try:
         page = web.fetch(item.url, ai=False)  # nothing here goes to Claude
     except web.Blocked as e:
@@ -272,18 +303,14 @@ def add_item_picture(db, item: DiscoveredItem, source: DiscoverySource, to=None)
     if done:
         return done
     for link, _ in links_of(page.text, page.url)[:TICKET_PAGES]:
+        # CC-320: a fallback can only add a picture. What it fails with never replaces the reason for the event's own page
         try:
             tpage = web.fetch(link, ai=False)
-        except web.Blocked as e:
-            why = f"Refused: {link}: {e}"
+        except (web.Blocked, web.FetchError):
             continue
-        except web.FetchError as e:
-            failed = e
-            continue
-        done, more, err = _try_pictures(db, item, tpage, to)
+        done, _more, _err = _try_pictures(db, item, tpage, to)
         if done:
             return done
-        why, failed = (more if more != "The page names no picture" else why), failed or err
     if failed is not None:
         raise failed
     raise NoPicture(why)
@@ -292,17 +319,24 @@ def add_item_picture(db, item: DiscoveredItem, source: DiscoverySource, to=None)
 def due_items(db, now: datetime, limit: int = ITEM_PER_RUN) -> list[DiscoveredItem]:
     return db.scalars(select(DiscoveredItem).where(
         DiscoveredItem.status == "new", DiscoveredItem.image_key.is_(None), DiscoveredItem.url != "",
-        DiscoveredItem.image_override.is_(False), DiscoveredItem.image_tries < MAX_TRIES,
+        DiscoveredItem.image_override.is_(False),
+        # CC-320: out of tries, but looked at by an older finder (which had the bugs) -> one more look, in the hourly runs
+        or_(DiscoveredItem.image_tries < MAX_TRIES, DiscoveredItem.image_finder < FINDER_VERSION),
         or_(DiscoveredItem.image_checked_at.is_(None), DiscoveredItem.image_checked_at < now - RETRY_AFTER_ITEM),
+        ~DiscoveredItem.image_note.in_(NO_RELOOK),
     ).order_by(DiscoveredItem.id).limit(limit)).all()
 
 
+# CC-320: reasons that no finder fix changes, so an older finder's look isn't repeated for them
+NO_RELOOK = ("The event has no page of its own on the source's site", "The source was deleted")
 RETRY_AFTER_ITEM = timedelta(hours=1)  # the hourly run: a found item's picture is wanted before its review, not tomorrow
 
 
 def look_for_item(db, item: DiscoveredItem, now: datetime, to=None) -> tuple[str, str, str]:
     """One found item's picture look, committed: (source's name, status, note), as add_pictures gives them."""
     source = db.get(DiscoverySource, item.source_id) if item.source_id else None
+    if item.image_finder < FINDER_VERSION:  # CC-320: the one more look an older finder's miss is owed: a fresh set of tries
+        item.image_tries, item.image_finder = 0, FINDER_VERSION
     item.image_tries += 1
     item.image_checked_at = now
     db.refresh(item, ["image_override"])  # an admin may have chosen since the list was made (the session keeps what it loaded)

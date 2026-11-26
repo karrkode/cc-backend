@@ -6,6 +6,10 @@
 - Pages are fetched with If-None-Match / If-Modified-Since, so an unchanged page usually costs a
   tiny 304 reply and nothing else.
 - Requests to one site are spaced out (MIN_GAP_SECONDS, or the site's own Crawl-delay).
+- CC-320: an address with characters outside ASCII is encoded once (host as IDNA, path and query percent-encoded) before
+  anything else looks at it, so the address checked is the address requested.
+- CC-320: robots.txt on a separate picture server (a CDN such as Wix's) that answers 4xx (not 429) means "no rules". Its
+  5xx, 429 and timeouts mean "not now". On the event page's own server a 401 or 403 is still a refusal.
 - CC-189: only public web hosts are reached, whoever asked for the page: every request and redirect is checked
   here, and the connection goes to the address that was checked (see _connect_public).
 There is no logging in, no pretending to be a browser and no retrying around a refusal: a refused
@@ -14,13 +18,14 @@ page is reported as blocked, for a person to check by hand.
 import codecs
 import http.client
 import ipaddress
+import re
 import socket
 import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from functools import lru_cache
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit, urlunsplit
 
 USER_AGENT = "CultureCrewBot/1.0 (+https://chiculturecrew.com; info@chiculturecrew.com)"
 AI_AGENTS = {"claudebot", "anthropic-ai", "claude-web", "claude-searchbot"}
@@ -47,6 +52,10 @@ class Blocked(Exception):
 
 class FetchError(Exception):
     """Couldn't get the page this time (network, timeout, 5xx). Worth trying again later."""
+
+
+class BadAddress(FetchError):
+    """CC-320: the address can't be written as a web address (a host that can't be encoded, say)."""
 
 
 class PrivateAddress(Blocked):
@@ -103,6 +112,30 @@ def parse_robots(text: str) -> Robots:
     delay = max((float(v) for f, v in flat if f == "crawl-delay" and v.replace(".", "", 1).isdigit()), default=0.0)
     return Robots(disallow=[v for f, v in flat if f == "disallow"], allow=[v for f, v in flat if f == "allow"],
                   crawl_delay=min(delay, 30.0), ai_opt_out=ai_opt_out)
+
+
+_PCT_STRAY = re.compile(r"%(?![0-9A-Fa-f]{2})")
+_KEEP = "/%:@!$&'()*+,;=-._~"
+
+
+def normalise_url(url: str) -> str:
+    """CC-320: url as ASCII: the host as IDNA, the path and query percent-encoded (an existing %XX is kept, never encoded
+    twice). An address that is already ASCII comes back unchanged. BadAddress when it can't be written that way."""
+    url = url.strip()
+    try:
+        parts = urlsplit(url)
+        host_part = parts.netloc
+        if not host_part.isascii():
+            userinfo, at, hostport = host_part.rpartition("@")
+            host, colon, port = hostport.partition(":") if not hostport.startswith("[") else (hostport, "", "")
+            host_part = userinfo + at + host.encode("idna").decode("ascii") + colon + port
+        if url.isascii():
+            return url if host_part == parts.netloc else urlunsplit(parts._replace(netloc=host_part))
+        path = quote(_PCT_STRAY.sub("%25", parts.path), safe=_KEEP)
+        query = quote(_PCT_STRAY.sub("%25", parts.query), safe=_KEEP + "?")
+        return urlunsplit((parts.scheme, host_part, path, query, ""))
+    except (UnicodeError, ValueError) as e:
+        raise BadAddress("that web address can't be read") from e
 
 
 def _addresses(host: str, port: int) -> list[str]:
@@ -187,6 +220,7 @@ class _HTTPSHandler(urllib.request.HTTPSHandler):
 class _CheckedRedirects(urllib.request.HTTPRedirectHandler):
     """CC-124: every hop of a redirect is checked too, so a public page can't send us on to a private address."""
     def redirect_request(self, req, fp, code, msg, headers, newurl):
+        newurl = normalise_url(newurl)  # CC-320: the address checked below is the one requested
         _check_form(newurl)
         polite = getattr(req, "polite", None)  # CC-302: set on a page fetch (not on a robots.txt one, which would loop)
         if polite:
@@ -212,13 +246,18 @@ def _opener() -> urllib.request.OpenerDirector:
 
 
 def _open(url: str, headers: dict[str, str], timeout: float = TIMEOUT, polite: tuple | None = None):
+    url = normalise_url(url)  # CC-320
     _check_form(url)
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept-Language": "en-US", **headers})
     req.polite = polite
     return _opener().open(req, timeout=timeout)
 
 
-def robots_for(url: str, timeout: float = TIMEOUT) -> Robots:
+def robots_for(url: str, timeout: float = TIMEOUT, picture_server: bool = False) -> Robots:
+    """The site's robots.txt rules. CC-320: picture_server is for a file on a different server from the page that named
+    it. There, any 4xx but 429 means "no rules" (RFC 9309), not cached so a page on the same server still gets its own
+    rule; 429 and 5xx mean "not now" (FetchError). On a page's server, 401 and 403 are a refusal."""
+    url = normalise_url(url)
     parts = urlsplit(url)
     origin = f"{parts.scheme}://{parts.netloc}"
     if origin not in _robots:
@@ -226,12 +265,23 @@ def robots_for(url: str, timeout: float = TIMEOUT) -> Robots:
             with _open(origin + "/robots.txt", {}, timeout) as r:
                 _robots[origin] = parse_robots(r.read(500_000).decode("utf-8", "replace"))
         except urllib.error.HTTPError as e:
+            if picture_server:
+                if e.code == 429 or e.code >= 500:
+                    raise FetchError(f"{parts.netloc} is busy or down just now (HTTP {e.code} for robots.txt)") from e
+                return Robots([], [], 0.0, False)
             if e.code in (401, 403):
-                raise Blocked(f"the site refuses automated visitors (HTTP {e.code} for robots.txt)") from e
+                raise Blocked(f"{parts.netloc} refuses automated visitors (HTTP {e.code} for robots.txt)") from e
             _robots[origin] = Robots([], [], 0.0, False, unsure=e.code not in (404, 410))  # no robots.txt: no rules
         except (urllib.error.URLError, TimeoutError, OSError) as e:
-            raise FetchError(f"couldn't reach {parts.netloc}: {e}") from e
+            raise FetchError(_unreachable(parts.netloc, e)) from e
     return _robots[origin]
+
+
+def _unreachable(host: str, e: Exception) -> str:
+    """CC-320: plain words for a network failure."""
+    if isinstance(e, TimeoutError) or isinstance(getattr(e, "reason", None), TimeoutError):
+        return f"{host} didn't answer in time"
+    return f"couldn't reach {host}: {e}"
 
 
 def charset_of(name: str | None) -> str:
@@ -257,35 +307,37 @@ def _read(r, max_bytes: int, deadline: float | None) -> bytes:
             raise FetchError(f"page is larger than {max_bytes / 1_000_000:g} MB")
 
 
-def _allowed(url: str, ai: bool, timeout: float) -> Robots:
+def _allowed(url: str, ai: bool, timeout: float, picture_server: bool = False) -> Robots:
     """robots.txt, and when ai its AI opt-out, for this address."""
     parts = urlsplit(url)
     if parts.scheme not in ("http", "https"):
         raise Blocked(f"not a web address: {url}")
-    rules = robots_for(url, timeout)
+    rules = robots_for(url, timeout, picture_server)
     if ai and rules.ai_opt_out:
-        raise Blocked("the site's robots.txt opts out of AI crawlers, so its pages aren't sent to Claude")
-    if not rules.allows(parts.path or "/"):
-        raise Blocked("robots.txt asks crawlers not to read this page")
+        raise Blocked(f"{parts.netloc}'s robots.txt opts out of AI crawlers, so its pages aren't sent to Claude")
+    if not rules.allows(parts.path or "/"):  # CC-320: a readable robots.txt that disallows us is obeyed for pictures too
+        raise Blocked(f"{parts.netloc}'s robots.txt asks crawlers not to read this page")
     return rules
 
 
-def _polite(url: str, ai: bool, timeout: float, wait: bool) -> None:
+def _polite(url: str, ai: bool, timeout: float, wait: bool, picture_server: bool = False) -> None:
     """robots.txt (and, when ai, its AI opt-out), then the gap between requests to one site."""
     parts = urlsplit(url)
-    rules = _allowed(url, ai, timeout)
+    rules = _allowed(url, ai, timeout, picture_server)
     gap = max(MIN_GAP_SECONDS, rules.crawl_delay)
     pause = _last_hit.get(parts.netloc, 0) + gap - time.monotonic()
     if wait and pause > 0:
         time.sleep(pause)
 
 
-def _refused(e: urllib.error.HTTPError) -> Exception:
+def _refused(e: urllib.error.HTTPError, url: str = "", what: str = "page") -> Exception:
+    """CC-320: the reason for an HTTP error, naming the site. "Not found" only for a real 404 or 410."""
+    host = urlsplit(url).netloc or "the site"
     if e.code in (401, 403, 451):
-        return Blocked(f"the site refused the request (HTTP {e.code})")
-    if e.code == 404:
-        return FetchError("page not found (HTTP 404): the address may have changed")
-    return FetchError(f"HTTP {e.code}")
+        return Blocked(f"{host} refused the request (HTTP {e.code})")
+    if e.code in (404, 410):
+        return FetchError(f"{what} not found (HTTP {e.code}): the address may have changed")
+    return FetchError(f"{host} answered HTTP {e.code}")
 
 
 def fetch(url: str, etag: str = "", last_modified: str = "", ai: bool = True, timeout: float = TIMEOUT,
@@ -294,6 +346,7 @@ def fetch(url: str, etag: str = "", last_modified: str = "", ai: bool = True, ti
     AI opt-out in robots.txt counts as a refusal. CC-182: deadline (a time.monotonic() value) bounds the whole
     download, not just each read; wait=False skips the gap between requests to one site, for a single page a
     member is waiting on."""
+    url = normalise_url(url)  # CC-320: what is checked below is exactly what is requested
     parts = urlsplit(url)
     _polite(url, ai, timeout, wait)
     headers = {}
@@ -312,9 +365,11 @@ def fetch(url: str, etag: str = "", last_modified: str = "", ai: bool = True, ti
     except urllib.error.HTTPError as e:
         if e.code == 304:
             return Page(url=url, status=304, etag=etag, last_modified=last_modified)
-        raise _refused(e) from e
+        raise _refused(e, url) from e
+    except UnicodeError as e:  # a redirect's address urllib can't write (CC-320)
+        raise BadAddress("a redirect went to a web address that can't be read") from e
     except (urllib.error.URLError, TimeoutError, OSError) as e:
-        raise FetchError(f"couldn't reach {parts.netloc}: {e}") from e
+        raise FetchError(_unreachable(parts.netloc, e)) from e
     finally:
         _last_hit[parts.netloc] = time.monotonic()
         if final and urlsplit(final).netloc != parts.netloc:  # CC-302: a redirect's last site was hit too
@@ -328,18 +383,28 @@ class File:
     content_type: str
 
 
-def fetch_file(url: str, accept: str, max_bytes: int, timeout: float = TIMEOUT) -> File:
+def _picture_server(url: str, page_url: str) -> bool:
+    """CC-320: a file on another server than the page that named it (a CDN, Wix's picture server). The same server
+    keeps the page's own rule."""
+    return bool(page_url) and urlsplit(normalise_url(page_url)).netloc.lower() != urlsplit(url).netloc.lower()
+
+
+def fetch_file(url: str, accept: str, max_bytes: int, timeout: float = TIMEOUT, page_url: str = "") -> File:
     """CC-246: a file (an event's picture) by the same rules as a page: public hosts only, robots.txt, the gap, a
-    size cap and a deadline. Nothing fetched this way goes to Claude, so an AI opt-out doesn't apply."""
+    size cap and a deadline. Nothing fetched this way goes to Claude, so an AI opt-out doesn't apply. CC-320: page_url is
+    the page that named the file; when it's on another server, that server's robots.txt answering 4xx means "no rules"."""
+    url = normalise_url(url)
     parts = urlsplit(url)
-    _polite(url, False, timeout, True)
+    _polite(url, False, timeout, True, _picture_server(url, page_url))
     try:
         with _open(url, {"Accept": accept}, timeout) as r:
             data = _read(r, max_bytes, time.monotonic() + timeout * 2)
             return File(url=r.geturl(), data=data, content_type=r.headers.get("Content-Type", ""))
     except urllib.error.HTTPError as e:
-        raise _refused(e) from e
+        raise _refused(e, url, "picture") from e
+    except UnicodeError as e:  # a redirect's address urllib can't write (CC-320)
+        raise BadAddress("a redirect went to a web address that can't be read") from e
     except (urllib.error.URLError, TimeoutError, OSError) as e:
-        raise FetchError(f"couldn't reach {parts.netloc}: {e}") from e
+        raise FetchError(_unreachable(parts.netloc, e)) from e
     finally:
         _last_hit[parts.netloc] = time.monotonic()

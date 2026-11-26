@@ -19,6 +19,8 @@ MAX_REFUSED = 300  # one refusal line in the item's note
 MAX_LINK = 200  # a longer address is skipped, so a refusal line always holds it whole
 TICKET_WORDS = ("ticket", "calendar", "buy", "book", "schedule", "dates", "showtimes", "performances", "box office",
                 "box-office", "on sale", "seats", "events", "whats-on", "what's on")
+# CC-320: whole words only ("book" isn't in "Facebook"), with a plural allowed ("tickets", "events")
+TICKET_RE = re.compile(r"\b(?:" + "|".join(re.escape(w) for w in TICKET_WORDS) + r")s?\b")
 SKIP_SUFFIX = (".pdf", ".ics", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".zip", ".mp3", ".mp4")
 
 
@@ -62,8 +64,8 @@ def links_of(html: str, base: str, any_link: bool = False, limit: int = MAX_LINK
             continue
         if len(url) > MAX_LINK or parts.path.lower().endswith(SKIP_SUFFIX):
             continue
-        hint = f"{text} {parts.path}".lower()
-        ticketish = any(w in hint for w in TICKET_WORDS)
+        hint = f"{text} {parts.path}".lower().replace("_", " ")  # _ is a word character: "book_now" is two words
+        ticketish = TICKET_RE.search(hint) is not None
         if not any_link and not ticketish:
             continue
         seen.add(url)

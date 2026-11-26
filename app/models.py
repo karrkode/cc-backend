@@ -884,6 +884,9 @@ class DiscoveredItem(Base):
     image_override: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     image_tries: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     image_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # CC-320: which version of the picture finder (pictures.FINDER_VERSION) last looked. 0 = before it existed, so an item
+    # an older finder missed gets one more look without rewriting any row.
+    image_finder: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     # CC-257: a hidden item an admin delayed; it goes back to "new" once this moment has passed (store.release_delayed)
     delayed_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
