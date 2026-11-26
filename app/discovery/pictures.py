@@ -25,7 +25,7 @@ from datetime import UTC, datetime, timedelta
 from html import unescape
 from urllib.parse import urljoin, urlsplit
 
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select
 
 from ..clock import utcnow
 from .. import event_images
@@ -269,6 +269,10 @@ def _aic_picture(db, item: DiscoveredItem, to) -> str:
     through the same picture rules as any other: fetch_file, size and type, our own WebP, no duplicates."""
     try:
         image_url = aic_image_url(item.url)
+    except urllib.error.HTTPError as e:
+        if e.code in (404, 410):  # the API no longer has it
+            raise NoPicture("The Art Institute's API no longer has this one") from e
+        raise web.FetchError(f"the Art Institute's API answered HTTP {e.code}") from e
     except (urllib.error.URLError, OSError, ValueError) as e:  # ValueError: an answer that isn't JSON
         raise web.FetchError(f"the Art Institute's API didn't answer ({type(e).__name__})") from e
     if not image_url:
@@ -324,7 +328,8 @@ def due_items(db, now: datetime, limit: int = ITEM_PER_RUN) -> list[DiscoveredIt
         or_(DiscoveredItem.image_tries < MAX_TRIES, DiscoveredItem.image_finder < FINDER_VERSION),
         or_(DiscoveredItem.image_checked_at.is_(None), DiscoveredItem.image_checked_at < now - RETRY_AFTER_ITEM),
         ~DiscoveredItem.image_note.in_(NO_RELOOK),
-    ).order_by(DiscoveredItem.id).limit(limit)).all()
+    ).order_by(and_(DiscoveredItem.image_checked_at.is_not(None), DiscoveredItem.image_finder < FINDER_VERSION),
+               DiscoveredItem.id).limit(limit)).all()  # CC-320: items never looked at, and those mid-tries, go before the extra looks
 
 
 # CC-320: reasons that no finder fix changes, so an older finder's look isn't repeated for them
@@ -335,8 +340,10 @@ RETRY_AFTER_ITEM = timedelta(hours=1)  # the hourly run: a found item's picture 
 def look_for_item(db, item: DiscoveredItem, now: datetime, to=None) -> tuple[str, str, str]:
     """One found item's picture look, committed: (source's name, status, note), as add_pictures gives them."""
     source = db.get(DiscoverySource, item.source_id) if item.source_id else None
-    if item.image_finder < FINDER_VERSION:  # CC-320: the one more look an older finder's miss is owed: a fresh set of tries
-        item.image_tries, item.image_finder = 0, FINDER_VERSION
+    if item.image_finder < FINDER_VERSION:  # CC-320: stamped before the fetch, so a look that is killed isn't repeated
+        if item.image_tries >= MAX_TRIES:  # out of tries under an older finder: this look is the one more it is owed
+            item.image_tries = MAX_TRIES - 1
+        item.image_finder = FINDER_VERSION
     item.image_tries += 1
     item.image_checked_at = now
     db.refresh(item, ["image_override"])  # an admin may have chosen since the list was made (the session keeps what it loaded)

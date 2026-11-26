@@ -96,7 +96,7 @@ def test_a_page_with_a_non_ascii_address_is_fetched_and_the_checked_address_is_t
     assert checked[0] == opened[-1] == want  # (opened[0] is robots.txt)
 
 
-def test_a_redirect_to_a_non_ascii_address_is_followed(hosts):
+def test_a_redirect_to_an_encoded_address_is_followed(hosts):
     hosts[(PAGE_HOST, "/robots.txt")] = (404, "text/plain", b"")
     hosts[(PAGE_HOST, "/old")] = (302, "text/html", b"/new%C3%A9")  # the body of a 302 here is where it goes
     hosts[(PAGE_HOST, "/new%C3%A9")] = (200, "text/html", b"<html>moved</html>")
@@ -164,6 +164,23 @@ def test_the_ai_opt_out_still_applies_to_anything_sent_to_claude(hosts):
     with pytest.raises(web.Blocked, match="opts out of AI crawlers"):
         web.fetch(f"http://{PAGE_HOST}/p", ai=True)
     assert web.fetch(f"http://{PAGE_HOST}/p", ai=False).status == 200
+
+
+def test_robots_rules_written_with_non_ascii_characters_still_apply():
+    for rule in ("/\u00e9v\u00e9nements/", "/%c3%a9v%c3%a9nements/", "/%C3%A9v%C3%A9nements/"):
+        rules = web.parse_robots(f"User-agent: *\nDisallow: {rule}\n")
+        assert not rules.allows("/%C3%A9v%C3%A9nements/x") and not rules.allows("/\u00e9v\u00e9nements/x")
+        assert rules.allows("/autre/x")
+    assert not web.parse_robots("User-agent: *\nDisallow: /a%2fb\n").allows("/a%2Fb")
+
+
+@pytest.mark.parametrize("page, pic, other", [
+    ("http://v.example/p", "http://V.example./a.jpg", False), ("https://v.example/p", "https://v.example:443/a.jpg", False),
+    ("http://v.example/p", "http://cdn.example/a.jpg", True), ("http://v.example/p", "https://v.example/a.jpg", True),
+    ("", "http://cdn.example/a.jpg", False),
+])
+def test_the_pages_own_server_is_told_from_a_separate_one(page, pic, other):
+    assert web._picture_server(pic, page) is other
 
 
 # --- 4: ticket words ---------------------------------------------------------------------------------------------------
@@ -311,6 +328,16 @@ def test_an_art_institute_picture_still_meets_the_picture_rules(db, hosts, store
     assert status == "none" and it.image_key is None and "too small" in it.image_note
 
 
+def test_an_art_institute_item_the_api_no_longer_has_is_a_reason_not_a_retry(db, hosts, stored, monkeypatch):
+    src = _source(db, reader="aic_api", page="https://www.artic.edu/exhibitions")
+    it = _item(db, src, url="https://www.artic.edu/exhibitions/5712/some-show")
+    monkeypatch.setattr(pictures, "aic_image_url", lambda u: (_ for _ in ()).throw(
+        urllib.error.HTTPError(u, 404, "Not Found", {}, None)))
+    [(_, status, _)] = pictures.add_item_pictures(db, NOW)
+    db.refresh(it)
+    assert status == "none" and it.image_note == "The Art Institute's API no longer has this one"
+
+
 def test_an_art_institute_api_with_no_picture_or_no_answer(db, hosts, stored, monkeypatch):
     src = _source(db, reader="aic_api", page="https://www.artic.edu/exhibitions")
     it = _item(db, src, url="https://www.artic.edu/exhibitions/5712/some-show")
@@ -370,6 +397,25 @@ def test_the_extra_look_leaves_alone_what_it_must(db, hosts, stored):
     assert pictures.due_items(db, NOW) == []
     assert {current.image_key, admin.image_key, no_page.image_key, done.image_key} == {None}
     assert has.image_key
+
+
+def test_an_extra_look_that_fails_is_still_only_one_look(db, hosts, stored):
+    src = _on_venue(db)
+    it = _missed(db, src, "seagull")
+    hosts[(PAGE_HOST, "/robots.txt")] = (404, "text/plain", b"")
+    hosts[(PAGE_HOST, "/seagull")] = (500, "text/html", b"")
+    [(_, status, _)] = pictures.add_item_pictures(db, NOW)
+    db.refresh(it)
+    assert status == "error" and it.image_tries == pictures.MAX_TRIES and it.image_note.startswith("Gave up")
+    assert pictures.due_items(db, NOW + timedelta(days=2)) == []
+
+
+def test_new_items_go_before_the_extra_looks(db, hosts, stored):
+    src = _on_venue(db)
+    for n in range(10):
+        _missed(db, src, f"old{n}")
+    fresh = _item(db, src, title="fresh", url=f"http://{PAGE_HOST}/fresh")  # never looked at: a higher id than the backlog
+    assert fresh in pictures.due_items(db, NOW)
 
 
 def test_the_extra_looks_are_ten_an_hour(db, hosts, stored):

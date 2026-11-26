@@ -309,7 +309,7 @@ def _aic(path: str, body: dict) -> dict:
         return json.loads(r.read())
 
 
-AIC_PAGE = re.compile(r"^https://www\.artic\.edu/(exhibitions|events)/(\d+)(?:[/?#]|$)")
+AIC_PAGE = re.compile(r"^https://www\.artic\.edu/(exhibitions|events)/([0-9]+)(?:[/?#]|\Z)")
 
 
 def aic_image_url(page_url: str) -> str | None:

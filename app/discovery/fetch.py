@@ -81,8 +81,9 @@ class Robots:
     unsure: bool = False  # CC-216: the site didn't answer clearly, so these empty rules hold for this read only
 
     def allows(self, path: str) -> bool:
-        best_allow = max((len(p) for p in self.allow if path.startswith(p)), default=-1)
-        best_disallow = max((len(p) for p in self.disallow if p and path.startswith(p)), default=-1)
+        path = _encode_path(path)  # CC-320: rules and the request path in one form (a rule may be written with raw é, or %c3%a9)
+        best_allow = max((len(q) for q in map(_encode_path, self.allow) if path.startswith(q)), default=-1)
+        best_disallow = max((len(q) for q in map(_encode_path, self.disallow) if q and path.startswith(q)), default=-1)
         return best_allow >= best_disallow
 
 
@@ -116,6 +117,13 @@ def parse_robots(text: str) -> Robots:
 
 _PCT_STRAY = re.compile(r"%(?![0-9A-Fa-f]{2})")
 _KEEP = "/%:@!$&'()*+,;=-._~"
+
+
+def _encode_path(path: str) -> str:
+    """CC-320: a path or robots.txt rule as ASCII with upper-case %XX escapes, each character encoded once. Changing it again
+    changes nothing. * and $ (robots wildcards) are kept."""
+    path = quote(_PCT_STRAY.sub("%25", path), safe=_KEEP + "*$?")
+    return re.sub(r"%[0-9a-f]{2}", lambda m: m[0].upper(), path)
 
 
 def normalise_url(url: str) -> str:
@@ -386,7 +394,13 @@ class File:
 def _picture_server(url: str, page_url: str) -> bool:
     """CC-320: a file on another server than the page that named it (a CDN, Wix's picture server). The same server
     keeps the page's own rule."""
-    return bool(page_url) and urlsplit(normalise_url(page_url)).netloc.lower() != urlsplit(url).netloc.lower()
+    if not page_url:
+        return False
+
+    def server(u: str) -> tuple[str, int]:  # the host (case and a trailing dot don't matter) and its effective port
+        p = urlsplit(u)
+        return (p.hostname or "").rstrip("."), p.port or (443 if p.scheme == "https" else 80)
+    return server(normalise_url(page_url)) != server(url)
 
 
 def fetch_file(url: str, accept: str, max_bytes: int, timeout: float = TIMEOUT, page_url: str = "") -> File:
