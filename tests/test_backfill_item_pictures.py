@@ -107,11 +107,13 @@ def test_live_events_and_other_statuses_are_left_alone(db, site, stored, item, m
     assert ev.image_key is None and rejected.image_key is None and rejected.image_tries == 0
 
 
-def test_an_item_with_no_page_address_gets_a_reason_and_nothing_is_fetched(db, site, stored, item):  # 1
+def test_an_item_with_no_page_address_gets_a_reason_and_only_the_listing_is_fetched(db, site, stored, item):  # 1
     it = item(); it.url = ""; db.commit()
     asked = _Site.asked[:]
     [(_, status, _)] = pictures.backfill_items(db, now=NOW); db.refresh(it)
-    assert status == "none" and "no page of its own" in it.image_note and _Site.asked == asked
+    # CC-321: no page of its own, but its card on the listing page is looked at (robots.txt, then the listing, once)
+    assert status == "none" and "no page of its own" in it.image_note
+    assert [a for a in _Site.asked[len(asked):] if not a.endswith("/robots.txt")] == ["venue.example/season"]
 
 
 def test_a_try_still_going_is_left_to_the_hourly_run(db, site, stored, item, monkeypatch):

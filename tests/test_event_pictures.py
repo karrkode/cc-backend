@@ -22,7 +22,10 @@ SITE = "http://venue.example"
 
 def _image(fmt="JPEG", size=(1600, 900), colour=(200, 60, 40)):
     out = io.BytesIO()
-    Image.new("RGB", size, colour).save(out, fmt)
+    im = Image.new("RGB", size, colour)
+    # CC-321: a one-colour picture is refused as blank, so every test picture has a contrasting block
+    im.paste(tuple(255 - c for c in colour), (0, 0, size[0] // 2, size[1] // 2))
+    im.save(out, fmt)
     return out.getvalue()
 
 
