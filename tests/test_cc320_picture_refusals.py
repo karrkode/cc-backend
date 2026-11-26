@@ -392,10 +392,10 @@ def test_the_extra_look_leaves_alone_what_it_must(db, hosts, stored):
     current = _missed(db, src, "current", image_finder=pictures.FINDER_VERSION)  # already looked at by this finder
     admin = _missed(db, src, "admin", image_override=True)  # an admin's choice is never replaced
     has = _missed(db, src, "has", image_key="event-images/found-1/x.webp")
-    no_page = _missed(db, src, "nopage", image_note="The event has no page of its own on the source's site")
+    deleted = _missed(db, src, "gone", image_note="The source was deleted")  # no finder fix changes that
     done = _missed(db, src, "done", status="approved")
     assert pictures.due_items(db, NOW) == []
-    assert {current.image_key, admin.image_key, no_page.image_key, done.image_key} == {None}
+    assert {current.image_key, admin.image_key, deleted.image_key, done.image_key} == {None}
     assert has.image_key
 
 

@@ -31,6 +31,7 @@ from ..clock import utcnow
 from .. import event_images
 from ..models import DiscoveredItem, DiscoverySource, Event, EventStatus
 from . import fetch as web
+from . import htmlpics
 from .jsonld import _blocks, _is_event, _objects, _tags
 from .readers import aic_image_url
 from .store import on_source_site
@@ -39,8 +40,9 @@ from .tickets import links_of
 MAX_TRIES = 3
 RETRY_AFTER = timedelta(hours=20)  # about a day: the hourly run looks again tomorrow, not next hour
 PER_RUN = 10
-FINDER_VERSION = 1  # CC-320: bump when the finder learns to fix a kind of miss; items looked at by an older one get one more look
+FINDER_VERSION = 2  # CC-321: 2 = also the listing card and the page's main picture. CC-320: bump when the finder learns to fix a kind of miss; items looked at by an older one get one more look
 MAX_BYTES = 10_000_000  # a share image is usually well under 1 MB
+BLANK_STDDEV = 2.0  # CC-321: below this spread of brightness in every channel, a picture is one colour
 MIN_SIDE = 200  # smaller than this on its short side is an icon, not an event's picture
 ACCEPT = "image/webp,image/avif,image/jpeg,image/png,image/gif;q=0.8"
 TYPES = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif", "image/avif": "avif"}
@@ -126,10 +128,13 @@ def picture_from(image_url: str, page_url: str = "") -> tuple[bytes, str, bytes]
         webp = event_images.normalise(got.data)
     except event_images.BadImage as e:
         raise NoPicture(f"the picture can't be read ({e})") from e
-    from PIL import Image
+    from PIL import Image, ImageStat
     with Image.open(io.BytesIO(webp)) as im:
         if min(im.size) < MIN_SIDE:
             raise NoPicture(f"the picture is too small ({im.width}x{im.height})")
+        # CC-321: a blank or single-colour picture (a placeholder, a spacer) is no picture of the event
+        if max(ImageStat.Stat(im.convert("RGB")).stddev) < BLANK_STDDEV:
+            raise NoPicture("the picture is blank (one colour)")
     return got.data, TYPES[kind], webp
 
 
@@ -228,15 +233,17 @@ def item_dup_for_event(db, event: Event, key: str) -> bool:
     return db.scalar(select(Event.id).where(Event.id != event.id, Event.image_key.like(f"%/{name}")).limit(1)) is not None
 
 
-def _try_pictures(db, item: DiscoveredItem, page, to) -> tuple[str | None, str, web.FetchError | None]:
-    """The first usable picture of one page: (note when stored, else None; why not; a fetch error worth retrying)."""
-    candidates = preview_images(page.text, page.url)
-    if not candidates:
-        return None, "The page names no picture", None
-    why, failed = "The page names no picture", None
+GENERIC = "The page names no picture"
+
+
+def _store_first(db, item: DiscoveredItem, candidates: list[str], page_url: str, to, how: str = "",
+                 source_url: str = "") -> tuple[str | None, str, web.FetchError | None]:
+    """The first usable picture of these addresses: (note when stored, else None; why not; a fetch error worth retrying).
+    CC-321: source_url is the page the picture came from (default: page_url), how says which way it was found."""
+    why, failed = GENERIC, None
     for image_url in candidates[:3]:
         try:
-            data, ext, webp = picture_from(image_url, page.url)
+            data, ext, webp = picture_from(image_url, page_url)
         except web.Blocked as e:
             why = f"Refused: {e}"
             continue
@@ -249,9 +256,17 @@ def _try_pictures(db, item: DiscoveredItem, page, to) -> tuple[str | None, str, 
         if _item_dup(db, item, webp):
             why = "The picture is the same as another event's (a logo or the site's default)"
             continue
-        _keep_picture(db, item, data, ext, webp, page.url, to)
-        return f"picture stored from {urlsplit(image_url).hostname}", "", None
+        _keep_picture(db, item, data, ext, webp, source_url or page_url, to)
+        return f"picture stored from {urlsplit(image_url).hostname}{how}", "", None
     return None, why, failed
+
+
+def _try_pictures(db, item: DiscoveredItem, page, to) -> tuple[str | None, str, web.FetchError | None]:
+    """The first usable preview picture of one page: (note when stored, else None; why not; a fetch error worth retrying)."""
+    candidates = preview_images(page.text, page.url)
+    if not candidates:
+        return None, GENERIC, None
+    return _store_first(db, item, candidates, page.url, to)
 
 
 def _keep_picture(db, item: DiscoveredItem, data: bytes, ext: str, webp: bytes, source_url: str, to) -> None:
@@ -289,40 +304,115 @@ def _aic_picture(db, item: DiscoveredItem, to) -> str:
     return f"picture stored from {urlsplit(image_url).hostname} (the Art Institute's API)"
 
 
-def add_item_picture(db, item: DiscoveredItem, source: DiscoverySource, to=None) -> str:
-    """Look for a found item's picture: its own page first, then the tickets or calendar pages it links to. Returns a
-    note for the run's log and sets item.image_key. Raises web.FetchError when it's worth trying again later, and
-    NoPicture (with the reason for the admin) when it isn't. Every fetch is web.fetch's: public hosts, robots.txt, spacing."""
+class _Listing:
+    """One source's listing page, read once per run: its cards and the pictures several events would share."""
+    def __init__(self, url: str, cards: list[htmlpics.Card]):
+        self.url, self.cards, self.shared = url, cards, htmlpics.shared_images(cards)
+
+
+def _listing_of(source: DiscoverySource, cache: dict) -> _Listing | None:
+    """CC-321: the source's listing page, fetched at most once per run however many of its events look for a picture
+    (a failure is remembered too). Only its first page: one extra fetch per source per run. Same fetch rules as any page."""
+    if source.id in cache:
+        return cache[source.id]
+    cache[source.id] = None
+    if source.pages:
+        try:
+            page = web.fetch(source.pages[0], ai=False)
+        except (web.Blocked, web.FetchError):
+            return None
+        if not htmlpics.looks_missing(page.text):
+            cache[source.id] = _Listing(page.url, htmlpics.listing_cards(page.text, page.url))
+    return cache[source.id]
+
+
+def _has_own_page(item: DiscoveredItem, source: DiscoverySource) -> bool:
+    """A page of its own on the source's site that isn't the listing page itself (CC-321)."""
+    if not item.url or not on_source_site(item.url, source):
+        return False
+    here = item.url.split("#")[0].rstrip("/")
+    return not any(p.split("#")[0].rstrip("/") == here for p in source.pages or [])
+
+
+def _card_picture(db, item: DiscoveredItem, listing: _Listing | None, to, own: bool) -> tuple[str | None, str, web.FetchError | None]:
+    """CC-321: the picture on the event's card on the listing page, when the card is the event's (its link or its heading)."""
+    if listing is None:
+        return None, GENERIC, None
+    card = htmlpics.card_for(listing.cards, item.title, item.url if own else "")  # no page of its own: the title only, a link would be the listing's
+    if card is None:
+        return None, GENERIC, None
+    if card.image in listing.shared:
+        return None, "The card's picture is shared by other events on the listing page", None
+    return _store_first(db, item, [card.image], listing.url, to, " (the event's card on the listing page)")
+
+
+def _main_picture(db, item: DiscoveredItem, page, listing: _Listing | None, to) -> tuple[str | None, str, web.FetchError | None]:
+    """CC-321: the largest picture in the event page's main content, unless another event's card on the listing has it too."""
+    candidates = [u for u in htmlpics.main_picture(page.text, page.url) if listing is None or u not in listing.shared]
+    if not candidates:
+        return None, GENERIC, None
+    return _store_first(db, item, candidates[:1], page.url, to, " (the main picture on the event's page)")
+
+
+def add_item_picture(db, item: DiscoveredItem, source: DiscoverySource, to=None, cache: dict | None = None) -> str:
+    """Look for a found item's picture: the preview tags of its own page, then its card on the source's listing page (CC-321),
+    then the main picture of its own page (CC-321), then the tickets or calendar pages it links to. Returns a note for the
+    run's log and sets item.image_key. Raises web.FetchError when it's worth trying again later, and NoPicture (with the
+    reason for the admin) when it isn't. Every fetch is web.fetch's: public hosts, robots.txt, spacing. cache is the run's:
+    the listing page is fetched once for all its events."""
     if item.image_override:
         raise NoPicture("picture chosen by admin")
-    if not item.url or not on_source_site(item.url, source):
-        raise NoPicture("The event has no page of its own on the source's site")
-    if source.reader == "aic_api":  # CC-320
+    if source.reader == "aic_api" and item.url and on_source_site(item.url, source):  # CC-320
         return _aic_picture(db, item, to)
-    try:
-        page = web.fetch(item.url, ai=False)  # nothing here goes to Claude
-    except web.Blocked as e:
-        raise NoPicture(f"Refused: {e}") from e
-    done, why, failed = _try_pictures(db, item, page, to)
+    cache = {} if cache is None else cache
+    own = _has_own_page(item, source)
+    page, refused, failed = None, "", None
+    if own:
+        try:
+            page = web.fetch(item.url, ai=False)  # nothing here goes to Claude
+        except web.Blocked as e:
+            refused = f"Refused: {e}"
+        except web.FetchError as e:  # CC-321: the card can still help; the error stands if it doesn't
+            failed = e
+    if page is not None and htmlpics.looks_missing(page.text):  # the site's own "not found" page, answered with a 200
+        raise NoPicture("Page not found: the site's own not-found page")
+    done, why, err = (None, GENERIC, None) if page is None else _try_pictures(db, item, page, to)
     if done:
         return done
-    for link, _ in links_of(page.text, page.url)[:TICKET_PAGES]:
-        # CC-320: a fallback can only add a picture. What it fails with never replaces the reason for the event's own page
-        try:
-            tpage = web.fetch(link, ai=False)
-        except (web.Blocked, web.FetchError):
-            continue
-        done, _more, _err = _try_pictures(db, item, tpage, to)
+    failed = failed or err
+    listing = _listing_of(source, cache) if source.pages else None
+    gone = failed is not None and "not found (HTTP" in str(failed)  # a 404 or 410 page gives no picture, nor does its card
+    if not gone:
+        done, more, err = _card_picture(db, item, listing, to, own)
         if done:
             return done
+        failed, why = failed or err, (more if why == GENERIC else why)
+    if page is not None:
+        done, more, err = _main_picture(db, item, page, listing, to)
+        if done:
+            return done
+        failed, why = failed or err, (more if why == GENERIC else why)
+        for link, _ in links_of(page.text, page.url)[:TICKET_PAGES]:
+            # CC-320: a fallback can only add a picture. What it fails with never replaces the reason for the event's own page
+            try:
+                tpage = web.fetch(link, ai=False)
+            except (web.Blocked, web.FetchError):
+                continue
+            done, _more, _err = _try_pictures(db, item, tpage, to)
+            if done:
+                return done
     if failed is not None:
         raise failed
+    if refused:
+        raise NoPicture(refused)
+    if not own and why == GENERIC:
+        raise NoPicture("The event has no page of its own on the source's site")
     raise NoPicture(why)
 
 
 def due_items(db, now: datetime, limit: int = ITEM_PER_RUN) -> list[DiscoveredItem]:
     return db.scalars(select(DiscoveredItem).where(
-        DiscoveredItem.status == "new", DiscoveredItem.image_key.is_(None), DiscoveredItem.url != "",
+        DiscoveredItem.status == "new", DiscoveredItem.image_key.is_(None),
         DiscoveredItem.image_override.is_(False),
         # CC-320: out of tries, but looked at by an older finder (which had the bugs) -> one more look, in the hourly runs
         or_(DiscoveredItem.image_tries < MAX_TRIES, DiscoveredItem.image_finder < FINDER_VERSION),
@@ -333,11 +423,11 @@ def due_items(db, now: datetime, limit: int = ITEM_PER_RUN) -> list[DiscoveredIt
 
 
 # CC-320: reasons that no finder fix changes, so an older finder's look isn't repeated for them
-NO_RELOOK = ("The event has no page of its own on the source's site", "The source was deleted")
+NO_RELOOK = ("The source was deleted",)  # CC-321: "no page of its own" is looked at once more: its card may have the picture
 RETRY_AFTER_ITEM = timedelta(hours=1)  # the hourly run: a found item's picture is wanted before its review, not tomorrow
 
 
-def look_for_item(db, item: DiscoveredItem, now: datetime, to=None) -> tuple[str, str, str]:
+def look_for_item(db, item: DiscoveredItem, now: datetime, to=None, cache: dict | None = None) -> tuple[str, str, str]:
     """One found item's picture look, committed: (source's name, status, note), as add_pictures gives them."""
     source = db.get(DiscoverySource, item.source_id) if item.source_id else None
     if item.image_finder < FINDER_VERSION:  # CC-320: stamped before the fetch, so a look that is killed isn't repeated
@@ -354,7 +444,7 @@ def look_for_item(db, item: DiscoveredItem, now: datetime, to=None) -> tuple[str
     try:
         if source is None:
             raise NoPicture("The source was deleted")
-        status, note = "ok", add_item_picture(db, item, source, to)
+        status, note = "ok", add_item_picture(db, item, source, to, cache)
         item.image_note = ""
     except (NoPicture, web.Blocked) as e:
         status, note = "none", str(e)
@@ -378,7 +468,8 @@ def look_for_item(db, item: DiscoveredItem, now: datetime, to=None) -> tuple[str
 def add_item_pictures(db, now: datetime | None = None, limit: int = ITEM_PER_RUN, to=None) -> list[tuple[str, str, str]]:
     """Look for the pictures of found items waiting for review, committing after each. Same results as add_pictures."""
     now = now or utcnow()
-    return [look_for_item(db, item, now, to) for item in due_items(db, now, limit)]
+    cache: dict = {}  # CC-321: one listing page per source for the whole run
+    return [look_for_item(db, item, now, to, cache) for item in due_items(db, now, limit)]
 
 
 # --- CC-318: the one-off catch-up for items already on the review list ---------------------------------------------
@@ -419,14 +510,14 @@ def backfill_items(db, retry_missing: bool = False, limit: int | None = None, no
     the hourly run, and no Claude call. With retry_missing, an item whose last look gave a reason gets a fresh set of
     tries. on_result(row) is called after each item, so a long run shows its progress."""
     started = now = now or utcnow()
-    done = []
+    done, cache = [], {}
     for item in backlog(db, retry_missing)["todo"][:limit]:
         db.refresh(item)
         if not _still_todo(item, retry_missing, started):
             continue
         if retry_missing and item.image_tries >= MAX_TRIES:
             item.image_tries = 0
-        row = look_for_item(db, item, now, to)
+        row = look_for_item(db, item, now, to, cache)
         done.append(row)
         if on_result:
             on_result(row)
