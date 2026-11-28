@@ -8,7 +8,7 @@ from datetime import datetime
 from sqlalchemy import and_, or_
 
 from .clock import utcnow, as_utc
-from .models import Event, EventStatus, Role
+from .models import Event, EventStatus
 
 
 def live_condition(now: datetime | None = None):
@@ -22,12 +22,8 @@ def is_live(event: Event, now: datetime | None = None) -> bool:
     return event.status == EventStatus.approved and (event.publish_at is None or as_utc(event.publish_at) <= now)
 
 
-def is_scheduled(event: Event, now: datetime | None = None) -> bool:
-    return event.status == EventStatus.approved and not is_live(event, now)
-
-
 def visible_to(event: Event, user) -> bool:
     """Live events for everyone; anything else only for admins and the person who submitted it."""
     if is_live(event):
         return True
-    return user is not None and (user.role == Role.admin or event.submitted_by == user.id)
+    return user is not None and (user.is_admin or event.submitted_by == user.id)

@@ -28,7 +28,7 @@ def _check_name_free(db: DB, name: str, user: User | None = None) -> None:
     """CC-185: members can't call themselves by the site's own names, or by the name of an admin or of
     an account whose picks the site shows (CC-61). Those accounts themselves can use any name."""
     key = name_key(name)
-    if not key or (user is not None and (user.role == Role.admin or user.dolphins)):
+    if not key or (user is not None and (user.is_admin or user.dolphins)):
         return
     admins = select(User.display_name).where(or_(User.role == Role.admin, User.dolphins.is_(True)))
     if user is not None:

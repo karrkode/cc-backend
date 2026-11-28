@@ -16,7 +16,7 @@ from sqlalchemy import func, or_, select
 from ..clock import utcnow
 from .. import photos
 from ..deps import DB, AdminUser, ApproverUser, CurrentUser
-from ..models import Event, Role, User, WentPhoto
+from ..models import Event, User, WentPhoto
 from ..schemas import (ApprovalOut, ApprovalsPage, ApproverAnswerIn, DecisionIn, EventRef, MemberOut, UserOut)
 
 router = APIRouter(tags=["approvals"])
@@ -64,7 +64,7 @@ def members(db: DB, _: AdminUser, q: Annotated[str, Query(max_length=100)] = "",
 def offer_approver(user_id: uuid.UUID, db: DB, _: AdminUser):
     """Offer the approver permission. It applies once the member accepts."""
     user = _member(db, user_id)
-    if user.role == Role.admin:
+    if user.is_admin:
         raise HTTPException(status.HTTP_409_CONFLICT, "Admins can already approve photos")
     if user.approver:
         raise HTTPException(status.HTTP_409_CONFLICT, "They're already an approver")

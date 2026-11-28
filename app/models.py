@@ -93,8 +93,12 @@ class User(Base):
         return self.email_verified_at is not None
 
     @property
+    def is_admin(self) -> bool:  # CC-278: one place for "is an admin" instead of inline role checks
+        return self.role == Role.admin
+
+    @property
     def can_approve(self) -> bool:
-        return self.approver or self.role == Role.admin
+        return self.approver or self.is_admin
 
     @property
     def approver_offered(self) -> bool:  # an offer waiting for their answer
