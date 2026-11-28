@@ -12,7 +12,7 @@ from ..deps import DB, AdminUser, CurrentUser, OptionalUser, require_verified_em
 from .. import event_images, photos
 from ..autoreject import reject_if_caught
 from .. import fromlink
-from ..models import FOUND, Area, Event, EventRunDate, EventStatus, Plan, PlanStatus, Region, Role, Venue, WentPhoto
+from ..models import FOUND, Area, Event, EventRunDate, EventStatus, Plan, PlanStatus, Region, Venue, WentPhoto
 from ..crewplans import attach_crew_plans, crew_plans_condition
 from ..picks import attach_picks, pick_condition
 from ..schemas import EventFacets, EventIn, EventOut, EventPage, EventPatch, LinkDraft, LinkIn, RunDate, Show, VenueIn
@@ -49,7 +49,7 @@ def _shows_of(dates: list[Show | RunDate], origin: str) -> list[EventRunDate]:
 
 def _origin_for(user) -> str:
     """CC-301: who saved the shows: an admin in a form, or a member sending the event in."""
-    return "admin" if user.role == Role.admin else "member"
+    return "admin" if user.is_admin else "member"
 
 
 def with_show_run(event: Event) -> Event:
@@ -217,7 +217,7 @@ def create_event(body: EventIn, db: DB, user: CurrentUser):
     require_verified_email(user, "sending in events")
     _no_past_shows(body.run_dates)
     event = new_event(db, body, user)
-    if user.role != Role.admin:
+    if not user.is_admin:
         reject_if_caught(db, event)
     db.add(event)
     db.commit()
@@ -248,7 +248,7 @@ def new_event(db: DB, body: EventIn, user) -> Event:
     """The event a submission makes (not yet added): admins choose when it goes live; everyone else's
     waits for review. Also used to approve a found event (CC-71)."""
     status_, publish_at = EventStatus.pending, None
-    if user.role == Role.admin:
+    if user.is_admin:
         if body.publish == "now":
             status_ = EventStatus.approved
         elif body.publish == "later":
@@ -257,10 +257,10 @@ def new_event(db: DB, body: EventIn, user) -> Event:
             status_, publish_at = EventStatus.approved, body.publish_at.astimezone(UTC)
     if body.venue_id is not None:
         venue = db.get(Venue, body.venue_id)
-        if venue is None or (venue.pending and user.role != Role.admin):  # CC-188: the event would show its details
+        if venue is None or (venue.pending and not user.is_admin):  # CC-188: the event would show its details
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "No venue with that venue_id")
     else:
-        venue = get_or_create_venue(db, body.venue, pending=user.role != Role.admin)
+        venue = get_or_create_venue(db, body.venue, pending=not user.is_admin)
     category, opera = category_for(body, venue, user)
     if status_ == EventStatus.approved:
         accept_venue(venue, category, opera)
@@ -273,7 +273,7 @@ def category_for(body: EventIn, venue: Venue, user) -> tuple[str, bool]:
     """CC-125: the new event's category and opera flag. Left out, the venue's default; an event can differ from its
     venue (an Educational talk at a Visual Art venue). Only admins mark opera; left out, a Music event at an opera
     venue is one."""
-    if body.opera and user.role != Role.admin:
+    if body.opera and not user.is_admin:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Only admins can mark an event as opera")
     category = body.category or venue.category
     if category is None:

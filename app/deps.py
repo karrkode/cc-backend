@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from .config import get_settings
 from .db import get_db
-from .models import Role, User
+from .models import User
 from .security import decode_access_token
 
 DB = Annotated[Session, Depends(get_db)]
@@ -45,7 +45,7 @@ def current_user(user: Annotated[User | None, Depends(optional_user)]) -> User:
 
 def admin_user(user: Annotated[User, Depends(current_user)]) -> User:
     # Role is read from the database, not the token, so a demotion takes effect immediately.
-    if user.role != Role.admin:
+    if not user.is_admin:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Admins only")
     return user
 
@@ -68,6 +68,6 @@ ApproverUser = Annotated[User, Depends(approver_user)]
 def require_verified_email(user: User, doing: str) -> None:
     """CC-46: with require_verified_email on (in production), a member confirms their address before `doing`.
     CC-186: used by everything that publishes, reaches an admin queue or costs money, not just suggesting events."""
-    if get_settings().require_verified_email and user.role != Role.admin and not user.email_verified:
+    if get_settings().require_verified_email and not user.is_admin and not user.email_verified:
         raise HTTPException(status.HTTP_403_FORBIDDEN, f"Confirm your email address before {doing}. "
                             "Use the link we emailed you, or send a new one from your account page.")

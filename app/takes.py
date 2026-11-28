@@ -7,7 +7,7 @@ without touching the entry. The member isn't told, and it stays hidden until an 
 from sqlalchemy import or_, select
 
 from .config import SITE_NAME
-from .models import Attended, CrewMember, Event, Role, User
+from .models import Attended, CrewMember, Event, User
 
 ANONYMOUS = f"A {SITE_NAME} member"
 YOURS_TRULY = "Yours truly"  # CC-172: the admin signs as this on the site, whatever the account is called
@@ -30,7 +30,7 @@ def takes_for(db, event_id: int, viewer: User | None = None) -> list[dict]:
     author (it's in their journal). Nobody gets a review: the three words, the name and whether they'd recommend it.
     Admins see every take, the hidden ones marked, with whose they are (so they can hide or unhide them); nobody else
     ever sees a hidden take or a member's id."""
-    admins_view = viewer is not None and viewer.role == Role.admin
+    admins_view = viewer is not None and viewer.is_admin
     q = (select(Attended, User).join(User, User.id == Attended.user_id)
          .where(Attended.event_id == event_id, Attended.shared_at.is_not(None), Attended.words != "")
          .order_by(Attended.shared_at.desc()))

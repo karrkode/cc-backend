@@ -1,7 +1,7 @@
 """CC-108: the event pages, sitemap and robots.txt (see app/seo.py), and CC-109's roundups at /chicago/ (see
 app/roundups.py). On chiculturecrew.com, CloudFront sends /e/*, /chicago, /chicago/*, /sitemap.xml and /robots.txt
 here and caches them for CACHE_SECONDS."""
-from fastapi import APIRouter
+from fastapi import APIRouter, status
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
 from sqlalchemy import or_, select
 
@@ -24,10 +24,10 @@ def event_page(ref: str, db: DB):
     event_id = id_from(ref)
     event = db.get(Event, event_id) if event_id is not None else None
     if event is None or not is_live(event):
-        return HTMLResponse(render_missing(), status_code=404, headers={"Cache-Control": "public, max-age=60"})
+        return HTMLResponse(render_missing(), status_code=status.HTTP_404_NOT_FOUND, headers={"Cache-Control": "public, max-age=60"})
     canonical = path_for(event)
     if f"/e/{ref}" != canonical:  # an old title or a bare id: send it to the current address
-        return RedirectResponse(canonical, status_code=301, headers=CACHED)
+        return RedirectResponse(canonical, status_code=status.HTTP_301_MOVED_PERMANENTLY, headers=CACHED)
     return HTMLResponse(render_event(event, today_in_chicago(), takes_for(db, event.id)), headers=CACHED)
 
 
@@ -46,7 +46,7 @@ def robots_txt():
 
 @router.get("/chicago", include_in_schema=False)
 def roundups_bare():
-    return RedirectResponse("/chicago/", status_code=301, headers=CACHED)
+    return RedirectResponse("/chicago/", status_code=status.HTTP_301_MOVED_PERMANENTLY, headers=CACHED)
 
 
 @router.get("/chicago/", response_class=HTMLResponse)
@@ -58,5 +58,5 @@ def roundups_index(db: DB):
 def roundup_page(slug: str, db: DB):
     r = roundups.BY_SLUG.get(slug.rstrip("/"))
     if r is None:
-        return HTMLResponse(roundups.render_unknown(), status_code=404, headers={"Cache-Control": "public, max-age=60"})
+        return HTMLResponse(roundups.render_unknown(), status_code=status.HTTP_404_NOT_FOUND, headers={"Cache-Control": "public, max-age=60"})
     return HTMLResponse(roundups.render_roundup(db, r, today_in_chicago()), headers=CACHED)

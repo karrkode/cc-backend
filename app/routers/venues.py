@@ -7,7 +7,7 @@ from .. import fromlink, venuelink
 from ..addresses import suggestions as address_suggestions
 from ..areas import nearby_area, region_of
 from ..deps import DB, AdminUser, OptionalUser
-from ..models import Event, Role, SubmissionRule, Venue, VenueAddressSuggestion, VenueWebsiteDismissal
+from ..models import Event, SubmissionRule, Venue, VenueAddressSuggestion, VenueWebsiteDismissal
 from ..schemas import (AddressChoice, AddressPick, AddressSuggestionOut, VenueAdd, VenueAdminOut, VenueIn, VenueMergeOut, VenueOut,
                        VenuePatch, VenueSiteDraft, WebsiteChoice, WebsiteSuggestionOut)
 from ..clock import utcnow
@@ -19,7 +19,7 @@ router = APIRouter(prefix="/venues", tags=["venues"])
 @router.get("", response_model=list[VenueOut])
 def list_venues(db: DB, user: OptionalUser, q: Annotated[str | None, Query(max_length=100)] = None):
     stmt = select(Venue).order_by(Venue.name, Venue.neighborhood)
-    if user is None or user.role != Role.admin:  # CC-188, CC-219: admins pick these venues while reviewing or editing events
+    if user is None or not user.is_admin:  # CC-188, CC-219: admins pick these venues while reviewing or editing events
         stmt = stmt.where(Venue.pending.is_(False), Venue.hidden.is_(False))
     if q:
         stmt = stmt.where(Venue.name.icontains(q, autoescape=True))
